@@ -1,0 +1,32 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "GqVNbQd-RZ75RHtnVyblj"
+uri = "file://clearview-crm-backup-rev3.tar.gz"
+type = "unspecified"
+title = "ClearView CRM — Rev 3 Source Backup"
+logical_id = "08704174-062a-4cd6-a4ca-b9939888a14e"
+
+[[outputs]]
+id = "hj3sTl4Ymi7V_Sr_IuBWE"
+uri = "file://exports/window-cleaning-crm-project.tar.gz"
+type = "unspecified"
+title = "Window Cleaning CRM - Full Project Source"
+logical_id = "cbef066d-7146-4fba-bf62-c3fa1fc061b1"
+
+[[outputs]]
+id = "G91JJ-HdwzXraatdYnv5x"
+uri = "file://HANDOFF_PROMPTS.md"
+type = "text"
+title = "Step-by-Step Sync Prompts (download)"
+description = "The 8 separate prompts (0–7) if you prefer pasting one phase at a time with a checkpoint between each."
+logical_id = "f46197ff-e451-4d70-a4a7-0e8dabef6878"
+
+[[outputs]]
+id = "8xla6LFNyqgRmRB394yjv"
+uri = "file://HANDOFF_PROMPT_ONE_PASTE.md"
+type = "text"
+title = "One-Paste Sync Prompt (download)"
+description = "Single prompt you paste ONCE into the duplicate app's agent — it works through all 8 phases with skip-checks and verification gates."
+logical_id = "e082fc27-b493-492a-8103-718a009917f2"

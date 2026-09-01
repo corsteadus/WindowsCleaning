@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClearView CRM — Build Summary</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #fff;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ── Page breaks ── */
+    .page {
+      width: 100%;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 64px 72px;
+      min-height: 100vh;
+    }
+    @media print {
+      .page { page-break-after: always; padding: 48px 56px; }
+      .page:last-child { page-break-after: avoid; }
+      body { font-size: 12px; }
+    }
+
+    /* ── Cover / page 1 ── */
+    .cover-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 14px;
+    }
+    .cover-title {
+      font-size: 38px;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.15;
+      margin-bottom: 8px;
+    }
+    .cover-sub {
+      font-size: 17px;
+      color: #475569;
+      margin-bottom: 48px;
+      font-weight: 400;
+    }
+    .badge-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 48px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-green  { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .badge-blue   { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .badge-slate  { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+    .dot-green  { background: #22c55e; }
+    .dot-blue   { background: #3b82f6; }
+    .dot-slate  { background: #94a3b8; }
+
+    /* ── Section label ── */
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 16px;
+    }
+
+    /* ── Test results table ── */
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .results-table thead tr {
+      background: #f8fafc;
+    }
+    .results-table th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #64748b;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .results-table td {
+      padding: 11px 16px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+    .results-table tr:last-child td { border-bottom: none; }
+    .results-table tr:nth-child(even) td { background: #fafafa; }
+    .area-name { font-weight: 600; color: #0f172a; }
+    .area-sub  { font-size: 12px; color: #64748b; margin-top: 1px; }
+    .pill-pass {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #f0fdf4; color: #15803d;
+      border: 1px solid #bbf7d0;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 40px 0;
+    }
+
+    /* ── Page 2 sections ── */
+    h2 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+    .page-intro {
+      color: #64748b;
+      font-size: 14px;
+      margin-bottom: 36px;
+      max-width: 560px;
+    }
+
+    .step-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 36px;
+    }
+    @media print {
+      .step-grid { gap: 10px; }
+    }
+    .step-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .step-num {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .step-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }
+    .step-desc {
+      font-size: 12.5px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+
+    /* ── Modules section ── */
+    .module-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 36px;
+    }
+    .module-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+    }
+    .module-icon {
+      width: 30px; height: 30px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+      background: #f1f5f9;
+      flex-shrink: 0;
+    }
+    .module-name { font-weight: 700; font-size: 13px; color: #0f172a; }
+    .module-note { font-size: 11.5px; color: #64748b; }
+
+    /* ── Stack ── */
+    .stack-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 36px;
+    }
+    .stack-pill {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    /* ── Outstanding section ── */
+    .outstanding-block {
+      border: 1px dashed #cbd5e1;
+      border-radius: 12px;
+      padding: 20px 22px;
+      background: #fafafa;
+      margin-bottom: 36px;
+    }
+    .outstanding-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .outstanding-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .pill-pending {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #f1f5f9; color: #64748b;
+      border: 1px solid #e2e8f0;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+    .outstanding-desc {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .outstanding-detail-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .outstanding-detail {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: #475569;
+    }
+    .outstanding-detail-icon {
+      font-size: 11px;
+      opacity: .7;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #94a3b8;
+      font-size: 11px;
+    }
+    .footer-logo {
+      font-weight: 800;
+      font-size: 13px;
+      color: #0f172a;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════
+     PAGE 1 — Cover + Test Results
+═══════════════════════════════════════════════════ -->
+<div class="page">
+
+  <div class="cover-eyebrow">Executive Build Summary · March 2026</div>
+  <div class="cover-title">ClearView CRM</div>
+  <div class="cover-sub">Window Cleaning Business Platform — Prepared for Lute Atieh</div>
+
+  <div class="badge-row">
+    <span class="badge badge-green"><span class="dot dot-green"></span>14 / 14 Tests Passing</span>
+    <span class="badge badge-blue"><span class="dot dot-blue"></span>8 UX Steps Complete</span>
+    <span class="badge badge-slate"><span class="dot dot-slate"></span>Full Stack · React + Express + PostgreSQL</span>
+    <span class="badge badge-slate"><span class="dot dot-slate"></span>Rev 4</span>
+  </div>
+
+  <!-- Test Results Table -->
+  <div class="section-label">Full Test Results</div>
+  <table class="results-table">
+    <thead>
+      <tr>
+        <th style="width:70%">Area Tested</th>
+        <th>Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <div class="area-name">Authentication</div>
+          <div class="area-sub">Demo Login · OIDC · Session persistence</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Dashboard</div>
+          <div class="area-sub">KPI cards · Layout · Breadcrumb · User info</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Global Search</div>
+          <div class="area-sub">Header pill · Expand input · Navigate to customers with query</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Customers</div>
+          <div class="area-sub">Card layout · Create form · Validation · Toast · List update</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Quotes</div>
+          <div class="area-sub">Card layout · Filters · Search · Empty states · New quote builder</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Invoices</div>
+          <div class="area-sub">Card layout · Status filters · Search · Not-found guard</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Jobs</div>
+          <div class="area-sub">Card layout · Status tabs · Not-found guard</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Schedule</div>
+          <div class="area-sub">Weekly grid · Today highlight · Unscheduled jobs banner</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Not-Found Guards</div>
+          <div class="area-sub">Job / Quote / Invoice — friendly error + back navigation</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Secondary Pages</div>
+          <div class="area-sub">Leads · Tasks · Payments · Crews · Properties · Services · Automations · Recurring Plans</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Mobile Navigation</div>
+          <div class="area-sub">Hamburger menu · Slide-out nav · All sections accessible</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Mobile Card Layouts</div>
+          <div class="area-sub">Full-width cards · 2-col summary chips · Single column stacking</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Mobile Invoice Detail</div>
+          <div class="area-sub">Hero total visible · No sidebar · Full-width action buttons</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+      <tr>
+        <td>
+          <div class="area-name">Responsive Resize (Mobile → Desktop)</div>
+          <div class="area-sub">Dashboard + sidebar restore cleanly at 1280px</div>
+        </td>
+        <td><span class="pill-pass">✓ Pass</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <span class="footer-logo">ClearView CRM</span>
+    <span>Build Summary · Page 1 of 2</span>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════
+     PAGE 2 — Executive Build Summary
+═══════════════════════════════════════════════════ -->
+<div class="page">
+
+  <div class="cover-eyebrow">Executive Build Summary</div>
+  <h2>What Was Built</h2>
+  <p class="page-intro">
+    ClearView CRM is a full-stack field service management platform purpose-built for Lute Atieh's window cleaning business.
+    The platform was built and polished across 8 structured UX improvement passes, each adding quality, consistency, and real workflow value.
+  </p>
+
+  <!-- 8-Step UX Plan -->
+  <div class="section-label">8-Step UX Improvement Plan — All Complete</div>
+  <div class="step-grid">
+    <div class="step-card">
+      <div class="step-num">Step 1</div>
+      <div class="step-title">Global Layout &amp; Navigation</div>
+      <div class="step-desc">Sticky sidebar, 3-section nav (Operations / Revenue / Admin), top header with breadcrumb, user avatar and sign-out. Mobile hamburger with slide-out drawer.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 2</div>
+      <div class="step-title">Dashboard Action Hierarchy</div>
+      <div class="step-desc">KPI cards with icons and trend colors, clickable metric tiles, recent jobs and invoices in scannable rows. Quick-action links for common tasks.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 3</div>
+      <div class="step-title">Jobs List Card Redesign</div>
+      <div class="step-desc">Replaced table with status-colored cards (border-l-4 accents), filter tabs (All / Scheduled / In Progress / Completed / Canceled), search, and skeleton loading.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 4</div>
+      <div class="step-title">Job Detail — Action-First UX</div>
+      <div class="step-desc">Hero card with status badge and property, full-width primary action row (Start / Complete / Cancel / Reopen), sticky sidebar for scheduling, notes, and crew. Not-found guard.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 5</div>
+      <div class="step-title">Schedule Control Center</div>
+      <div class="step-desc">7-column weekly grid with today highlighted, sticky control bar with week navigation, unscheduled jobs amber banner, and a reschedule modal for moving jobs.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 6</div>
+      <div class="step-title">Quote Builder Speed &amp; Layout</div>
+      <div class="step-desc">2-column builder with line item cards, service picker dialog (catalog + custom), sticky 3xl totals sidebar. Detail page with hero, action row, Approve &amp; Convert CTA.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 7</div>
+      <div class="step-title">Invoice Payment &amp; Status UX</div>
+      <div class="step-desc">Status banners (paid = green, overdue = red), hero card with 4xl total, primary action row (Mark Paid / Copy Link / Mark Sent / Mark Overdue), payment link section, sticky sidebar. Not-found guard.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">Step 8</div>
+      <div class="step-title">Global Polish &amp; Consistency</div>
+      <div class="step-desc">StatusBadge component (dot + label, shared across all pages), Quotes and Customers redesigned as card layouts, skeleton loaders, empty states with actions, global header search, form validation improvements.</div>
+    </div>
+  </div>
+
+  <!-- Modules -->
+  <div class="section-label">Platform Modules</div>
+  <div class="module-list">
+    <div class="module-item">
+      <div class="module-icon">📋</div>
+      <div><div class="module-name">Dashboard</div><div class="module-note">KPIs + recent activity</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">👥</div>
+      <div><div class="module-name">Customers</div><div class="module-note">Profiles + contacts</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🎯</div>
+      <div><div class="module-name">Leads</div><div class="module-note">Pipeline + convert</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🏠</div>
+      <div><div class="module-name">Properties</div><div class="module-note">Service locations</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">📄</div>
+      <div><div class="module-name">Quotes</div><div class="module-note">Line-item builder</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">📅</div>
+      <div><div class="module-name">Schedule</div><div class="module-note">Weekly job grid</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🔧</div>
+      <div><div class="module-name">Jobs</div><div class="module-note">Status + crew assign</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🧾</div>
+      <div><div class="module-name">Invoices</div><div class="module-note">Stripe payment links</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🔁</div>
+      <div><div class="module-name">Recurring Plans</div><div class="module-note">Repeat agreements</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">💳</div>
+      <div><div class="module-name">Payments</div><div class="module-note">Payment tracking</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">✅</div>
+      <div><div class="module-name">Tasks</div><div class="module-note">Follow-ups + todos</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">👷</div>
+      <div><div class="module-name">Crews</div><div class="module-note">Field team mgmt</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">🛠</div>
+      <div><div class="module-name">Service Catalog</div><div class="module-note">Pricing + types</div></div>
+    </div>
+    <div class="module-item">
+      <div class="module-icon">⚡</div>
+      <div><div class="module-name">Automations</div><div class="module-note">Workflow rules</div></div>
+    </div>
+  </div>
+
+  <!-- Tech Stack -->
+  <div class="section-label">Tech Stack</div>
+  <div class="stack-row">
+    <span class="stack-pill">React + Vite</span>
+    <span class="stack-pill">TailwindCSS</span>
+    <span class="stack-pill">shadcn/ui</span>
+    <span class="stack-pill">TypeScript</span>
+    <span class="stack-pill">Express 5</span>
+    <span class="stack-pill">PostgreSQL</span>
+    <span class="stack-pill">Drizzle ORM</span>
+    <span class="stack-pill">React Query</span>
+    <span class="stack-pill">OpenAPI + Orval</span>
+    <span class="stack-pill">Zod</span>
+    <span class="stack-pill">Replit Auth (OIDC)</span>
+    <span class="stack-pill">Stripe Payment Links</span>
+    <span class="stack-pill">pnpm Monorepo</span>
+    <span class="stack-pill">react-hook-form</span>
+  </div>
+
+  <!-- Outstanding -->
+  <div class="section-label">Outstanding</div>
+  <div class="outstanding-block">
+    <div class="outstanding-header">
+      <div class="outstanding-title">⚙️ &nbsp; Data Import &nbsp;—&nbsp; <span style="font-weight:400;color:#94a3b8;">Settings (Admin)</span></div>
+      <span class="pill-pending">○ Planned</span>
+    </div>
+    <p class="outstanding-desc">
+      A low-profile import tool tucked inside the Settings section of the Admin nav would allow Lute to bulk-load existing customer records, properties, and historical job data from a spreadsheet or CSV export — removing the need to manually re-enter data when going live.
+      The importer would accept a standard CSV format, preview rows before committing, flag conflicts (duplicate email, unknown property), and report a summary of what was created vs. skipped.
+      No sensitive data leaves the app; the feature is intentionally quiet so it doesn't clutter the day-to-day UI.
+    </p>
+    <div class="outstanding-detail-list">
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">📂</span> CSV / spreadsheet upload</span>
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">👥</span> Customers &amp; contacts</span>
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">🏠</span> Properties</span>
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">🧾</span> Historical invoices</span>
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">🔍</span> Row preview &amp; conflict detection</span>
+      <span class="outstanding-detail"><span class="outstanding-detail-icon">⚙️</span> Located in Settings — Admin nav</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="footer-logo">ClearView CRM</span>
+    <span>Build Summary · Page 2 of 2</span>
+  </div>
+</div>
+
+</body>
+</html>

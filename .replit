@@ -1,0 +1,36 @@
+modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
+
+[[artifacts]]
+id = "artifacts/api-server"
+
+[[artifacts]]
+id = "artifacts/mockup-sandbox"
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.development]
+APP_MIGRATIONS_ENABLED = "false"
+APP_MIGRATION_ENVIRONMENT = "sandbox"
+APP_MIGRATION_SANDBOX_REPL_ID = "ae73d3e8-5ab6-4a64-978d-3596e77821f0"

@@ -1,0 +1,17 @@
+packages:
+  "framer-motion": "For page transitions and smooth UI animations"
+  "recharts": "For dashboard charts and analytics"
+  "react-hook-form": "For robust form state management"
+  "@hookform/resolvers": "For Zod validation integration"
+  "date-fns": "For readable date formatting across the CRM"
+  "clsx": "For conditional class names"
+  "tailwind-merge": "For merging tailwind classes"
+
+images:
+  - path: "artifacts/crm/public/images/auth-bg.png"
+    description: "Abstract glassmorphism geometric shapes in deep blue and slate colors, professional clean SaaS background"
+    aspect_ratio: "16:9"
+
+notes:
+  - Using generated hooks from @workspace/api-client-react
+  - Caching and invalidation rely on generated get[Query]QueryKey helpers

@@ -1,0 +1,21 @@
+# Memory Index
+
+- [Radix Select pitfalls](radix-select-sentinel.md) — placeholder only for ""/undefined; in-form bubble circuit can reset controlled value to "" — route onValueChange through a reject-blank guard.
+- [Advisory lock namespaces](advisory-locks.md) — quote/job locks use single-int pg_advisory_xact_lock; lead locks use the two-int (classid=2, id) form — separate keyspaces, never mix.
+- [Convert-core adapter pattern](advisory-locks.md) — conversion endpoints use pure `*Core(id, adapter)` + DrizzleTx adapter; mark-step must throw on zero rows to roll back inserts.
+- [Live smoke tests must be non-mutating](testing-constraints.md) — owner rule: validation/404-only against the sandbox; successful-path behavior belongs in executable tests.
+- [Shell process lifecycle](shell-process-lifecycle.md) — background procs die at call end (setsid/nohup useless); persistent procs need a workflow; pkill/pgrep -f self-match kills your own script.
+- [Temp file-handoff mechanics](tmp-file-handoff-mechanics.md) — proxy keeps /__mockup prefix; port-watcher blind to 127.0.0.1 (no waitForPort); kill orphaned server by pid before artifact rebind; dev domain rotates.
+- [Monorepo gates](monorepo-gates.md) — after orval regen/lib edits, `tsc -b --force` the libs or typechecks resolve stale dist d.ts; CRM vite build needs PORT+BASE_PATH env.
+- [Generated-client Node tests](monorepo-gates.md) — built-in TS tests cannot load the extensionless ESM generated-client graph; verify serializer source plus browser Request semantics.
+- [Auth envelope & local login](auth-envelope-local-login.md) — /api/auth/user returns 200 {"user":null} when logged out (never 401); scrypt hashes are env-independent for prod handoff provisioning.
+- [Lifecycle API aliases](lifecycle-api-aliases.md) — aliases need their own server auth rules, lifecycle-scoped mutations, and server-derived audit actors; UI RBAC alone is insufficient.
+- [Cloned Sandbox migration attestation](sandbox-migration-attestation.md) — restored/cloned Repls can retain an old identity guard; use a current-Repl attestation only with explicit authorization.
+- [Additive migration preflight](migration-preflight-safety.md) — preflight must tolerate absent new objects and serialize queries on its single pg client.
+- [Estimate conversion integrity](estimate-conversion-integrity.md) — schedule only from revision-bound acceptance; revalidate account locations inside the all-jobs transaction.
+- [Composite customer operations](customer-operations-integrity.md) — combined account/job writes need composite RBAC, exact replay resource binding, and domain-gated profile aggregates.
+- [Dashboard reporting semantics](dashboard-reporting-semantics.md) — period decisions require auditable timestamps; cash sales use posted payments; conversions follow immutable events.
+- [Data Free startup boundary](data-free-startup-boundary.md) — repair/import-resume and mutation workers must remain explicit, Sandbox-identity-attested opt-ins.
+- [Authorization route-test credibility](authorization-route-test-credibility.md) — access-control HTTP tests must mount production router factories; duplicated test-only routers cannot prove real scoping or redaction.
+- [Forbidden vs invalid sessions](forbidden-vs-invalid-sessions.md) — resource 403 revalidates authority without blanking the app; 401 invalidates immediately, and changed scope purges on fingerprint transition.
+- [Two-phase form confirmation](two-phase-form-confirmation.md) — verify immediate commit and independent readback; retain parent identity and draft so secondary-write retries cannot duplicate the parent.

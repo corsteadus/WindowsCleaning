@@ -1,0 +1,52 @@
+{
+  "name": "@workspace/api-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "node --test --experimental-strip-types src/lib/dashboard-reporting.test.ts src/lib/public-estimate-guard.test.ts src/lib/startup-maintenance.test.ts src/migrations/dashboard-reporting-indexes-v1.test.ts src/lib/estimate-lifecycle.test.ts src/lib/estimate-conversion.test.ts src/routes/estimate-conversion-guard.test.ts",
+    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+    "build": "node ./build.mjs",
+    "test:profile-details": "node --test --experimental-strip-types src/lib/profile-details-core.test.ts src/migrations/profile-details-catalogs-v1.test.ts src/routes/profile-details.test.ts",
+    "test:customer-hub": "node --test --experimental-strip-types src/lib/customer-initial-job.test.ts src/lib/customer-initial-job-service.test.ts src/lib/customer-create-core.test.ts src/lib/payment-core.test.ts src/lib/authorization.test.ts src/routes/customer-operations-routes.test.ts",
+    "test:dashboard": "node --test --experimental-strip-types src/lib/dashboard-reporting.test.ts src/migrations/dashboard-reporting-indexes-v1.test.ts",
+    "test:normalized-assignment-contract": "node --test --experimental-strip-types src/lib/date.test.ts src/routes/field-tech-http-authorization.test.ts src/routes/normalized-crew-assignment-contract.test.ts",
+    "start": "node --enable-source-maps ./dist/index.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migration:status": "node --experimental-strip-types src/migrations/cli.ts status",
+    "migration:run": "node --experimental-strip-types src/migrations/cli.ts run",
+    "migration:verify": "node --experimental-strip-types src/migrations/cli.ts verify",
+    "migration:rollback": "node --experimental-strip-types src/migrations/cli.ts rollback",
+    "migration:legacy-customer-import": "node --experimental-strip-types src/migrations/cli.ts legacy-customer-import",
+    "test": "node --test --experimental-strip-types src/lib/date.test.ts src/lib/property-enrich.test.ts src/lib/quote-convert.test.ts src/lib/job-create-quoted.test.ts src/lib/lead-convert.test.ts src/lib/lead-duplicate-candidates.test.ts src/lib/customer-create-core.test.ts src/lib/customer-initial-job.test.ts src/lib/customer-initial-job-service.test.ts src/lib/prospect-account.test.ts src/lib/account-lifecycle.test.ts src/lib/customer-display.test.ts src/lib/password.test.ts src/lib/local-login.test.ts src/lib/authorization.test.ts src/lib/field-tech-scope.test.ts src/lib/field-tech-notes.test.ts src/lib/service-validation.test.ts src/lib/critical-path.test.ts src/lib/migration-recover-jobs-payload.test.ts src/lib/idempotency.test.ts src/lib/payment-core.test.ts src/lib/lead-activity.test.ts src/lib/customer-credit-core.test.ts src/lib/customer-credit-handler.test.ts src/lib/financial-reconciliation-core.test.ts src/lib/invoice-core.test.ts src/lib/invoice-create-handler.test.ts src/lib/invoice-correction-core.test.ts src/lib/invoice-correction-handler.test.ts src/lib/invoice-correction-history.test.ts src/lib/invoice-legacy-protection.test.ts src/lib/financial-approval.test.ts src/lib/communication-event-core.test.ts src/lib/communication-safety-core.test.ts src/lib/campaign-processor-safety.test.ts src/lib/legacy-customer-import.test.ts src/lib/seed-demo.test.ts src/services/import/customer-import-safety.test.ts src/routes/invoices.test.ts src/routes/customer-operations-routes.test.ts src/routes/financial-reconciliation.test.ts src/routes/communication-safety.test.ts src/routes/emails-safety.test.ts src/routes/field-tech-http-authorization.test.ts src/routes/field-tech-concrete-http.test.ts src/routes/normalized-crew-assignment-contract.test.ts src/routes/jobs-integrity-temporal-contract.test.ts src/routes/tasks-contract.test.ts src/routes/estimate-appointment-contract.test.ts src/migrations/migration-runner.test.ts src/migrations/properties-contacts-v1.test.ts src/migrations/invoice-properties-v1.test.ts src/migrations/team-users-rbac-v1.test.ts src/routes/properties-contacts-regression.test.ts"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
+    "@workspace/api-zod": "workspace:*",
+    "@workspace/db": "workspace:*",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2",
+    "drizzle-orm": "catalog:",
+    "express": "^5",
+    "google-auth-library": "^10.6.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.5",
+    "openid-client": "^6.8.2",
+    "pino": "^9",
+    "pino-http": "^10",
+    "stripe": "^21.0.1",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "catalog:",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^8.0.0",
+    "esbuild": "^0.27.3",
+    "esbuild-plugin-pino": "^2.3.3",
+    "pino-pretty": "^13",
+    "thread-stream": "3.1.0"
+  }
+}
