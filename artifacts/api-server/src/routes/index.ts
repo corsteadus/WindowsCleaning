@@ -32,6 +32,7 @@ import automationEventsRouter from "./automation-events";
 import communicationSafetyRouter from "./communication-safety";
 import profileDetailsRouter from "./profile-details";
 import estimatesRouter from "./estimates";
+import calendarRouter from "./calendar";
 
 const router: IRouter = Router();
 
@@ -68,5 +69,6 @@ router.use(automationEventsRouter);
 router.use(communicationSafetyRouter);
 router.use(profileDetailsRouter);
 router.use(estimatesRouter);
+router.use(calendarRouter);
 
 export default router;
