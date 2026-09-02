@@ -120,7 +120,17 @@ function RescheduleModal({ job, onClose }: { job: JobLike | null; onClose: () =>
         toast({ title: "Job rescheduled!" });
         onClose();
       },
-      onError: () => toast({ title: "Failed to reschedule job", variant: "destructive" }),
+      // A refusal to move finished or billed work is a rule, not a fault, and
+      // it carries the way forward ("reopen the job first"). Showing only
+      // "Failed to reschedule" would strand the user at a dead end.
+      onError: (err: unknown) => {
+        const detail = (err as { data?: { error?: string } } | null)?.data?.error;
+        toast({
+          title: "Failed to reschedule job",
+          ...(detail ? { description: detail } : {}),
+          variant: "destructive",
+        });
+      },
     },
   });
 
@@ -242,6 +252,9 @@ function ScheduleJobCard({ job, onReschedule, canManageSchedule }: {
   const endT   = fmtTime(job.scheduledEndTime);
   const isDone = job.status === "completed";
   const isCanceled = job.status === "canceled";
+  // Matches the server's completed rule. Invoiced work is also locked there,
+  // but the card carries no invoice, so that refusal surfaces on save.
+  const scheduleLocked = isDone;
 
   return (
     <div
@@ -278,7 +291,12 @@ function ScheduleJobCard({ job, onReschedule, canManageSchedule }: {
             <p className="text-[11px] text-slate-500 truncate">{loc}</p>
           </div>
         )}
-        {(job.crewName || job.assignedEmployeeNames?.length) && (
+        {/*
+          The length comparison is load-bearing: `[].length` is 0, and React
+          renders a literal 0 rather than nothing, so an unassigned job printed
+          a stray "0" on the card. Guard on a boolean, never on a count.
+        */}
+        {(job.crewName || (job.assignedEmployeeNames?.length ?? 0) > 0) && (
           <p className="text-[10px] text-slate-400 truncate mb-2">
             {[job.crewName, ...(job.assignedEmployeeNames ?? [])].filter(Boolean).join(" · ")}
           </p>
@@ -295,11 +313,21 @@ function ScheduleJobCard({ job, onReschedule, canManageSchedule }: {
             <ExternalLink className="w-3 h-3" />
             Open
           </button>
+          {/*
+            The server refuses to move completed or invoiced work; this only
+            keeps the button from walking the user into that refusal. It is not
+            the protection itself, and the card cannot see invoices, so a moved
+            invoice still comes back as a 409 the dialog reports.
+          */}
           {canManageSchedule && <button
             onClick={() => onReschedule(job)}
+            disabled={scheduleLocked}
+            title={scheduleLocked ? "Completed jobs cannot be rescheduled. Reopen the job first." : undefined}
             className="flex-1 flex items-center justify-center gap-1 h-7 rounded-lg
                        border border-slate-200 text-slate-500 hover:text-amber-600 hover:border-amber-200
-                       text-[10px] font-semibold transition-colors"
+                       text-[10px] font-semibold transition-colors
+                       disabled:opacity-40 disabled:hover:text-slate-500 disabled:hover:border-slate-200
+                       disabled:cursor-not-allowed"
           >
             <Calendar className="w-3 h-3" />
             Move
@@ -327,6 +355,9 @@ function DaySection({
   const dayName       = format(day, "EEE");
   const dayDate       = format(day, "d");
   const monthAbbr     = format(day, "MMM");
+  // Canceled work stays in history but is not scheduled work: it must not be
+  // counted or drawn on the grid. Once a Canceled filter exists it can opt back
+  // in; until then the day shows only what the crew is actually expected to do.
   const activeJobs    = jobs.filter((j) => j.status !== "canceled");
 
   return (
@@ -349,11 +380,11 @@ function DaySection({
         </div>
         <span className={`ml-auto lg:ml-0 lg:mt-1.5 text-xs rounded-full px-2 py-0.5 font-bold
           ${isCurrentDay
-            ? jobs.length > 0 ? "bg-white/25 text-white" : "bg-white/10 text-white/50"
-            : jobs.length > 0 ? "bg-white text-slate-700 shadow-sm" : "bg-slate-200/60 text-slate-400"
+            ? activeJobs.length > 0 ? "bg-white/25 text-white" : "bg-white/10 text-white/50"
+            : activeJobs.length > 0 ? "bg-white text-slate-700 shadow-sm" : "bg-slate-200/60 text-slate-400"
           }`}
         >
-          {jobs.length} {jobs.length === 1 ? "job" : "jobs"}
+          {activeJobs.length} {activeJobs.length === 1 ? "job" : "jobs"}
         </span>
         {isCurrentDay && (
           <span className="lg:hidden text-white/70 text-xs font-semibold ml-1">· Today</span>
@@ -365,13 +396,13 @@ function DaySection({
         className={`flex-1 p-2 space-y-2 rounded-b-2xl border border-t-0 min-h-[72px]
           ${isCurrentDay ? "border-primary/20 bg-primary/[.03]" : "border-slate-200 bg-slate-50/60"}`}
       >
-        {jobs.length === 0 ? (
+        {activeJobs.length === 0 ? (
           <div className="flex items-center justify-center h-full py-5">
             <p className="text-[11px] text-slate-300 font-medium">No jobs</p>
           </div>
         ) : (
           <>
-            {jobs.map((job) => (
+            {activeJobs.map((job) => (
               <ScheduleJobCard key={job.id} job={job} onReschedule={onReschedule} canManageSchedule={canManageSchedule} />
             ))}
           </>
@@ -488,8 +519,11 @@ export default function Schedule() {
 
   const normalizedWeekJobs = normalizeScheduleList<JobLike>(weekJobs);
   const normalizedUnscheduledJobs = normalizeScheduleList<JobLike>(unscheduledJobs);
-  const totalWeekJobs    = normalizedWeekJobs.length;
-  const completedCount   = normalizedWeekJobs.filter((j) => j.status === "completed").length;
+  // Counted the same way the day cells count, so the header and the grid can
+  // never disagree: canceled work is history, not scheduled work.
+  const activeWeekJobs   = normalizedWeekJobs.filter((j) => j.status !== "canceled");
+  const totalWeekJobs    = activeWeekJobs.length;
+  const completedCount   = activeWeekJobs.filter((j) => j.status === "completed").length;
   const unscheduledCount = normalizedUnscheduledJobs.length;
   const isCurrentWeek    = weekOffset === 0;
 

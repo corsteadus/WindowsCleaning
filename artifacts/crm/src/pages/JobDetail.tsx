@@ -244,8 +244,16 @@ export default function JobDetail() {
         setNotesDraft(null);
         setTechNotesDraft(null);
       },
-      onError: () => {
-        toast({ title: "Failed to save", variant: "destructive" });
+      onError: (err: unknown) => {
+        // Some refusals are rules with a way forward — a completed or invoiced
+        // job declining a new date says how to proceed. Pass the server's
+        // wording through rather than flattening it to "Failed to save".
+        const detail = (err as { data?: { error?: string } } | null)?.data?.error;
+        toast({
+          title: "Failed to save",
+          ...(detail ? { description: detail } : {}),
+          variant: "destructive",
+        });
       },
     },
   });

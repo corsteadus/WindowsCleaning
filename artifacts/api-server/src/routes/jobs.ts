@@ -14,6 +14,11 @@ import {
   crewsTable,
 } from "@workspace/db";
 import { customerDisplayName } from "../lib/customer-display.ts";
+import {
+  scheduleChangeLock,
+  scheduleLockMessage,
+  touchesSchedule,
+} from "../lib/schedule-change-lock.ts";
 import { buildJobStatusUpdate, businessDateStr, canonicalIsoInstant, isDateOnly, isTimeOnly } from "../lib/date.ts";
 import {
   createQuotedJobCore,
@@ -835,6 +840,8 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
         status: jobsTable.status, customerId: jobsTable.customerId, jobNumber: jobsTable.jobNumber,
         propertyId: jobsTable.propertyId,
         scheduledDate: jobsTable.scheduledDate, crewId: jobsTable.crewId,
+        scheduledStartTime: jobsTable.scheduledStartTime,
+        scheduledEndTime: jobsTable.scheduledEndTime,
         notes: jobsTable.notes, techNotes: jobsTable.techNotes,
         lineItems: jobsTable.lineItems,
         assignedTechnicianUserId: jobsTable.assignedTechnicianUserId,
@@ -867,6 +874,31 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
           return { kind: "invalidTime" as const, field };
         }
       }
+
+      // Finished and billed work keeps the date it actually happened on.
+      // Compared against the locked row, so a value merely resent by a form is
+      // not treated as a move, and a concurrent completion cannot slip a
+      // reschedule past this check.
+      const scheduleChanges = {
+        scheduledDate: body.scheduledDate !== undefined
+          && (body.scheduledDate || null) !== current.scheduledDate,
+        scheduledStartTime: body.scheduledStartTime !== undefined
+          && (body.scheduledStartTime || null) !== current.scheduledStartTime,
+        scheduledEndTime: body.scheduledEndTime !== undefined
+          && (body.scheduledEndTime || null) !== current.scheduledEndTime,
+      };
+      if (touchesSchedule(scheduleChanges)) {
+        const [invoiceLink] = await tx.select({ id: invoiceJobsTable.id })
+          .from(invoiceJobsTable).where(eq(invoiceJobsTable.jobId, id)).limit(1);
+        const lock = scheduleChangeLock({
+          currentStatus: current.status,
+          ...(body.status !== undefined ? { requestedStatus: body.status } : {}),
+          hasInvoice: Boolean(invoiceLink),
+          changes: scheduleChanges,
+        });
+        if (lock) return { kind: "scheduleLocked" as const, reason: lock };
+      }
+
       if (body.propertyId !== undefined) {
         const propertyId = normalizeOptionalPropertyId(body.propertyId);
         if (propertyId !== null) {
@@ -1030,6 +1062,14 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
           : result.kind === "invalidCompletedAtNull"
             ? "completedAt cannot be null when the effective status is completed"
             : "completedAt must be a valid ISO date-time with an explicit offset",
+      });
+      return;
+    }
+    if (result.kind === "scheduleLocked") {
+      res.status(409).json({
+        error: scheduleLockMessage(result.reason),
+        code: "schedule_locked",
+        reason: result.reason,
       });
       return;
     }
