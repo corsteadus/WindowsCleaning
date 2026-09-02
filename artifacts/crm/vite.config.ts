@@ -54,6 +54,21 @@ export default defineConfig(({ command }) => {
         strict: true,
         deny: ["**/.*"],
       },
+      // Local development only. The deployed app serves the API and the client
+      // from one origin through the platform router, so `/api` is same-origin
+      // there and no proxy exists. Running the two apart on a workstation
+      // breaks that assumption; setting API_PROXY_TARGET restores it.
+      // Unset — as in every build and deploy — this is absent entirely.
+      ...(process.env.API_PROXY_TARGET
+        ? {
+            proxy: {
+              "/api": {
+                target: process.env.API_PROXY_TARGET,
+                changeOrigin: false,
+              },
+            },
+          }
+        : {}),
     },
     preview: {
       port,
