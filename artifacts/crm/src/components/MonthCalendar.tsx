@@ -25,6 +25,14 @@ import {
   dragBlockReason,
   resolveMonthDrop,
 } from "@/lib/calendar-drag";
+import { describeSpan, findCrewOverlaps } from "@/lib/crew-overlap";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   fetchCalendarOccurrences,
   fetchCalendarTotals,
@@ -233,6 +241,12 @@ export function MonthCalendar({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [dragging, setDragging] = useState<CalendarOccurrence | null>(null);
+  const [conflict, setConflict] = useState<{
+    occurrence: CalendarOccurrence;
+    from: string;
+    to: string;
+    clashes: CalendarOccurrence[];
+  } | null>(null);
 
   // Pointer drags start only after a short distance so a click still opens the
   // job. Keyboard dragging is kept, because a calendar that can only be
@@ -322,6 +336,23 @@ export function MonthCalendar({
     [moveMutation],
   );
 
+  const commitMove = useCallback(
+    (occurrence: CalendarOccurrence, from: string, to: string) => {
+      moveJob(occurrence.id, to);
+      toast({
+        title: `${occurrence.customerLabel} moved`,
+        description: `${from} → ${to}`,
+        duration: UNDO_WINDOW_MS,
+        action: (
+          <ToastAction altText="Undo the move" onClick={() => moveJob(occurrence.id, from)}>
+            Undo
+          </ToastAction>
+        ),
+      });
+    },
+    [moveJob, toast],
+  );
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setDragging(null);
@@ -336,19 +367,19 @@ export function MonthCalendar({
         return;
       }
 
-      moveJob(drop.jobId, drop.to);
-      toast({
-        title: `${occurrence.customerLabel} moved`,
-        description: `${drop.from} → ${drop.to}`,
-        duration: UNDO_WINDOW_MS,
-        action: (
-          <ToastAction altText="Undo the move" onClick={() => moveJob(drop.jobId, drop.from)}>
-            Undo
-          </ToastAction>
-        ),
-      });
+      // The day being dropped on is already painted, so its jobs are in hand:
+      // the clash check costs no read.
+      const clashes = findCrewOverlaps(occurrence, buckets.get(drop.to) ?? []);
+      if (clashes.length) {
+        // A warning, not a refusal — the spec reserves refusal for hard blocks,
+        // and only the scheduler knows whether the overlap is deliberate.
+        setConflict({ occurrence, from: drop.from, to: drop.to, clashes });
+        return;
+      }
+
+      commitMove(occurrence, drop.from, drop.to);
     },
-    [moveJob, toast],
+    [buckets, commitMove, toast],
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -468,6 +499,62 @@ export function MonthCalendar({
         )}
       </div>
     </div>
+
+    {/* Crew double-booking. The move is held, not cancelled: the scheduler
+        sees exactly what it would collide with and decides. */}
+    <Dialog open={conflict !== null} onOpenChange={(open) => !open && setConflict(null)}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            {conflict?.occurrence.crewName ?? "This crew"} is already booked
+          </DialogTitle>
+        </DialogHeader>
+
+        {conflict && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Moving <span className="font-semibold text-slate-900">{conflict.occurrence.customerLabel}</span>{" "}
+              to {conflict.to} overlaps {conflict.clashes.length === 1 ? "another job" : `${conflict.clashes.length} other jobs`}{" "}
+              already on {conflict.occurrence.crewName ?? "this crew"}.
+            </p>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50 divide-y divide-amber-100">
+              <div className="px-3 py-2">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Moving</p>
+                <p className="text-sm font-semibold text-slate-900">{conflict.occurrence.customerLabel}</p>
+                <p className="text-xs text-slate-600">{describeSpan(conflict.occurrence)}</p>
+              </div>
+              {conflict.clashes.map((clash) => (
+                <div key={clash.id} className="px-3 py-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Already booked</p>
+                  <p className="text-sm font-semibold text-slate-900">{clash.customerLabel}</p>
+                  <p className="text-xs text-slate-600">{describeSpan(clash)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <button
+            onClick={() => setConflict(null)}
+            className="flex-1 h-10 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              if (conflict) commitMove(conflict.occurrence, conflict.from, conflict.to);
+              setConflict(null);
+            }}
+            className="flex-1 h-10 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 transition-colors"
+          >
+            Schedule anyway
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     {/* The dragged card follows the cursor at full opacity while the original
         dims in place, so it stays clear which job is being moved. */}
