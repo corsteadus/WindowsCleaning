@@ -791,6 +791,7 @@ export default function Schedule() {
           month={monthCursor.month}
           weekStartsOn={DEFAULT_WEEK_START}
           onOpenJob={(jobId) => navigate(`/jobs/${jobId}`)}
+          canMove={canManageSchedule}
         />
       ) : loadingWeek ? (
         <ScheduleSkeleton />

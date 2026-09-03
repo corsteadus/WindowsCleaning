@@ -1,8 +1,30 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useAuth } from "@workspace/replit-auth-web";
+import { getListJobsQueryKey, useUpdateJob } from "@workspace/api-client-react";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { authScopedQueryKey } from "@/lib/auth-scope";
+import {
+  UNDO_WINDOW_MS,
+  canDrag,
+  dragBlockMessage,
+  dragBlockReason,
+  resolveMonthDrop,
+} from "@/lib/calendar-drag";
 import {
   fetchCalendarOccurrences,
   fetchCalendarTotals,
@@ -36,6 +58,8 @@ type MonthCalendarProps = {
   today?: Date;
   onOpenJob: (jobId: number) => void;
   onOpenDay?: (date: string) => void;
+  /** Whether this viewer may reschedule. Read-only viewers get no drag. */
+  canMove: boolean;
 };
 
 const STATUS_ACCENT: Record<string, string> = {
@@ -65,24 +89,11 @@ function timeLabel(occurrence: CalendarOccurrence): string {
   return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${ampm}`;
 }
 
-function OccurrenceCard({
-  occurrence,
-  onOpen,
-}: {
-  occurrence: CalendarOccurrence;
-  onOpen: (jobId: number) => void;
-}) {
-  const accent = STATUS_ACCENT[occurrence.status] ?? "border-l-slate-300";
+/** The card's contents, shared by the real card and the drag preview. */
+function OccurrenceBody({ occurrence }: { occurrence: CalendarOccurrence }) {
   const detail = [occurrence.serviceType, occurrence.crewName].filter(Boolean).join(" · ");
-
   return (
-    <button
-      onClick={() => onOpen(occurrence.id)}
-      title={`${occurrence.customerLabel}${detail ? ` — ${detail}` : ""}`}
-      className={`w-full text-left rounded-md border border-slate-200 border-l-[3px] ${accent}
-                  ${occurrenceTint(occurrence)} px-1.5 py-1 hover:border-slate-300
-                  hover:shadow-sm transition-all`}
-    >
+    <>
       <div className="flex items-baseline gap-1">
         <span className="text-[9px] font-semibold text-slate-500 shrink-0">
           {timeLabel(occurrence)}
@@ -100,6 +111,45 @@ function OccurrenceCard({
           {formatCents(occurrence.amountCents)}
         </p>
       )}
+    </>
+  );
+}
+
+function OccurrenceCard({
+  occurrence,
+  onOpen,
+  draggable,
+}: {
+  occurrence: CalendarOccurrence;
+  onOpen: (jobId: number) => void;
+  draggable: boolean;
+}) {
+  const accent = STATUS_ACCENT[occurrence.status] ?? "border-l-slate-300";
+  const detail = [occurrence.serviceType, occurrence.crewName].filter(Boolean).join(" · ");
+  const blocked = dragBlockReason(occurrence);
+
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: occurrence.id,
+    disabled: !draggable,
+    data: { occurrence },
+  });
+
+  const reason = blocked ? dragBlockMessage(blocked) : null;
+
+  return (
+    <button
+      ref={setNodeRef}
+      onClick={() => onOpen(occurrence.id)}
+      title={reason ?? `${occurrence.customerLabel}${detail ? ` — ${detail}` : ""}`}
+      {...(draggable ? listeners : {})}
+      {...attributes}
+      className={`w-full text-left rounded-md border border-slate-200 border-l-[3px] ${accent}
+                  ${occurrenceTint(occurrence)} px-1.5 py-1 hover:border-slate-300
+                  hover:shadow-sm transition-all
+                  ${draggable ? "cursor-grab active:cursor-grabbing" : ""}
+                  ${isDragging ? "opacity-30" : ""}`}
+    >
+      <OccurrenceBody occurrence={occurrence} />
     </button>
   );
 }
@@ -112,6 +162,7 @@ function DayCell({
   inMonth,
   onOpenJob,
   onOpenDay,
+  canMove,
 }: {
   day: GridDay;
   occurrences: CalendarOccurrence[];
@@ -120,12 +171,19 @@ function DayCell({
   inMonth: boolean;
   onOpenJob: (jobId: number) => void;
   onOpenDay?: (date: string) => void;
+  canMove: boolean;
 }) {
+  // Adjacent-month days are drop targets too: moving a job across a month
+  // boundary should not require navigating away first.
+  const { setNodeRef, isOver } = useDroppable({ id: day.date, disabled: !canMove });
+
   return (
     <div
-      className={`flex flex-col border-r border-b border-slate-200 min-h-[112px] p-1
+      ref={setNodeRef}
+      className={`flex flex-col border-r border-b border-slate-200 min-h-[112px] p-1 transition-colors
         ${inMonth ? "bg-white" : "bg-slate-50/70"}
-        ${day.isToday ? "ring-2 ring-inset ring-primary/40" : ""}`}
+        ${isOver ? "bg-primary/10 ring-2 ring-inset ring-primary/50" : ""}
+        ${day.isToday && !isOver ? "ring-2 ring-inset ring-primary/40" : ""}`}
     >
       <div className="flex items-center justify-between px-0.5 pb-1">
         <button
@@ -144,7 +202,12 @@ function DayCell({
           "+2 more" link the office has to click to trust the day. */}
       <div className="flex-1 space-y-1">
         {occurrences.map((occurrence) => (
-          <OccurrenceCard key={occurrence.id} occurrence={occurrence} onOpen={onOpenJob} />
+          <OccurrenceCard
+            key={occurrence.id}
+            occurrence={occurrence}
+            onOpen={onOpenJob}
+            draggable={canMove && canDrag(occurrence)}
+          />
         ))}
       </div>
 
@@ -164,9 +227,20 @@ export function MonthCalendar({
   today,
   onOpenJob,
   onOpenDay,
+  canMove,
 }: MonthCalendarProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [dragging, setDragging] = useState<CalendarOccurrence | null>(null);
+
+  // Pointer drags start only after a short distance so a click still opens the
+  // job. Keyboard dragging is kept, because a calendar that can only be
+  // rearranged with a mouse excludes anyone who does not use one.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const grid: MonthGrid = useMemo(
     () => buildMonthGrid(year, month, { weekStartsOn, ...(today ? { today } : {}) }),
@@ -218,6 +292,69 @@ export function MonthCalendar({
   const period = totalsQuery.data?.period;
   const error = occurrencesQuery.error ?? totalsQuery.error;
 
+  const refreshCalendar = useCallback(() => {
+    // Totals are the server's, not a client-side sum, so both reads have to be
+    // re-asked after a move or the footers drift from the grid.
+    queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["calendar-occurrences"]) });
+    queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["calendar-totals"]) });
+    queryClient.invalidateQueries({ queryKey: getListJobsQueryKey() });
+  }, [queryClient, user]);
+
+  const moveMutation = useUpdateJob({
+    mutation: {
+      onSuccess: refreshCalendar,
+      onError: (err: unknown) => {
+        const detail = (err as { data?: { error?: string } } | null)?.data?.error;
+        toast({
+          title: "Could not move the job",
+          ...(detail ? { description: detail } : {}),
+          variant: "destructive",
+        });
+        // The optimistic grid is now wrong; re-read rather than guess.
+        refreshCalendar();
+      },
+    },
+  });
+
+  const moveJob = useCallback(
+    (jobId: number, to: string) =>
+      moveMutation.mutate({ id: jobId, data: { scheduledDate: to } }),
+    [moveMutation],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setDragging(null);
+      const occurrence = event.active.data.current?.occurrence as CalendarOccurrence | undefined;
+      const target = event.over?.id;
+      if (!occurrence || typeof target !== "string") return;
+
+      const drop = resolveMonthDrop(occurrence, target);
+      if (drop.kind === "unchanged") return;
+      if (drop.kind === "blocked") {
+        toast({ title: "Cannot move this job", description: dragBlockMessage(drop.reason), variant: "destructive" });
+        return;
+      }
+
+      moveJob(drop.jobId, drop.to);
+      toast({
+        title: `${occurrence.customerLabel} moved`,
+        description: `${drop.from} → ${drop.to}`,
+        duration: UNDO_WINDOW_MS,
+        action: (
+          <ToastAction altText="Undo the move" onClick={() => moveJob(drop.jobId, drop.from)}>
+            Undo
+          </ToastAction>
+        ),
+      });
+    },
+    [moveJob, toast],
+  );
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setDragging((event.active.data.current?.occurrence as CalendarOccurrence) ?? null);
+  }, []);
+
   if (error) {
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center">
@@ -229,6 +366,12 @@ export function MonthCalendar({
   }
 
   return (
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDragging(null)}
+    >
     <div className="space-y-3">
       {occurrencesQuery.data?.truncated && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
@@ -280,6 +423,7 @@ export function MonthCalendar({
                       valueCents={total?.scheduledValueCents ?? null}
                       inMonth={day.inMonth}
                       onOpenJob={onOpenJob}
+                      canMove={canMove}
                       {...(onOpenDay ? { onOpenDay } : {})}
                     />
                   );
@@ -324,5 +468,16 @@ export function MonthCalendar({
         )}
       </div>
     </div>
+
+    {/* The dragged card follows the cursor at full opacity while the original
+        dims in place, so it stays clear which job is being moved. */}
+    <DragOverlay dropAnimation={null}>
+      {dragging && (
+        <div className="w-[150px] rounded-md border border-primary/40 bg-white px-1.5 py-1 shadow-lg">
+          <OccurrenceBody occurrence={dragging} />
+        </div>
+      )}
+    </DragOverlay>
+    </DndContext>
   );
 }
