@@ -36,6 +36,7 @@ import {
 import {
   fetchCalendarOccurrences,
   fetchCalendarTotals,
+  sumDayTotals,
   totalsByDate,
   type CalendarOccurrence,
 } from "@/lib/calendar-api";
@@ -303,7 +304,22 @@ export function MonthCalendar({
   const dayTotals = useMemo(() => totalsByDate(totalsQuery.data), [totalsQuery.data]);
 
   const labels = useMemo(() => weekdayLabels(weekStartsOn), [weekStartsOn]);
-  const period = totalsQuery.data?.period;
+
+  // The summary is the month's, not the grid's. Both reads are asked for the
+  // whole grid so the spilled days can be drawn and dropped onto, but a day
+  // spilled in from August belongs to August's figures — and appears in both
+  // months' grids, so counting it here would report the same job twice.
+  const inMonthDates = useMemo(() => {
+    const dates = new Set<string>();
+    for (const week of grid.weeks) {
+      for (const day of week.days) if (day.inMonth) dates.add(day.date);
+    }
+    return dates;
+  }, [grid]);
+  const period = useMemo(
+    () => sumDayTotals(totalsQuery.data, (date) => inMonthDates.has(date)),
+    [totalsQuery.data, inMonthDates],
+  );
   const error = occurrencesQuery.error ?? totalsQuery.error;
 
   const refreshCalendar = useCallback(() => {

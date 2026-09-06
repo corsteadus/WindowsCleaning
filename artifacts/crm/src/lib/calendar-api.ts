@@ -1,4 +1,16 @@
 import { protectedFetch } from "./auth-scope.ts";
+import type { CalendarTotalsResponse } from "./calendar-totals.ts";
+
+// The totals shape and its arithmetic live in a module with no fetch and no
+// `import.meta`, so they stay unit-testable. Re-exported here so callers keep
+// a single import for the calendar's data contract.
+export {
+  sumDayTotals,
+  totalsByDate,
+  type CalendarDayTotal,
+  type CalendarPeriodTotal,
+  type CalendarTotalsResponse,
+} from "./calendar-totals.ts";
 
 /**
  * Client for the two bounded calendar reads.
@@ -40,25 +52,6 @@ export interface CalendarOccurrencesResponse {
   limit: number;
 }
 
-export interface CalendarDayTotal {
-  date: string;
-  jobCount: number;
-  completedCount: number;
-  scheduledValueCents: number | null;
-  durationMinutes: number;
-}
-
-export interface CalendarTotalsResponse {
-  range: { start: string; end: string };
-  days: CalendarDayTotal[];
-  period: {
-    jobCount: number;
-    completedCount: number;
-    scheduledValueCents: number | null;
-    durationMinutes: number;
-  };
-}
-
 async function getJson<T>(path: string): Promise<T> {
   const res = await protectedFetch(`${BASE}/api${path}`);
   if (!res.ok) {
@@ -86,13 +79,4 @@ export function fetchCalendarOccurrences(range: { start: string; end: string }) 
 
 export function fetchCalendarTotals(range: { start: string; end: string }) {
   return getJson<CalendarTotalsResponse>(`/calendar/totals${windowQuery(range)}`);
-}
-
-/** Day totals keyed by date, so a cell reads its own without scanning. */
-export function totalsByDate(
-  totals: CalendarTotalsResponse | undefined,
-): Map<string, CalendarDayTotal> {
-  const map = new Map<string, CalendarDayTotal>();
-  for (const day of totals?.days ?? []) map.set(day.date, day);
-  return map;
 }

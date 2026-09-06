@@ -537,6 +537,12 @@ Also: the three reschedule sites disagree on blank values. `Schedule.tsx:182` se
 | 2026-09-04 | Prompt applies on **initial scheduling as well as date/time changes** — this widened the scope from 1 call site to 5 |
 | 2026-09-05 | **Multi-day value allocation: Option A** — full job value on the first scheduled day, later days zero (Kyle Stafford). Settles §7.18, §7.19, §9.3 |
 | 2026-09-05 | **Monthly reporting uses the same anchor** — a job starting in August and running into September reports entirely in August (Kyle Stafford) |
+| 2026-09-06 | **Republished Sandbox 2**, and offered Publisher access so deployments no longer need to go through him (Lute) |
+| 2026-09-06 | **Move the database now**, before live scheduling data accumulates. Application, hosting, development and publishing all stay in Replit — only the database moves (Lute) |
+| 2026-09-06 | Requirements attached to that: separate dev and production databases; schema stays owned by our migration system; automatic backups with a confirmed retention window; Lute owns the database account with our access separate; a **full restore** proven before the migration is called finished; connection/migration/backup/restore documented; and a guaranteed independent export path for changing provider later (Lute) |
+| 2026-09-06 | **Gate:** provider, monthly cost, backup schedule and migration plan must be sent and approved **before** any production change (Lute) |
+| 2026-09-06 | Feature work must continue in parallel so Kyle can keep testing (Lute) |
+| 2026-09-07 | **Neon chosen** as the provider (user, agreeing with Lute's lean) |
 
 ### My recommendations
 
@@ -567,6 +573,94 @@ All four relate to the parked notification work, so none of them blocks the cale
 Option A on 2026-09-05. See "Step 1 is unblocked" above. Step 1 can now start.
 
 ---
+
+## Sandbox 2 deployment
+
+`https://sandbox-2-data-free-corsteadllc.replit.app` — logins are `team_admin` (super admin),
+`team_office` (office admin), `team_tech` (field tech).
+
+**Tested 2026-09-05, and the deployed build predates all five calendar commits.** The app is
+healthy — login works, the week view renders, zero console errors — but none of the calendar
+work is on it:
+
+- The Week/Month toggle is absent. It is rendered unconditionally in
+  `Schedule.tsx:557-570`, so its absence is conclusive; that toggle arrived in `24f8a66`
+- `GET /api/calendar/totals` and `/api/calendar/occurrences` both return **404**, so even
+  `a439f26`, the earliest calendar commit, is not deployed
+- `GET /api/jobs/unscheduled` returns 200, confirming it is an older but working build
+
+**"Rev 83" in the footer proves nothing.** `artifacts/crm/src/version.ts` has only ever been
+touched by the initial import commit, so the number was never bumped and cannot identify a
+build. Do not use it to decide whether a deploy landed — probe an endpoint instead.
+
+The Replit *workspace* does have the new code — the Vite `@dnd-kit/core` resolution error the
+user hit names `MonthCalendar.tsx` — but the workspace needs `pnpm install`, and the deployed
+app needs a redeploy. They are two separate things.
+
+**The migration has not run either.** `.replit` sets `APP_MIGRATIONS_ENABLED = "false"` under
+`[userenv.development]`, which the gate reads as disabled, so startup skips it silently and no
+table is created. `APP_MIGRATION_ENVIRONMENT` and `APP_MIGRATION_SANDBOX_REPL_ID` are already
+correct; only that one value needs to become `"true"`.
+
+## Browser test of the deployed month view — 2026-09-06
+
+Republished at last, and tested on Sandbox 2 as `team_admin`. **The calendar work is live and
+behaves.** Verified: calendar endpoints return 200; the Week/Month toggle is present; the month
+grid renders with adjacent-month spill days; weekly totals and the summary block appear; zero
+console errors, so `@dnd-kit` resolves correctly in the built bundle; month paging works and
+prefetches the neighbouring months; completed jobs carry `aria-disabled="true"` on their drag
+handles, so `schedule-change-lock` is doing its job; at 390px there is no horizontal scroll.
+The summary is also correctly labelled **Scheduled Job Value**, not "Sales" (§9.1).
+
+### ✅ Fixed 2026-09-07 — the monthly summary counted spill days, putting a job in two months
+
+Measured directly against the API:
+
+| Range | Jobs | Value |
+|---|---|---|
+| True August (`08-01`..`08-31`) | 2 | $525.00 |
+| True September (`09-01`..`09-30`) | **0** | **$0** |
+| September's grid (`08-31`..`10-04`) | 1 | $100.00 |
+
+September has no scheduled work at all, yet its summary block reads "Scheduled jobs 1 ·
+Scheduled Job Value $100.00". That is the 31 August job (Emberlynn Haskins, 10000 cents)
+appearing as a spill day — and the same $100 is counted again in August's summary, because
+August's grid runs `07-27`..`09-06` and also contains 31 August.
+
+Drawing the spill day is correct (§3.1) and counting it in the *weekly* total is correct. What
+is wrong is the **monthly** summary using the grid range. It breaks §9.2 ("one job counts
+once"), it is the double-counting §17 warns about, and it contradicts the client's 2026-09-05
+decision that a job's value belongs to the month of its first scheduled day.
+
+**The fix, applied 2026-09-07.** No extra request was needed. The server's `period` is itself a
+plain `days.reduce(...)` over the same per-day rows (`routes/calendar.ts:186`), and each job
+sits on exactly one date, so summing the in-month subset of `days` is the identical arithmetic
+over the right window.
+
+- New `artifacts/crm/src/lib/calendar-totals.ts` holds the totals types plus `totalsByDate` and
+  a new `sumDayTotals(totals, includes)`. It exists as a separate module because
+  `calendar-api.ts` reads `import.meta.env` and fetches, which makes it unloadable under
+  `node:test` — the same reasoning behind the server's `*-core.ts` split. `calendar-api.ts`
+  re-exports it, so no caller changed.
+- `MonthCalendar.tsx` now builds the set of `GridDay.inMonth` dates and sums those. Day cells
+  and the weekly footers still use the full grid, which is correct — a spilled day is real
+  work on that week.
+- `sumDayTotals` returns `undefined` before the first response, so an unknown figure still
+  renders as "—" rather than a confident `$0.00`.
+- 8 tests in `calendar-totals.test.ts`, including the two-months-one-job case and the
+  hidden-amounts case where a null must not sum to zero. CRM suite: 350/351, the single
+  failure being the known Windows path bug.
+
+**Still to watch:** summing per-day rows is only safe while one job occupies one date. Once
+`schedule_entries` allows multi-day jobs, a job would appear on several day rows and this
+would double-count it — §9.2 again. When Step 2 lands, the roll-up has to count distinct jobs,
+not add day rows.
+
+### Not yet testable
+
+Every job in the sandbox is **completed**, so all drag handles are correctly disabled. A
+successful drag, the undo toast, and the crew double-booking dialog could not be exercised.
+They need at least one job in `scheduled` status, ideally two on one day sharing a crew.
 
 ## Environment gotchas
 
