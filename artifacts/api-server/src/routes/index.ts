@@ -33,6 +33,7 @@ import communicationSafetyRouter from "./communication-safety";
 import profileDetailsRouter from "./profile-details";
 import estimatesRouter from "./estimates";
 import calendarRouter from "./calendar";
+import scheduleQueueRouter from "./schedule-queue";
 
 const router: IRouter = Router();
 
@@ -70,5 +71,6 @@ router.use(communicationSafetyRouter);
 router.use(profileDetailsRouter);
 router.use(estimatesRouter);
 router.use(calendarRouter);
+router.use(scheduleQueueRouter);
 
 export default router;

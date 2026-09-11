@@ -1,5 +1,8 @@
 import { sql } from "drizzle-orm";
-import { jobsTable } from "@workspace/db";
+// The schema entry point, not the package root: the root opens a connection
+// pool at import time, which would make this module — and everything that
+// builds a predicate from it — untestable without a live database.
+import { jobsTable } from "@workspace/db/schema";
 
 export type ActiveAssignmentGraph = {
   users: ReadonlyMap<string, { isActive: boolean }>;

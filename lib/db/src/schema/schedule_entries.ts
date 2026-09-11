@@ -41,6 +41,14 @@ export const scheduleEntriesTable = pgTable("schedule_entries", {
   /** queued = in the scheduling queue with no date yet. */
   status: text("status").notNull().default("scheduled"),
   /**
+   * What queued or held work is waiting on — spec §4.3's plain-language
+   * replacements for the reference system's abbreviations.
+   *
+   * Deliberately separate from `status`: that says where the work sits, this
+   * says why it is still sitting there. Null once work is on the calendar.
+   */
+  queueStatus: text("queue_status"),
+  /**
    * Whole cents, never a fraction. Held as numeric(18,0) rather than a 4-byte
    * integer because `jobs.total_amount` is numeric(10,2) and so reaches
    * 9,999,999,999 cents — five times what an int4 can hold. Matches the
@@ -64,11 +72,24 @@ export const scheduleEntriesTable = pgTable("schedule_entries", {
   uniqueIndex("schedule_entries_one_primary_unique").on(table.jobId).where(sql`${table.isPrimary}`),
   index("schedule_entries_date_idx").on(table.scheduledDate),
   index("schedule_entries_status_date_idx").on(table.status, table.scheduledDate),
+  // The queue is read by state and walked oldest-first, so keyset pagination
+  // orders on (created_at, id). Indexing all three keeps a page a range scan
+  // rather than a sort over every queued row.
+  index("schedule_entries_queue_idx").on(table.status, table.createdAt, table.id),
   index("schedule_entries_job_idx").on(table.jobId),
   index("schedule_entries_recurring_plan_idx").on(table.recurringPlanId),
   check(
     "schedule_entries_status_check",
     sql`${table.status} IN ('queued', 'scheduled', 'on_hold', 'canceled')`,
+  ),
+  check(
+    "schedule_entries_queue_status_check",
+    sql`${table.queueStatus} IS NULL OR ${table.queueStatus} IN ('needs_contact', 'contacted', 'callback_scheduled', 'waiting_on_customer', 'waiting_on_materials', 'weather_hold', 'ready_to_schedule')`,
+  ),
+  // Only work off the calendar is waiting on something.
+  check(
+    "schedule_entries_queue_status_scope_check",
+    sql`${table.queueStatus} IS NULL OR ${table.status} IN ('queued', 'on_hold')`,
   ),
   check("schedule_entries_segment_check", sql`${table.segmentNumber} >= 1`),
   check("schedule_entries_value_check", sql`${table.allocatedValueCents} >= 0`),

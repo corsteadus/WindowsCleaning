@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Project architecture and risk map](project-architecture-map.md) — whole-repository topology, runtime/data flows, implemented workflows, scaffolded calendar/Neon work, verification baseline, and prioritized security/contract/operations risks.
+
 - [Radix Select pitfalls](radix-select-sentinel.md) — placeholder only for ""/undefined; in-form bubble circuit can reset controlled value to "" — route onValueChange through a reject-blank guard.
 - [Advisory lock namespaces](advisory-locks.md) — quote/job locks use single-int pg_advisory_xact_lock; lead locks use the two-int (classid=2, id) form — separate keyspaces, never mix.
 - [Convert-core adapter pattern](advisory-locks.md) — conversion endpoints use pure `*Core(id, adapter)` + DrizzleTx adapter; mark-step must throw on zero rows to roll back inserts.

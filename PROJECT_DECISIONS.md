@@ -1,6 +1,6 @@
 # Project decisions and working context
 
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-07
 
 ## How to use this file
 
@@ -16,6 +16,55 @@ Read it before starting work. Update it whenever:
 
 Keep it factual. Everything here should trace to something actually verified in the repo, not
 assumed. Where something is unverified, say so explicitly.
+
+**Read this alongside `.agents/memory/project-architecture-map.md`.** The two divide cleanly
+and neither replaces the other: that file maps the repository as built — topology, runtime and
+data flows, library choices, verification baseline, technical risks. This file carries the
+decisions, the roadmap, and what we are waiting on people for. When they disagree about a
+technical fact, the architecture map was measured more recently; when they disagree about a
+decision or its reasoning, this file is the record.
+
+`.agents/memory/MEMORY.md` indexes the other agent-memory notes, several of which capture real
+traps (Radix Select pitfalls, advisory lock namespaces, the convert-core adapter pattern).
+Worth a look before touching those areas.
+
+---
+
+## Where things stand right now — read this first
+
+**As of 2026-09-11.** Everything below this section is detail; this is the state of play.
+
+**The work:** building the calendar described in the Corstead spec (v1.0, 31 Aug 2026). Of its
+34 V1 items, **6 are done, 10 partial, 18 not started**. Only 1 of the spec's 5 prototype tests
+passes. The sequencing plan is the Roadmap section.
+
+**Three things are in flight:**
+
+| | State |
+|---|---|
+| **Step 1 — the four calendar tables** | Committed (`a8a245e`) and **live on the Neon development branch** — 75 tables, constraints proven by test. Not on production, and the backfill migration has not run anywhere |
+| **Step 2 — Scheduling Queue and On Hold** | Foundation built and tested, uncommitted: pure decision layer, `queue_status` column, second backfill migration. Repository, endpoints and UI still to build |
+| **Database move to Neon** | Project and both branches exist. Development is usable now. Production is empty and untouched. **Wrong region** — see step 3 of the migration plan |
+| **Notify-before-send** | Parked deliberately. Investigated and planned, not built |
+
+**The immediate next actions, in order:**
+
+1. **Recreate the Neon project in `us-west-2`.** Both branches are empty and Kyle confirmed
+   there is no data to preserve, so this is a delete-and-recreate today and a data migration in
+   two weeks. Replit runs in `us-west-2`; we are in `us-east-2`, about 60 ms per query away
+2. Point the Replit **development** environment at the Neon dev branch (`DATABASE_URL`), and
+   set `APP_MIGRATIONS_ENABLED = "true"` so the backfill migrations run there
+3. Finish Step 2 — the repository, the bounded queue endpoints, the transition endpoints and
+   the three-tab UI. It unlocks two prototype tests, and Lute asked explicitly that feature work
+   continue during the database move
+4. Fix the migration gate to allow a production environment — required before any cutover
+5. Confirm with Lute whether he wants owner access set up now; he asked for it, and the
+   account was created on our side
+
+**The single most important constraint:** Lute wants no interruption to Kyle's testing. Do not
+let the database move stall the feature build.
+
+**Do not** run `git commit` or `git push` — hand the user the message to paste.
 
 ---
 
@@ -148,6 +197,8 @@ Written, **not yet applied to any database**:
 | `artifacts/api-server/src/migrations/calendar-schedule-entries-v1.ts` | Creates the four tables idempotently and backfills one primary entry per dated job |
 | `artifacts/api-server/src/migrations/calendar-schedule-entries-v1.test.ts` | 14 tests, all passing |
 
+Committed as `a8a245e`. The monthly-totals fix that followed is `bc8f651`.
+
 Registered in `lib/db/src/schema/index.ts`, in `REQUIRED_MIGRATIONS`, and in the api-server
 `test` script.
 
@@ -212,6 +263,99 @@ production does not depend on the development-only push path. Run push only to k
 database in step with the TypeScript schema.
 
 **No table has been created and no row has been written yet.**
+
+### Step 2 progress — started 2026-09-10
+
+Foundation laid, built to the layering agreed in the Architecture section since this is all new
+code. Applied to the Neon development branch and verified there.
+
+| File | What |
+|---|---|
+| `artifacts/api-server/src/lib/schedule-queue-core.ts` | Pure rules — the seven §4.3 waiting reasons, bounded page parsing, keyset cursors, hold/release decisions, days-waiting. No database, no I/O |
+| `artifacts/api-server/src/lib/schedule-queue-core.test.ts` | 21 tests |
+| `lib/db/src/schema/schedule_entries.ts` | Added `queue_status`, two check constraints, and the `(status, created_at, id)` queue index |
+| `artifacts/api-server/src/migrations/calendar-queue-entries-v1.ts` | Adds that column and index, and backfills queued entries for undated open jobs |
+| `artifacts/api-server/src/migrations/calendar-queue-entries-v1.test.ts` | 13 tests |
+
+Suite: 444 tests, 429 pass; the 15 failures are the known `DATABASE_URL` baseline.
+
+**Two gaps in Step 1 that this closes:**
+
+1. `calendar_schedule_entries_v1` backfilled only *dated* jobs, leaving undated ones — exactly
+   the "Ready to Schedule" work — with no entry at all.
+2. The seven §4.3 waiting reasons had nowhere to live. `on_hold_reason` is free text; these are
+   a fixed set, so they get their own constrained column.
+
+**Why a second migration rather than editing the first:** the framework checksums each
+definition and refuses drift, so a changed checksum requires a new id.
+
+**Design decisions worth keeping:**
+
+- `queue_status` is deliberately separate from `status`. `status` says *where* work sits
+  (queued / scheduled / on_hold / canceled); `queue_status` says *why* it is still sitting
+  there. A constraint enforces that only queued or held work carries one.
+- **Keyset pagination, not offset.** The queue reorders as people work it — scheduling a job
+  from page one shifts everything after it, and `OFFSET` would silently skip a row. Cursors
+  carry `(queued_at, id)` so ties cannot skip either.
+- **Bounded reads from the start**, following `calendar-range.ts`: 100 rows per page maximum.
+  Note that the existing `GET /jobs/unscheduled` and `GET /recurring-plans/due` are **not**
+  bounded — they return every row. Worth fixing when the queue replaces them.
+- `enrichJobs` (`routes/jobs.ts:228`) is not N+1 — it batches with `inArray`, five queries
+  regardless of job count. Reusable as-is.
+
+**Verified against the Neon development branch**, not just in tests: an invented waiting reason
+is rejected, and a waiting reason on scheduled work is rejected by the scope constraint.
+
+#### API layer — built 2026-09-11
+
+The full stack below the UI now exists, in the layering agreed on 2026-09-07. **474 tests, 460
+pass, 14 fail** — the fails are the known `DATABASE_URL` baseline, and there is one fewer of
+them than before (see the `@workspace/db/schema` note below).
+
+| File | Holds | Tests |
+|---|---|---|
+| `lib/schedule-queue-core.ts` | Decisions, cursors, page shaping. No I/O | 45 |
+| `lib/schedule-queue-scope.ts` | Who sees which rows, and whether money | 3 |
+| `repositories/schedule-entry.ts` | Drizzle/SQL only, no rules | via the real DB |
+| `services/schedule-queue.ts` | Transactions, `jobs` mirroring, audit trail | via the real DB |
+| `routes/schedule-queue.ts` | Parse, authorize, respond | — |
+
+**Endpoints:** `GET /schedule-queue?tab=ready|on_hold&limit=&cursor=&status=`,
+`GET /schedule-queue/statuses`, `POST /schedule-queue/:id/{schedule,hold,release}`,
+`PATCH /schedule-queue/:id/status`.
+
+**Decisions made while building, worth not re-deriving:**
+
+- **Every transition re-reads under `FOR UPDATE` inside its own transaction.** The unlocked read
+  says whether the request is worth attempting; the locked one says whether it is still true.
+  Without it two browsers acting on the same card both pass the check and the second write wins
+  silently.
+- **400 versus 409 is load-bearing.** A malformed request is 400 ("fix your input"); a
+  well-formed request against the wrong state is 409 ("someone else moved this, reload"). The UI
+  branches on the `code` field.
+- **Holding preserves the date** in `original_scheduled_date` and clears `jobs.scheduled_date`,
+  so held work stops painting on the calendar through the legacy mirror column.
+- **Scheduling clears `queue_status`**, because the scope constraint allows a waiting reason only
+  off the calendar.
+- **Counts come from their own grouped query**, not from the page. A page is 100 rows; the filter
+  chips describe the whole tab.
+- **`field_tech` can read the queue but not move work through it** — `schedule.view` yes,
+  `schedule.manage` no. So the scoping predicate is live, not dead code: a tech sees only
+  assigned work and no amounts. Locked down by test. Note the real role name is `field_tech`,
+  **not** `field_technician`; `hasCapability` on an unknown role silently returns false, which
+  makes a typo look like a passing authorization test.
+- **`/schedule-queue` does not match the `/schedule` prefix rule** (`matchesPrefix` needs an
+  exact match or a trailing slash), so it has its own rules. Asserted by test, because if that
+  ever changed the POSTs would fall through to no capability at all.
+
+**Incidental fix:** `lib/field-tech-scope.ts` imported `@workspace/db`, whose root opens a
+connection pool at import time — so every module building a predicate from it was untestable
+without a live database, including its own test. Now imports `@workspace/db/schema`. That is the
+14th failure gone, and the pattern to copy elsewhere.
+
+**Still to build for Step 2:** the three-tab UI. "Repeat Service Due" can source from the
+existing `getDueForService` rather than a new query. The endpoints have not yet run against a
+real database — that happens when Replit points at Neon.
 
 ### Detailed breakdown — what each step contains
 
@@ -543,6 +687,9 @@ Also: the three reschedule sites disagree on blank values. `Schedule.tsx:182` se
 | 2026-09-06 | **Gate:** provider, monthly cost, backup schedule and migration plan must be sent and approved **before** any production change (Lute) |
 | 2026-09-06 | Feature work must continue in parallel so Kyle can keep testing (Lute) |
 | 2026-09-07 | **Neon chosen** as the provider (user, agreeing with Lute's lean) |
+| 2026-09-11 | **Sandbox 2 holds test data only — deletable without issue** (Kyle Stafford) |
+| 2026-09-11 | **Superior is not running any operations through the system.** Any Superior customer, job, quote or invoice already loaded does not need to be retained and may also be deleted (Kyle Stafford) |
+| 2026-09-11 | **No planned production setup changes** — *"It's whatever will use to test with superior"* (Lute Atieh) |
 
 ### My recommendations
 
@@ -571,6 +718,36 @@ All four relate to the parked notification work, so none of them blocks the cale
 
 **Answered and closed:** multi-day value allocation (§7.18, §7.19, §9.3) — Kyle Stafford chose
 Option A on 2026-09-05. See "Step 1 is unblocked" above. Step 1 can now start.
+
+**Answered and closed 2026-09-11 — the production environment questions.** Asked before
+committing to Neon, because a wrong answer would have meant migrating live operational data.
+
+| Asked | Kyle Stafford / Lute Atieh |
+|---|---|
+| Is the data in Sandbox 2 real or test? | *"Test data. It can be deleted without any issue."* |
+| Is there another live production system to preserve? | *"Superior is not currently running any part of its operations through this system."* Any Superior customer, job, quote or invoice already loaded *"does not need to be retained and can also be deleted."* |
+| Any planned production setup changes in the next few months? | Lute: *"No plans. It's whatever will use to test with superior."* |
+
+Kyle's summary: **"there is no current live operational data that needs to be preserved."**
+
+**What this changes.** Every remaining database step got cheaper and safer:
+
+- **No production data migration.** Migration-plan steps 5, 6 and 8 below existed to move and
+  prove a live dataset. There is no live dataset. They collapse into "create the schema in the
+  production branch and verify it".
+- **The region mismatch is now free to fix.** Recreating the Neon project in `us-west-2` costs
+  nothing, because nothing in it is precious. Do this before pointing Replit at it.
+- **Cutover stops being an event.** No out-of-hours window, no two-week read-only period on the
+  old database — there is nothing to fall back to.
+- **The `pg_dump`-not-rebuild rule no longer applies.** It existed to carry across the GIN
+  trigram indexes `replit.md` mentions. With no data to preserve, `drizzle-kit push` from our
+  own schema is the correct source of truth, and anything the TypeScript does not describe was
+  never wanted.
+- **Sandbox 2 can be wiped whenever it is convenient**, which makes backfill migrations easy to
+  test from a clean state repeatedly.
+
+The one thing it does *not* change: **the migration gate still needs a production path** before
+anything runs against a production branch. That fix is unchanged and still required.
 
 ---
 
@@ -662,6 +839,224 @@ Every job in the sandbox is **completed**, so all drag handles are correctly dis
 successful drag, the undo toast, and the crew double-booking dialog could not be exercised.
 They need at least one job in `scheduled` status, ideally two on one day sharing a crew.
 
+## Neon — development branch is live, schema applied 2026-09-10
+
+The Neon project exists (`crimson-lab-48199662`, AWS US East 2 / Ohio) with two branches:
+`production` (default, **empty**) and `development`, branched from production with auto-delete
+set to Never.
+
+**Step 1 finally exists in a real database.** `drizzle-kit push` against the development branch
+created **75 tables**, including all four calendar tables. Nothing has been applied to
+`production` — it still holds zero tables.
+
+### The constraints were proven, not assumed
+
+Inserted deliberately bad rows inside a transaction and rolled back. The database refused
+every one it should:
+
+| Attempt | Result |
+|---|---|
+| Primary entry carrying the job's value | accepted |
+| Second segment with zero value | accepted |
+| **Money on a non-primary day** | **rejected** — `schedule_entries_value_on_primary_check` |
+| A second primary for the same job | rejected — `schedule_entries_one_primary_unique` |
+| `on_hold` with no reason | rejected — spec §4.6 holds |
+| `scheduled` with no date | rejected |
+| Time carrying seconds (`09:30:00`) | accepted — the Replit-compatibility fix works |
+| An invented status | rejected |
+
+So Kyle's Option A rule — a job's whole value on the day it starts, nothing on later days — is
+enforced by the database itself, not merely by application code.
+
+### Facts learned in the process
+
+- **Neon runs PostgreSQL 18.6; Replit runs 16.** A dump from 16 restores into 18 fine. The
+  reverse does not, so moving *back* to Replit later would not be a simple restore.
+- **`sslmode=require` should be `sslmode=verify-full`.** `pg` warns that `require`'s meaning is
+  changing; today it behaves like `verify-full`, but a library update would silently weaken it.
+  Use `verify-full` in the strings we store.
+- **Use the direct endpoint, never the `-pooler` host.** The console defaults to pooling on.
+- **⚠️ `pnpm --filter @workspace/db run push` fails on Windows.** `drizzle.config.ts` builds the
+  schema path with `path.join`, which yields backslashes, and drizzle-kit's internal glob reads
+  a backslash as an escape — "No schema files found". Not a code defect; it works on Linux.
+  Workaround, without touching the committed config:
+  ```
+  cd lib/db
+  npx drizzle-kit push --dialect=postgresql --schema=./src/schema/index.ts --url="$DATABASE_URL"
+  ```
+
+### ⚠️ Wrong region — fix before anyone tests against it
+
+The project is in **AWS US East 2 (Ohio)**. Replit's own Postgres — which is itself Neon — is in
+**us-west-2**, so the application servers are there too. Every query would cross the country,
+roughly 60 ms each way, and a page that issues a handful of queries feels it.
+
+Neon cannot move a project between regions. The fix is to create a new project in `us-west-2`
+and push the schema again. **Kyle confirmed on 2026-09-11 that nothing in any of these databases
+needs preserving**, so today this costs ten minutes. After Kyle starts testing against it, it
+becomes a data migration.
+
+### Still to do
+
+- Recreate the project in `us-west-2` (above), then re-push the schema
+- Point the Replit development environment at this branch by setting `DATABASE_URL`
+- Run the `calendar_schedule_entries_v1` and `calendar_queue_entries_v1` backfills there — they
+  need the app's migration gate, so they run on Replit rather than from a laptop
+- Everything in the revised migration plan below from step 5 onward
+
+## Database move to Neon — the agreed plan
+
+Agreed with Lute on 2026-09-06, provider settled 2026-09-07. **Nothing has been done yet.**
+
+**Scope: only the database moves.** Application, hosting, development and publishing all stay
+on Replit. This is not a plan to leave Replit.
+
+**Why now:** the four Step 1 tables do not exist in any database yet. Moving first means they
+are created once, in the right place. Moving in six weeks would mean migrating live scheduling
+data instead.
+
+### Why Neon rather than Supabase
+
+Supabase's value is what surrounds the database — auth, file storage, realtime, an
+auto-generated REST layer. **We use none of it**: there is a local username/password login
+(verified by logging into Sandbox 2 with it), and files go to Google Cloud Storage. Adopting
+Supabase would mean taking a platform to use one part of it.
+
+There is also a concrete problem: Supabase's transaction-mode pooler disables prepared
+statements, which `node-postgres` and Drizzle rely on. Workable, but a permanent trap.
+
+Neon does one thing — Postgres — and its branching maps onto Lute's dev/production requirement:
+development can be a branch of production, so it holds realistic data and resets in seconds.
+
+### Nothing about the schema changes
+
+Worth being explicit, because it is the obvious worry. Both are PostgreSQL. Same 59 tables,
+same columns, same constraints, same indexes. The schema is defined in TypeScript under
+`lib/db/src/schema/` and our own migration system owns it — which is exactly what Lute asked
+for. On our side the move is one connection string.
+
+`lib/db/src/index.ts` is a plain `new Pool({ connectionString: process.env.DATABASE_URL })`
+with no Replit-specific driver, so there is nothing else to unpick.
+
+Verified: the only Postgres function used beyond the standard set is `gen_random_uuid()`,
+built in since PG 13. No extensions to port.
+
+~~**But copy production with `pg_dump`, do not rebuild it from the schema.**~~ `replit.md:69`
+mentions GIN trigram indexes that do not appear anywhere in the Drizzle schema, so the live
+database may hold objects the TypeScript does not describe. A dump would carry those across; a
+rebuild loses them.
+
+**Superseded 2026-09-11.** Kyle confirmed there is no operational data to preserve, so there is
+nothing to dump. Build the schema from `lib/db/src/schema/` instead — it is the source of truth,
+and an object the TypeScript does not describe is an object nobody asked for. If a trigram index
+turns out to be needed for search performance, add it to the schema deliberately.
+
+### Cost — estimates from published pricing, to be confirmed after a month
+
+| Plan | Restore history | Rough monthly, both databases |
+|---|---|---|
+| Launch | 7 days | $25–40 |
+| Scale | 30 days | $50–80 |
+
+Compute is $0.106/CU-hour on Launch, storage $0.35/GB-month, history $0.20/GB-month. Storage
+for a database this size is a rounding error; almost all of it is compute. Recommendation:
+Launch plus our own nightly export, which buys longer retention for far less than Scale.
+
+### Backups are two separate things
+
+1. **Instant restore**, built in. Neon keeps a continuous change history, so we can rewind to
+   any moment inside the window. This covers accidental deletes.
+2. **Scheduled export**, which we build. Instant restore is *not a file*. Leaving Neon, or
+   needing something older than the window, needs real `pg_dump` output — nightly to object
+   storage, 30 days daily and 12 months monthly.
+
+Only point 2 answers Lute's "export independently" requirement. The two are easy to conflate
+and he asked for both.
+
+### ⚠️ One code fix is required before any production cutover
+
+`evaluateMigrationGate` refuses anything whose `APP_MIGRATION_ENVIRONMENT` is not `"sandbox"`,
+and `runRequiredMigrationsAtStartup` **throws** when migrations are enabled but not eligible.
+Against a production database the server would refuse to boot. The gate needs a production
+path, with stricter confirmation than sandbox. This has to land before step 7 below.
+
+### Migration plan — revised 2026-09-11
+
+Rewritten after Kyle confirmed there is no operational data to preserve. The original plan was
+shaped around moving a live dataset safely; that risk is gone.
+
+| # | Step | State |
+|---|---|---|
+| 1 | Neon account with Lute as owner, us added — access separate from the start | Done, on the user's account for now; ownership to move to Lute |
+| 2 | Two branches: `production` (default) and `development` | Done |
+| 3 | **Recreate the project in `us-west-2`** to match where Replit runs | **Do this next** — free now, expensive later |
+| 4 | `drizzle-kit push` the schema into `development` | Done once; redo after step 3 |
+| 5 | Point Replit development at Neon (`DATABASE_URL`) and set `APP_MIGRATIONS_ENABLED = "true"` | Next |
+| 6 | Run the calendar backfill migrations there, from a clean database | Next |
+| 7 | Fix the migration gate to allow a production environment | Before step 8 only |
+| 8 | Create the schema in `production` and verify it matches `development` | Not started |
+| 9 | Nightly `pg_dump` export to object storage — Lute's "export independently" requirement | Not started |
+| 10 | Prove a restore into a scratch database before calling this finished | Not started |
+| 11 | Document connection, migration, backup and restore | Not started |
+
+**Dropped from the original plan:** copying production data across and verifying row counts;
+the out-of-hours cutover window; leaving the Replit database read-only for two weeks. All three
+existed to protect data that does not exist.
+
+**Step 3 is the one with a deadline.** The Neon project sits in `us-east-2` while Replit runs in
+`us-west-2` — roughly 60 ms per round trip between them, on every query. While both branches are
+empty this is a delete-and-recreate. Once Kyle is testing against it, it is a data migration.
+
+**Settled:** Lute asked for separate dev and production; the user at one point said a single
+database. Neon branches give both readings what they want — one project, one bill, two isolated
+databases — so this is no longer open.
+
+---
+
+## Architecture — asked and answered 2026-09-07
+
+The user asked whether to restructure the codebase into MVC, with models and controllers in
+separate folders, for future scalability.
+
+**Measured first:**
+
+| Layer | State |
+|---|---|
+| Models | Already separate — 59 schema files in their own package, `lib/db` |
+| Controllers | Present but fat — **18,324 lines** across `routes/`, `jobs.ts` alone 1,371 |
+| Domain logic | 12 `*-core.ts` pure modules — a good pattern, applied inconsistently |
+
+**Decision: no big-bang restructure. Adopt the layering on new code, and migrate old code as we
+touch it.**
+
+Reasoning:
+
+- **"MVC" is the wrong label here — there is no View.** This is a headless API with a separate
+  React SPA. What is actually wanted is layering: routes → services → repositories → models.
+  Calling it MVC invites confusion about where the V went.
+- **The `*-core.ts` pattern is the codebase's best asset and a classic MVC refactor would
+  destroy it.** Those modules are dependency-free, which is precisely why ~400 server tests run
+  with no database. Fat models would take that away.
+- **Timing.** Lute asked explicitly that feature work not stall, and the database move is
+  already in flight. Two structural changes at once means debugging both together.
+- **`estimate-appointment-contract.test.ts:227-308` regex-matches the source text of
+  `quotes.ts`** and asserts an exact stage list. A restructure breaks it, and it guards a real
+  invariant.
+
+Target shape, to be used for Step 2 since it is entirely new code:
+
+```
+routes/schedule-queue.ts         HTTP only — parse, authorize, respond
+services/schedule-queue.ts       business rules, transactions
+repositories/schedule-entry.ts   Drizzle queries, no rules
+lib/schedule-queue-core.ts       pure decisions, no I/O
+lib/db/src/schema/*.ts           models (already there)
+```
+
+This sets the pattern at zero risk, then `jobs.ts` gets extracted when Step 4 touches it.
+
+---
+
 ## Environment gotchas
 
 - **`node_modules` was found broken on 2026-09-05 and has been repaired.** Every top-level
@@ -687,8 +1082,17 @@ They need at least one job in `scheduled` status, ideally two on one day sharing
   pass, the one failure being a Windows path bug inside `src/lib/auth-scope.test.ts` that
   builds `E:\E:\Projects\...`. Treat both as the baseline.
 - **Playwright MCP is configured** in `.mcp.json` at the repo root (`npx -y @playwright/mcp`),
-  with Chromium installed. Browser tools require a session restart to load. Useful for testing
-  the calendar for real — drag-and-drop, overlap warnings, month paging.
+  with Chromium installed. Browser tools require a session restart to load, and the server has
+  timed out on connect at least once (30s) — retry rather than assuming it is missing. It was
+  used to test the deployed calendar on 2026-09-06 and is the fastest way to check a deploy
+  actually landed.
+- **Probe an endpoint to tell whether a deploy landed.** The footer's "Rev" number comes from
+  `artifacts/crm/src/version.ts`, which has not changed since the initial import, so it is
+  useless for identifying a build. `GET /api/calendar/totals` returning 404 versus 200 was what
+  actually settled it.
+- **Replit's workspace and its published app are two different things.** Pulling code into the
+  workspace does not change `sandbox-2-data-free-corsteadllc.replit.app`; that needs a
+  Republish. The user could not republish until Lute granted Publisher access.
 - **Never run `git commit` or `git push`.** Give the user the commit message to paste.
 - `lib/db/src/schema/communication-safety-immutability.sql` is **not referenced by any code**
   — a manual DBA artifact. Its append-only triggers cover only

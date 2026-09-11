@@ -328,6 +328,12 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { prefix: "/jobs", methods: ["GET"], capability: "jobs.view" },
   { prefix: "/jobs", capability: "jobs.manage" },
   { prefix: "/schedule", methods: ["GET"], capability: "schedule.view" },
+  // The queue is scheduling work, so reading it needs schedule authority and
+  // moving anything through it needs the authority to schedule. Listed before
+  // nothing in particular — `/schedule-queue` does not match the `/schedule`
+  // prefix rule above, which requires an exact match or a `/schedule/` path.
+  { prefix: "/schedule-queue", methods: ["GET"], capability: "schedule.view" },
+  { prefix: "/schedule-queue", capability: "schedule.manage" },
   { prefix: "/recurring-plans", methods: ["GET"], capability: "recurring_plans.view" },
   { prefix: "/recurring-plans", capability: "recurring_plans.manage" },
   { prefix: "/services", methods: ["GET"], capability: "services.view" },
