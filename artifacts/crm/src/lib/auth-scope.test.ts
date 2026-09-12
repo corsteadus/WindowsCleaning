@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AUTH_INVALID_EVENT, AUTH_REVALIDATE_EVENT, authScopeFingerprint, authScopedQueryKey, mandatoryAuthScopeQueryHash,
   setActiveAuthScopeFingerprint,
@@ -131,12 +132,17 @@ test("authenticated API callers use protectedFetch; only documented public/presi
 
 test("raw-fetch audit leaves no authenticated /api bypass", () => {
   const srcRoot = new URL("../", import.meta.url);
-  const rootPath = srcRoot.pathname;
+  // `.pathname` yields "/E:/…" on Windows, which resolves against the current
+  // drive as "E:\E:\…" and makes this audit throw rather than run. An audit
+  // that cannot run protects nothing.
+  const rootPath = fileURLToPath(srcRoot);
   const files = readdirSync(rootPath, { recursive: true }) as string[];
   const bypasses = files
     .filter((file) => /\.(ts|tsx)$/.test(file) && !file.endsWith(".test.ts"))
     .map((file) => [relative(rootPath, join(rootPath, file)), readFileSync(join(rootPath, file), "utf8")] as const)
     .filter(([, source]) => /\bfetch\(\s*[`'"][^`'"]*\/api/.test(source))
-    .map(([file]) => file);
+    // `relative` returns the platform separator, so compare in one spelling
+    // rather than asserting a POSIX path that Windows can never produce.
+    .map(([file]) => file.replaceAll("\\", "/"));
   assert.deepEqual(bypasses, ["pages/PublicEstimate.tsx"]);
 });

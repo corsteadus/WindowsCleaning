@@ -30,6 +30,7 @@ import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { hasClientCapability } from "@/lib/rbac";
 import { getScheduleEmptyStateCopy } from "@/lib/schedule-empty-state";
 import { MonthCalendar } from "@/components/MonthCalendar";
+import { SchedulingQueue } from "@/components/SchedulingQueue";
 import { DEFAULT_WEEK_START, shiftMonth } from "@/lib/calendar-grid";
 import {
   startOfWeek, endOfWeek, addWeeks, subWeeks,
@@ -188,6 +189,64 @@ function RescheduleModal({ job, onClose }: { job: JobLike | null; onClose: () =>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─── DueForServiceGrid ───────────────────────────────────────────────────────
+
+/**
+ * Recurring plans coming due, spec §4.1's third tab.
+ *
+ * Extracted so the scheduling queue's "Repeat Service Due" tab and the
+ * standalone fallback panel render the same cards. The queue sources this from
+ * `/recurring-plans/due` rather than from `schedule_entries`, because a plan
+ * that is due has not produced a job yet — there is nothing to have an entry.
+ */
+function DueForServiceGrid({ plans, canManageSchedule, onSchedule }: {
+  plans: DuePlan[];
+  canManageSchedule: boolean;
+  onSchedule: (plan: DuePlan) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+      {plans.map((plan) => {
+        const isOverdue  = plan.dueStatus === "overdue";
+        const isDueToday = plan.dueStatus === "due_today";
+        return (
+          <div
+            key={plan.id}
+            className={`bg-white rounded-xl border p-3 flex flex-col gap-2 ${
+              isOverdue ? "border-red-200" : isDueToday ? "border-amber-200" : "border-rose-100"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-1">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800 text-sm truncate">{plan.customerName}</p>
+                <p className="text-xs text-slate-500 truncate">{plan.serviceType ?? plan.name}</p>
+              </div>
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                isOverdue  ? "bg-red-100 text-red-700" :
+                isDueToday ? "bg-amber-100 text-amber-700" :
+                             "bg-rose-100 text-rose-700"
+              }`}>
+                {isOverdue  ? `${Math.abs(plan.daysUntilDue)}d overdue` :
+                 isDueToday ? "Due today" :
+                 `Due in ${plan.daysUntilDue}d`}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] text-slate-400">{plan.nextRunDate}</p>
+              {canManageSchedule && <button
+                onClick={() => onSchedule(plan)}
+                className="text-[11px] font-semibold text-primary hover:underline"
+              >
+                Schedule →
+              </button>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -449,6 +508,12 @@ export default function Schedule() {
   const [weekOffset,    setWeekOffset]    = useState(0);
   const [rescheduleJob, setRescheduleJob] = useState<JobLike | null>(null);
   const [showDue,       setShowDue]       = useState(true);
+  /**
+   * True once the queue endpoint has failed server-side, which brings back the
+   * pre-queue panels. It starts false so the older lists do not flash on every
+   * load before the queue answers.
+   */
+  const [queueDown,     setQueueDown]     = useState(false);
   const [view,          setView]          = useState<"week" | "month">("week");
   // Month view tracks its own position: paging months through a week offset
   // would make "next" mean different distances in the two views.
@@ -687,9 +752,31 @@ export default function Schedule() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════
-           DUE-FOR-SERVICE PANEL
+           SCHEDULING QUEUE — spec §4: Ready to Schedule / On Hold / Repeat Service Due
       ══════════════════════════════════════════════════════════════ */}
-      {showDue && dueCount > 0 && (
+      <div className="mb-5">
+        <SchedulingQueue
+          canManage={canManageSchedule}
+          onUnavailable={setQueueDown}
+          dueTab={canViewDuePlans ? {
+            count: dueCount,
+            content: dueCount > 0 ? (
+              <DueForServiceGrid
+                plans={duePlans}
+                canManageSchedule={canManageSchedule}
+                onSchedule={(plan) => navigate(
+                  `/jobs/new?customerId=${plan.customerId}&recurringPlanId=${plan.id}&date=${plan.nextRunDate ?? ""}`,
+                )}
+              />
+            ) : null,
+          } : undefined}
+        />
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+           DUE-FOR-SERVICE PANEL — kept only while the queue is unreachable
+      ══════════════════════════════════════════════════════════════ */}
+      {queueDown && showDue && dueCount > 0 && (
         <div className="mb-5 bg-rose-50 border border-rose-200 rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between gap-2.5 px-4 py-3 border-b border-rose-200">
             <div className="flex items-center gap-2.5">
@@ -709,52 +796,30 @@ export default function Schedule() {
               Hide
             </button>
           </div>
-          <div className="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-            {duePlans.map((plan) => {
-              const isOverdue  = plan.dueStatus === "overdue";
-              const isDueToday = plan.dueStatus === "due_today";
-              return (
-                <div
-                  key={plan.id}
-                  className={`bg-white rounded-xl border p-3 flex flex-col gap-2 ${
-                    isOverdue ? "border-red-200" : isDueToday ? "border-amber-200" : "border-rose-100"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-slate-800 text-sm truncate">{plan.customerName}</p>
-                      <p className="text-xs text-slate-500 truncate">{plan.serviceType ?? plan.name}</p>
-                    </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                      isOverdue  ? "bg-red-100 text-red-700" :
-                      isDueToday ? "bg-amber-100 text-amber-700" :
-                                   "bg-rose-100 text-rose-700"
-                    }`}>
-                      {isOverdue  ? `${Math.abs(plan.daysUntilDue)}d overdue` :
-                       isDueToday ? "Due today" :
-                       `Due in ${plan.daysUntilDue}d`}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[10px] text-slate-400">{plan.nextRunDate}</p>
-                     {canManageSchedule && <button
-                      onClick={() => navigate(`/jobs/new?customerId=${plan.customerId}&recurringPlanId=${plan.id}&date=${plan.nextRunDate ?? ""}`)}
-                      className="text-[11px] font-semibold text-primary hover:underline"
-                    >
-                      Schedule →
-                     </button>}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="p-3">
+            <DueForServiceGrid
+              plans={duePlans}
+              canManageSchedule={canManageSchedule}
+              onSchedule={(plan) => navigate(
+                `/jobs/new?customerId=${plan.customerId}&recurringPlanId=${plan.id}&date=${plan.nextRunDate ?? ""}`,
+              )}
+            />
           </div>
         </div>
       )}
 
       {/* ══════════════════════════════════════════════════════════════
-           UNSCHEDULED JOBS — HIGH PRIORITY SECTION
+           UNSCHEDULED JOBS — the queue's predecessor, kept as a fallback
+
+           The scheduling queue above supersedes this. It is still rendered
+           when the queue endpoint cannot be reached, because the backfill that
+           fills the queue runs at server startup: between deploying this build
+           and enabling migrations there is a window where the queue has no
+           table to read, and the office must not be left with nothing.
+
+           Delete this block once the queue has run in production for a while.
       ══════════════════════════════════════════════════════════════ */}
-      {!loadingUnscheduled && unscheduledCount > 0 && (
+      {queueDown && !loadingUnscheduled && unscheduledCount > 0 && (
         <div className="mb-5 bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
           {/* Section header */}
           <div className="flex items-center gap-2.5 px-4 py-3 border-b border-amber-200">

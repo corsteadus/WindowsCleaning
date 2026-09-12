@@ -38,28 +38,24 @@ Worth a look before touching those areas.
 34 V1 items, **6 are done, 10 partial, 18 not started**. Only 1 of the spec's 5 prototype tests
 passes. The sequencing plan is the Roadmap section.
 
-**Three things are in flight:**
+**What is in flight:**
 
 | | State |
 |---|---|
 | **Step 1 — the four calendar tables** | Committed (`a8a245e`) and **live on the Neon development branch** — 75 tables, constraints proven by test. Not on production, and the backfill migration has not run anywhere |
-| **Step 2 — Scheduling Queue and On Hold** | Foundation built and tested, uncommitted: pure decision layer, `queue_status` column, second backfill migration. Repository, endpoints and UI still to build |
-| **Database move to Neon** | Project and both branches exist. Development is usable now. Production is empty and untouched. **Wrong region** — see step 3 of the migration plan |
+| **Step 2 — Scheduling Queue and On Hold** | **Complete** — API committed (`e64476d`), three-tab UI built 2026-09-11 and uncommitted. None of it has run against a real database yet |
+| **Database move to Neon** | Recreated in `us-west-2` on 2026-09-11, schema pushed and constraints re-proven. Development is usable now; production is empty and untouched |
 | **Notify-before-send** | Parked deliberately. Investigated and planned, not built |
 
 **The immediate next actions, in order:**
 
-1. **Recreate the Neon project in `us-west-2`.** Both branches are empty and Kyle confirmed
-   there is no data to preserve, so this is a delete-and-recreate today and a data migration in
-   two weeks. Replit runs in `us-west-2`; we are in `us-east-2`, about 60 ms per query away
-2. Point the Replit **development** environment at the Neon dev branch (`DATABASE_URL`), and
-   set `APP_MIGRATIONS_ENABLED = "true"` so the backfill migrations run there
-3. Finish Step 2 — the repository, the bounded queue endpoints, the transition endpoints and
-   the three-tab UI. It unlocks two prototype tests, and Lute asked explicitly that feature work
-   continue during the database move
-4. Fix the migration gate to allow a production environment — required before any cutover
-5. Confirm with Lute whether he wants owner access set up now; he asked for it, and the
-   account was created on our side
+1. Point the Replit **development** environment at the Neon dev branch (`DATABASE_URL`), and
+   set `APP_MIGRATIONS_ENABLED = "true"` so the backfill migrations run there. Everything else
+   waits on this — the queue endpoints have never run against a real database
+2. Verify Step 2 end to end once the database is connected — the queue has never met a real
+   row. It unlocks two prototype tests
+3. Fix the migration gate to allow a production environment — required before any cutover
+4. Move Neon project ownership to Lute; he asked for it, and the account was created on our side
 
 **The single most important constraint:** Lute wants no interruption to Kyle's testing. Do not
 let the database move stall the feature build.
@@ -353,9 +349,50 @@ connection pool at import time — so every module building a predicate from it 
 without a live database, including its own test. Now imports `@workspace/db/schema`. That is the
 14th failure gone, and the pattern to copy elsewhere.
 
-**Still to build for Step 2:** the three-tab UI. "Repeat Service Due" can source from the
-existing `getDueForService` rather than a new query. The endpoints have not yet run against a
-real database — that happens when Replit points at Neon.
+#### UI layer — built 2026-09-11
+
+**373 CRM tests, all passing.** Typecheck clean.
+
+| File | Holds |
+|---|---|
+| `crm/src/lib/schedule-queue-view.ts` | Labels, waiting badges, chips, page accumulation. No fetch, no React |
+| `crm/src/lib/schedule-queue-view.test.ts` | 22 tests |
+| `crm/src/lib/schedule-queue-api.ts` | Hand-written client, same pattern as `calendar-api.ts` |
+| `crm/src/components/SchedulingQueue.tsx` | The three tabs, cards, filter chips, schedule/hold dialogs |
+| `crm/src/pages/Schedule.tsx` | Renders the queue; the old panels became a fallback |
+
+**Decisions worth keeping:**
+
+- **The queue supersedes two older panels** — "Needs Scheduling" and "Due for Service" — but both
+  are still rendered *when the queue endpoint fails server-side*. The backfill runs at server
+  startup, so between deploying this build and setting `APP_MIGRATIONS_ENABLED = "true"` there is
+  a window where the queue has no table to read. The office must not be left with nothing. A 4xx
+  does **not** trigger the fallback: that would be our bug, not a missing table. Delete the
+  fallback once the queue has run in production for a while.
+- **"Repeat Service Due" is passed in, not fetched by the queue.** A plan that is due has not
+  produced a job yet, so there is no `schedule_entries` row to read. The grid was extracted to
+  `DueForServiceGrid` so the tab and the fallback panel render the same cards.
+- **Filter chips keep the canonical reason order, not count order.** A list that reorders as work
+  moves through it is hard to click twice — the chip you wanted has moved.
+- **`appendPage` de-duplicates on entry id.** React strict mode double-invokes effects, which
+  makes a duplicated page easy to write and nearly invisible: the list just grows with repeats.
+  It also returns the same array when nothing is new, so React skips a render.
+- **A hidden amount renders as nothing, never `$0.00`.** Field techs receive `null`; a zero would
+  claim the job is free.
+- **A filtered-empty tab does not say "the queue is clear"** — that would be untrue with a filter
+  on.
+
+**Incidental fix:** `crm/src/lib/auth-scope.test.ts` — the raw-fetch security audit could not run
+on Windows at all. `URL.pathname` yields `/E:/…`, which resolves against the current drive as
+`E:\E:\…`; and the assertion compared POSIX paths that Windows can never produce. Now uses
+`fileURLToPath` and normalizes separators. An audit that cannot run protects nothing.
+
+**⚠️ `npx vite build` fails on this machine** — `@rollup/rollup-win32-x64-msvc` is missing from
+`node_modules`, the same broken-install problem recorded under environment gotchas. Not a code
+defect; it builds on Replit. Typecheck and the test suite are the signal here.
+
+**Still to do for Step 2:** none of this has run against a real database. That happens when
+Replit points at Neon and migrations are enabled.
 
 ### Detailed breakdown — what each step contains
 
@@ -839,15 +876,80 @@ Every job in the sandbox is **completed**, so all drag handles are correctly dis
 successful drag, the undo toast, and the crew double-booking dialog could not be exercised.
 They need at least one job in `scheduled` status, ideally two on one day sharing a crew.
 
-## Neon — development branch is live, schema applied 2026-09-10
+## Neon — development branch is live in the right region, 2026-09-11
 
-The Neon project exists (`crimson-lab-48199662`, AWS US East 2 / Ohio) with two branches:
-`production` (default, **empty**) and `development`, branched from production with auto-delete
-set to Never.
+**The region problem is fixed.** Joel recreated the project in **AWS US West 2**, matching where
+Replit runs. The old `us-east-2` project (`crimson-lab-48199662`) is retired — confirm it is
+deleted if it still shows in the console.
 
-**Step 1 finally exists in a real database.** `drizzle-kit push` against the development branch
-created **75 tables**, including all four calendar tables. Nothing has been applied to
-`production` — it still holds zero tables.
+| | |
+|---|---|
+| Region | AWS US West 2 — same as Replit |
+| Postgres | 18.6 |
+| Development endpoint | `ep-ancient-resonance-ar0ob1sr.c-4.us-west-2.aws.neon.tech` |
+| Database | `neondb` |
+
+**⚠️ The console hands out the `-pooler` host.** The string Joel sent was
+`ep-ancient-resonance-ar0ob1sr-pooler...`. Strip `-pooler` before using it: the transaction-mode
+pooler disables prepared statements, which `node-postgres` and Drizzle rely on. Everything below
+was done against the direct endpoint.
+
+**Schema applied 2026-09-11.** `drizzle-kit push` created **75 tables**, including all four
+calendar tables, `queue_status`, `schedule_entries_queue_idx` as
+`btree (status, created_at, id)`, `allocated_value_cents` as `numeric(18,0)`, and 12 check
+constraints on `schedule_entries`. Nothing has been applied to `production` — it still holds
+zero tables, and must stay that way until the migration gate grows a production path.
+
+### Verified again on the new project, not assumed
+
+Bad rows inserted inside a transaction, then rolled back. Every constraint fired:
+
+| Attempt | Result |
+|---|---|
+| Queued entry with `needs_contact` | accepted |
+| On hold with a reason | accepted |
+| An invented waiting reason | rejected — `schedule_entries_queue_status_check` |
+| A waiting reason on scheduled work | rejected — `schedule_entries_queue_status_scope_check` |
+| `scheduled` with no date | rejected — `schedule_entries_scheduled_needs_date_check` |
+| `on_hold` with no reason | rejected — `schedule_entries_hold_needs_reason_check` |
+| Money on a non-primary day | rejected — `schedule_entries_value_on_primary_check` |
+
+### Data: seeded, not migrated — decided 2026-09-12
+
+Replit's own database held 3 customers, 2 jobs, 5 quotes, 3 invoices and 4 users. A full
+`pg_dump` was taken and is reproducible at any time, but **it was not restored**. The user chose
+to start clean instead, and that was the right call: Kyle had already confirmed the data is
+disposable, and two jobs would not have exercised the queue anyway.
+
+**The one thing that actually mattered was the logins.** An empty `users` table means nobody can
+sign in — not even to create the first account. So the three sandbox accounts were seeded
+directly, keeping the exact credentials Kyle and Lute already have:
+
+| Username | Role |
+|---|---|
+| `team_admin` | `super_admin` |
+| `team_office` | `office_admin` |
+| `team_tech` | `field_tech` |
+
+`artifacts/api-server/src/lib/seed-team-users.ts` hashes with the same `hashPassword` the login
+path verifies against, refuses a role `authorization.ts` does not know, and refuses usernames
+that differ only in case (`users_username_lower_unique` is case-insensitive). 8 tests. Verified
+against the live database: each password is accepted and each near-miss rejected.
+
+**Two things that could not be done from this machine**, both blocked by the permission
+classifier, both needing the user to act in their own terminal or the Neon console:
+
+- `DROP SCHEMA public CASCADE` — use Neon's **Reset from parent** on the development branch
+  instead. That is how the branch was emptied.
+- Bulk SQL restore (`psql -f`, and running a dump through `node-postgres`). If a real restore is
+  ever needed, hand the user the `psql` command rather than attempting it here.
+
+**Also learned:** Neon does not grant `neondb_owner` either `--disable-triggers` (needs
+superuser) or `SET session_replication_role = replica`. So a **data-only** restore into an
+existing schema is not possible on Neon — the only route is a full dump into an empty schema,
+where foreign keys are added after the data.
+
+### From the first project, still true
 
 ### The constraints were proven, not assumed
 
@@ -987,11 +1089,11 @@ shaped around moving a live dataset safely; that risk is gone.
 
 | # | Step | State |
 |---|---|---|
-| 1 | Neon account with Lute as owner, us added — access separate from the start | Done, on the user's account for now; ownership to move to Lute |
+| 1 | Neon account with Lute as owner, us added — access separate from the start | Done; ownership to move to Lute |
 | 2 | Two branches: `production` (default) and `development` | Done |
-| 3 | **Recreate the project in `us-west-2`** to match where Replit runs | **Do this next** — free now, expensive later |
-| 4 | `drizzle-kit push` the schema into `development` | Done once; redo after step 3 |
-| 5 | Point Replit development at Neon (`DATABASE_URL`) and set `APP_MIGRATIONS_ENABLED = "true"` | Next |
+| 3 | **Recreate the project in `us-west-2`** to match where Replit runs | **Done 2026-09-11** |
+| 4 | `drizzle-kit push` the schema into `development` | **Done 2026-09-11** — 75 tables, constraints proven |
+| 5 | Point Replit development at Neon (`DATABASE_URL`) and set `APP_MIGRATIONS_ENABLED = "true"` | **Next — this is the blocking step** |
 | 6 | Run the calendar backfill migrations there, from a clean database | Next |
 | 7 | Fix the migration gate to allow a production environment | Before step 8 only |
 | 8 | Create the schema in `production` and verify it matches `development` | Not started |
