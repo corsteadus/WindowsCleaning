@@ -8,6 +8,7 @@ import { dashboardReportingIndexesV1Migration } from "./dashboard-reporting-inde
 import { crewAssignmentGraphV1Migration } from "./crew-assignment-graph-v1.ts";
 import { calendarScheduleEntriesV1Migration } from "./calendar-schedule-entries-v1.ts";
 import { calendarQueueEntriesV1Migration } from "./calendar-queue-entries-v1.ts";
+import { calendarEntrySyncV1Migration } from "./calendar-entry-sync-v1.ts";
 
 export type MigrationEnvironment =
   | "sandbox"
@@ -82,6 +83,7 @@ export const REQUIRED_MIGRATIONS = [
   crewAssignmentGraphV1Migration,
   calendarScheduleEntriesV1Migration,
   calendarQueueEntriesV1Migration,
+  calendarEntrySyncV1Migration,
 ] as const;
 
 export class MigrationGateError extends Error {

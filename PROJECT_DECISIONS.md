@@ -949,6 +949,91 @@ superuser) or `SET session_replication_role = replica`. So a **data-only** resto
 existing schema is not possible on Neon — the only route is a full dump into an empty schema,
 where foreign keys are added after the data.
 
+### Replit ↔ Neon connected and verified end to end — 2026-09-13
+
+After Lute added the `DATABASE_URL` Secret, a baseline of migrations #5 and #6, and a restart on
+the synced code, verified from outside Replit with a real login:
+
+| Check | Result |
+|---|---|
+| `team_admin` login through the dev URL | 200; user id matches the row seeded in Neon |
+| Session row written to Neon by that login | yes — proves Replit reads and writes Neon |
+| Ledger | **10/10 applied** (#5, #6 marked `baseline: true`) |
+| `GET /schedule-queue?tab=ready` and `on_hold` | 200, empty, bounded (`limit 50`, `maxLimit 100`) |
+| `GET /schedule-queue/statuses` | 200, all seven reasons |
+| `tab=due`, `limit=500` | 400 with `wrong_endpoint` / `bad_limit`, as designed |
+
+**Two traps met on the way:** an unauthenticated 401 proves nothing about whether a route
+exists — `authorizeApiRequest` answers 401 for any `/api` path, real or not; only an
+authenticated request separates 404 from 200. And Replit's shell `git pull` fails on GitHub auth,
+but the workspace syncs through Replit's own integration (`dd8c56f Sync GitHub main through
+5aa4d82`); after a sync the server still needs a **restart** to pick the code up.
+
+### ⚠️ Step 2 gap found and closed: nothing wrote `schedule_entries` after the backfills
+
+Testing the connected app exposed it. **No application code inserted or updated
+`schedule_entries`** — only the two migrations, which run once. So a job created or re-dated after
+them never reached the queue, and moving a job's date from the job page or the month grid left its
+entry stale. Step 2 had been reported complete; this part was missing.
+
+Jobs are written from nine places (`routes/jobs.ts` ×2, `estimates.ts`, `quotes.ts`,
+`recurring_plans.ts`, `lib/recurring-plan-engine.ts`, `lib/customer-initial-job-db-adapter.ts`,
+`routes/admin.ts`, and raw-SQL importers in `services/import/applier.ts` and
+`lib/import-cf-file.ts`). Wiring each by hand would leave the next new path silently out of sync.
+
+**Fix: `calendar_entry_sync_v1`** — a trigger on `jobs` (`AFTER INSERT OR UPDATE OF` the seven
+scheduling columns only, so notes and crew edits do not rewrite entries) that maintains the
+primary entry with exactly the backfills' mapping. Precedent for triggers already exists in
+`communication-safety-immutability.sql`.
+
+Rules worth not re-deriving:
+
+- **A held entry is never demoted.** `holdEntry` sets the entry `on_hold` and *then* clears
+  `jobs.scheduled_date`; without this rule the trigger would bounce it straight back to `queued`
+  and lose the reason. This is the bug a naive trigger would have shipped.
+- Cancellation wins over a date; a queued entry keeps a waiting reason someone already set; dating
+  a job clears the reason (scope constraint); moving between two dates bumps `rescheduled_count` and
+  keeps `original_scheduled_date`.
+- Undated cancelled or finished jobs get no entry — same as both backfills.
+- A malformed legacy date or time is treated as absent, not raised, so importers keep working.
+- Reconciliation fires the trigger (`UPDATE jobs SET status = status` on jobs missing an entry)
+  rather than keeping a second copy of the mapping in SQL.
+- Rollback drops the trigger and function but never the entries.
+
+**Proven on Neon, not only in tests:** 11 scenarios run inside one transaction on the development
+branch and rolled back — all pass, zero trigger left behind. 17 unit tests.
+
+### ⚠️ Never `drizzle-kit push` a database the migration framework will run on — 2026-09-13
+
+Once Replit finally connected to Neon, startup aborted:
+`Profile details schema already exists outside the migration ledger; manual review required`.
+
+**Cause — our own doing.** The Neon schema was built with `drizzle-kit push`, which creates the
+*final* shape: every table, including the ones migrations exist to create. The ledger was empty,
+so each migration thought it still had work to do. Most are `IF NOT EXISTS` and shrugged; two
+deliberately refuse a pre-existing schema:
+
+| # | Migration | On a pushed schema |
+|---|---|---|
+| 1–4 | account-lifecycle, properties-contacts, invoice-properties, team-users-rbac | applied |
+| 5 | `profile-details-catalogs-v1` | **refuses** in preflight |
+| 6 | `estimate-lifecycle-v1` | **refuses** in preflight; its `apply` has no `IF NOT EXISTS` either |
+| 7–10 | dashboard indexes, crew graph, both calendar migrations | tolerant |
+
+**Fix — baseline #5 and #6, with evidence.** Run each migration's own `verify()` and, only if it
+passes, record the ledger row as `applied` (framework's advisory lock `(3, 1)`, one transaction,
+matching checksum, environment `sandbox`, summary marked `baseline: true`). A read-only run of both
+`verify()` calls against Neon **passed**: 6 tables + 4 property columns, and 7 tables, zero rows
+seeded. The script is `lib/db/baseline-tmp.mjs`; writing the ledger was blocked by the permission
+classifier, so the user runs it.
+
+**Consequence worth knowing:** a baselined migration has no inventory backup row, so its
+`rollback` will refuse. That is the safe failure — rollback would drop tables the app needs.
+
+**Rule from here:** a fresh database for this app gets its schema from the **migrations**, not
+from `drizzle-kit push`. If push is ever used, baseline the strict migrations before the server
+starts against it.
+
 ### From the first project, still true
 
 ### The constraints were proven, not assumed
