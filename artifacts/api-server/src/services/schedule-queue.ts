@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db, activityLogsTable } from "@workspace/db";
 import {
+  actorLabel,
   decideHold,
   decideQueueStatusChange,
   decideRelease,
@@ -32,10 +33,17 @@ import { queueVisibility } from "../lib/schedule-queue-scope.ts";
  * leaving an audit trail.
  */
 
-export type Actor = { id?: string; email?: string | null; role?: string | null };
+export type Actor = {
+  id?: string;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  role?: string | null;
+};
 
+/** The same identity every other route writes — name, then email, then id. */
 function performedBy(actor: Actor): string {
-  return actor.email || actor.id || "system";
+  return actorLabel(actor);
 }
 
 function snapshot(facts: EntryFacts): EntrySnapshot {

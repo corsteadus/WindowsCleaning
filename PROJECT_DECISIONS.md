@@ -1003,6 +1003,30 @@ Rules worth not re-deriving:
 **Proven on Neon, not only in tests:** 11 scenarios run inside one transaction on the development
 branch and rolled back — all pass, zero trigger left behind. 17 unit tests.
 
+**Deployed and tested end to end on the live dev app, 2026-09-13** (commit `7e838fb`, ledger 11/11,
+trigger enabled). Driven through the real HTTP API as `team_admin`, against the Replit dev URL —
+16 of 16 checks passed:
+
+- A job created with no date appears in Ready to Schedule as Needs Contact with its whole value
+- Changing the waiting reason, hold (moves to On Hold with its reason, leaves Ready), release
+  (back as Ready to Schedule) and schedule from queue (leaves both tabs) all work
+- The job page shows the new date and `scheduled` status — the legacy mirror stays in sync
+- Holding twice and scheduling twice both return 409 `already_there`
+- Clearing the date through the ordinary `PATCH /jobs/:id` puts the job back in the queue — the
+  trigger covering a path the queue service never touches
+
+Test customer and job were deleted through the API afterwards. Playwright MCP failed to connect
+in that session, so this was HTTP-level, not a browser run: the three-tab UI itself has still not
+been clicked through.
+
+**One defect the run surfaced, fixed afterwards:** the queue service wrote the user's *email* to
+`performed_by` (`team_admin@corstead.test`) while every other route writes the *name*
+(`Team Admin`) — one person under two identities in the same activity feed. The rest of the app
+uses name → email → id (`getPerformedBy`, copied across eight route files); the queue now uses the
+same order through `actorLabel` in `lib/schedule-queue-core.ts`, tested. Needs a deploy to reach
+Replit. The E2E run left nine `activity_logs` rows for the deleted test customer (id 2); they
+carry no foreign key, so they outlive it. Harmless, left in place.
+
 ### ⚠️ Never `drizzle-kit push` a database the migration framework will run on — 2026-09-13
 
 Once Replit finally connected to Neon, startup aborted:

@@ -27,7 +27,13 @@ import {
 const router: IRouter = Router();
 
 function actorOf(req: Request): Actor {
-  return { id: req.user?.id, email: req.user?.email ?? null, role: req.user?.role ?? null };
+  return {
+    id: req.user?.id,
+    email: req.user?.email ?? null,
+    firstName: req.user?.firstName ?? null,
+    lastName: req.user?.lastName ?? null,
+    role: req.user?.role ?? null,
+  };
 }
 
 function viewerOf(req: Request) {

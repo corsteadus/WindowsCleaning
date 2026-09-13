@@ -256,3 +256,13 @@ test("a scoped role with no user id sees nothing, not everything", async () => {
   assert.equal(orphan.showAmounts, false);
   assert.notEqual(orphan.jobFilter, queueVisibility(false, undefined).jobFilter);
 });
+
+test("audit identity matches the rest of the app: name, then email, then id", async () => {
+  const { actorLabel } = await import("./schedule-queue-core.ts");
+  assert.equal(actorLabel({ firstName: "Team", lastName: "Admin", email: "a@b.test", id: "u1" }), "Team Admin");
+  assert.equal(actorLabel({ firstName: "Team", lastName: null, email: "a@b.test" }), "Team");
+  // Whitespace-only names fall through, exactly as getPerformedBy does.
+  assert.equal(actorLabel({ firstName: "  ", lastName: "", email: "a@b.test", id: "u1" }), "a@b.test");
+  assert.equal(actorLabel({ id: "u1" }), "u1");
+  assert.equal(actorLabel({}), "system");
+});

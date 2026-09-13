@@ -532,3 +532,22 @@ export function decideQueueStatusChange(
   }
   return { ok: true, queueStatus: next };
 }
+
+/* ── Audit identity ────────────────────────────────────────────────────── */
+
+/**
+ * The name written to `performed_by` and `updated_by`.
+ *
+ * Every other route writes the person's name first, falling back to email and
+ * then id (`getPerformedBy` in jobs.ts and its seven copies). Writing the email
+ * here instead showed one user under two identities in the same activity feed.
+ */
+export function actorLabel(actor: {
+  id?: string | null;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string {
+  const name = [actor.firstName, actor.lastName].filter(Boolean).join(" ").trim();
+  return name || actor.email || actor.id || "system";
+}
