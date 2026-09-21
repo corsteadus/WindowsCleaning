@@ -955,14 +955,58 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
 });
 
 // ─── Delete customer ──────────────────────────────────────────────────────────
+// Neither `properties.customer_id` nor `contacts.customer_id` carries a foreign
+// key, so deleting a customer used to leave their properties and contacts
+// pointing at a row that no longer exists — and took their jobs, quotes and
+// invoices out of reach at the same time, without saying so. Work the profile
+// is meant to carry now blocks the delete; the rows that only describe the
+// customer go with them.
 router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void> => {
   const id = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
   const target = isProspectRoute
     ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
     : eq(customersTable.id, id);
-  const [customer] = await db.delete(customersTable).where(target).returning();
-  if (!customer) { res.status(404).json({ error: "Customer not found" }); return; }
+
+  const outcome = await db.transaction(async (tx) => {
+    const [customer] = await tx.select({ id: customersTable.id })
+      .from(customersTable).where(target).limit(1);
+    if (!customer) return { kind: "notFound" as const };
+
+    const history: Array<[string, number]> = [];
+    for (const [label, table] of [
+      ["jobs", jobsTable],
+      ["estimates", quotesTable],
+      ["invoices", invoicesTable],
+      ["payments", paymentsTable],
+    ] as const) {
+      const [row] = await tx.select({ n: sql<number>`count(*)::int` })
+        .from(table).where(eq(table.customerId, id));
+      if (row && row.n > 0) history.push([label, row.n]);
+    }
+    if (history.length) return { kind: "hasHistory" as const, history };
+
+    await tx.delete(propertyAccountRelationshipsTable)
+      .where(eq(propertyAccountRelationshipsTable.customerId, id));
+    await tx.delete(propertiesTable).where(eq(propertiesTable.customerId, id));
+    await tx.delete(contactsTable).where(eq(contactsTable.customerId, id));
+    await tx.delete(customersTable).where(eq(customersTable.id, id));
+    return { kind: "deleted" as const };
+  });
+
+  if (outcome.kind === "notFound") {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  if (outcome.kind === "hasHistory") {
+    res.status(409).json({
+      error: `This customer has ${outcome.history.map(([label, n]) => `${n} ${label}`).join(", ")}. `
+        + "Delete or reassign that work first, or archive the customer instead.",
+      code: "customer_has_history",
+      counts: Object.fromEntries(outcome.history),
+    });
+    return;
+  }
   res.sendStatus(204);
 });
 

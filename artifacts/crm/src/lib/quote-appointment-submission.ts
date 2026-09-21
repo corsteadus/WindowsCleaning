@@ -35,6 +35,11 @@ export type QuoteAppointmentPreparation =
 
 type QuoteAppointmentFormData = Pick<FormData, "get" | "getAll">;
 
+function joinPhrases(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
 function formString(formData: QuoteAppointmentFormData, name: string): string {
   const value = formData.get(name);
   return typeof value === "string" ? value : "";
@@ -105,18 +110,24 @@ export function prepareQuoteAppointment(
   const technicianIsSelectable = draft.assignedUserId !== "unassigned"
     && draft.selectableTechnicianIds.includes(draft.assignedUserId);
 
-  if (
-    !startsAt
-    || !Number.isInteger(durationMinutes)
-    || durationMinutes < 15
-    || durationMinutes > 1440
-    || !technicianIsSelectable
-    || !hasAppointmentLocation(propertyIds)
-    || !locationsAreActiveAndOwned
-  ) {
+  // Name what is actually wrong. The old message listed all five requirements
+  // at once, which told nobody which field to fix.
+  const missing: string[] = [];
+  if (!startsAt) missing.push("a valid date and start time");
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 1440) {
+    missing.push("a duration between 15 minutes and 24 hours");
+  }
+  if (!technicianIsSelectable) missing.push("an active Field or Team Technician");
+  if (!hasAppointmentLocation(propertyIds)) missing.push("a customer location");
+  else if (!locationsAreActiveAndOwned) missing.push("locations that belong to this customer and are still active");
+
+  // `!startsAt` is already in `missing`; repeating it here is what narrows it
+  // to a string for the request below.
+  if (missing.length || !startsAt) {
     return {
       kind: "invalid",
-      message: "Choose a valid Chicago date, time, duration, active Field or Team Technician, and active customer location.",
+      message: `The estimate appointment still needs ${joinPhrases(missing)}. `
+        + "Leave every appointment field blank to save the quote without an appointment.",
     };
   }
 

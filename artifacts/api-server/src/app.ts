@@ -1,10 +1,12 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import { authMiddleware } from "./middlewares/authMiddleware";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { clientErrorResponse } from "./lib/error-response";
 import {
   authorizeApiRequest,
   setAuthenticatedApiCacheHeaders,
@@ -51,12 +53,11 @@ app.use("/api", router);
 // Ensures any unhandled throw inside a route returns JSON, never HTML.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  logger.error({ err }, "Unhandled route error");
-  const status: number = typeof err.status === "number" ? err.status
-    : typeof err.statusCode === "number" ? err.statusCode : 500;
-  const message: string = err.message || "Internal server error";
+  const reference = randomUUID();
+  logger.error({ err, reference }, "Unhandled route error");
+  const { status, body } = clientErrorResponse(err, reference);
   if (!res.headersSent) {
-    res.status(status).json({ error: message });
+    res.status(status).json(body);
   }
 });
 

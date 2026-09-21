@@ -898,7 +898,14 @@ router.delete("/invoices/:id", requireFinancialCapability("invoices.void"), asyn
       res.status(400).json(correctionError);
       return;
     }
-    const [invoice] = await db.delete(invoicesTable).where(eq(invoicesTable.id, id)).returning();
+    // The invoice_jobs rows have no foreign key, so they used to survive the
+    // invoice. DELETE /jobs/:id then refused for ever with invoice_linked_job,
+    // naming an invoice that no longer existed.
+    const invoice = await db.transaction(async (tx) => {
+      await tx.delete(invoiceJobsTable).where(eq(invoiceJobsTable.invoiceId, id));
+      const [deleted] = await tx.delete(invoicesTable).where(eq(invoicesTable.id, id)).returning();
+      return deleted ?? null;
+    });
     if (!invoice) {
       res.status(404).json({ error: "Invoice not found" });
       return;

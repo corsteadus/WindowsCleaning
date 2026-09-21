@@ -308,9 +308,12 @@ export default function QuoteNew() {
   const [estimateNotes, setEstimateNotes] = useState("");
   const [assignedUserId, setAssignedUserId] = useState("unassigned");
   const [appointmentPropertyIds, setAppointmentPropertyIds] = useState<number[]>([]);
+  // Both of these back hidden form fields. They are state, not refs written to
+  // the DOM: an imperatively assigned value is lost the moment the input
+  // remounts, which silently emptied appointmentFallbackPropertyId and made
+  // every scheduled estimate fail validation.
+  const [appointmentDurationTouched, setAppointmentDurationTouched] = useState(false);
   const pendingAppointmentRef = useRef<AppointmentRequest | null>(null);
-  const appointmentDurationTouchedControlRef = useRef<HTMLInputElement>(null);
-  const appointmentFallbackPropertyControlRef = useRef<HTMLInputElement>(null);
   const scheduledCreateIdempotencyKeyRef = useRef(createIdempotencyKey());
   const submissionStartedRef = useRef(false);
 
@@ -395,9 +398,6 @@ export default function QuoteNew() {
   useEffect(() => {
     setPropertyId("");
     setAppointmentPropertyIds([]);
-    if (appointmentFallbackPropertyControlRef.current) {
-      appointmentFallbackPropertyControlRef.current.value = "";
-    }
   }, [customerId]);
 
   // Line item helpers
@@ -447,7 +447,7 @@ export default function QuoteNew() {
       date: appointmentDate,
       time: appointmentTime,
       duration: appointmentDuration,
-      durationTouched: false,
+      durationTouched: appointmentDurationTouched,
       assignedUserId,
       propertyIds: appointmentPropertyIds,
       fallbackPropertyId: propertyId ? Number(propertyId) : null,
@@ -546,11 +546,7 @@ export default function QuoteNew() {
                       customerId={customerId ? Number(customerId) : null}
                       value={propertyId ? Number(propertyId) : ""}
                       onChange={(value) => {
-                        const nextPropertyId = value ? String(value) : "";
-                        setPropertyId(nextPropertyId);
-                        if (appointmentFallbackPropertyControlRef.current) {
-                          appointmentFallbackPropertyControlRef.current.value = nextPropertyId;
-                        }
+                        setPropertyId(value ? String(value) : "");
                       }}
                        defaultPropertyId={
                          (selectedCustomerDetails as CustomerOption | undefined)?.effectiveDefaultPropertyId ??
@@ -740,17 +736,15 @@ export default function QuoteNew() {
               <p className="mt-1 text-xs text-slate-400">Optional. Schedule the on-site estimate; the selected property becomes its first location.</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <input ref={appointmentDurationTouchedControlRef} type="hidden" name="appointmentDurationTouched" defaultValue="false" />
-              <input ref={appointmentFallbackPropertyControlRef} type="hidden" name="appointmentFallbackPropertyId" defaultValue="" />
+              <input type="hidden" name="appointmentDurationTouched" value={String(appointmentDurationTouched)} readOnly />
+              <input type="hidden" name="appointmentFallbackPropertyId" value={propertyId} readOnly />
               <div className="space-y-1.5"><Label>Date</Label><Input name="appointmentDate" type="date" value={appointmentDate} onChange={(e) => setAppointmentDate(e.target.value)} /></div>
               <div className="space-y-1.5"><Label>Start time</Label><Input name="appointmentTime" type="time" value={appointmentTime} onChange={(e) => setAppointmentTime(e.target.value)} /></div>
               <div className="space-y-1.5">
                 <Label>Duration</Label>
                 <Select name="appointmentDuration" value={appointmentDuration} onValueChange={(value) => {
                   setAppointmentDuration(value);
-                  if (appointmentDurationTouchedControlRef.current) {
-                    appointmentDurationTouchedControlRef.current.value = "true";
-                  }
+                  setAppointmentDurationTouched(true);
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

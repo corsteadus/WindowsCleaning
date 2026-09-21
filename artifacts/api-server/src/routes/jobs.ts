@@ -14,6 +14,7 @@ import {
   crewsTable,
 } from "@workspace/db";
 import { customerDisplayName } from "../lib/customer-display.ts";
+import { primaryCustomerPhone } from "../lib/customer-phone.ts";
 import {
   scheduleChangeLock,
   scheduleLockMessage,
@@ -350,7 +351,7 @@ async function getJobWithDetails(id: number, fieldTechUserId?: string) {
           lastName: customer.lastName,
           displayName: `${customer.firstName} ${customer.lastName}`,
           email: customer.email,
-          phone: customer.phone,
+          phone: primaryCustomerPhone(customer),
         }
       : null,
     property: property

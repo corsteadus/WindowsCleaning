@@ -1,6 +1,6 @@
 # Project decisions and working context
 
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-21
 
 ## How to use this file
 
@@ -61,6 +61,104 @@ passes. The sequencing plan is the Roadmap section.
 let the database move stall the feature build.
 
 **Do not** run `git commit` or `git push` — hand the user the message to paste.
+
+---
+
+## We ran Kyle's own lifecycle test against Sandbox 2 — 2026-09-21
+
+Kyle's `Requirements PDFs/Customer Lifecycle Testing - General.pdf` is his nine-step
+acceptance script. We walked all nine steps in a real browser against
+`https://sandbox-2-data-free-corsteadllc.replit.app` as `team_admin` and `team_tech`, before
+he does. Script: `scratchpad/lifecycle.mjs`. Result: **23 checks passed, 5 gaps, 7 failures.**
+
+All test data was removed afterwards; the sandbox is back to its single original prospect.
+**Except** seven orphaned `properties` rows (ids 2–8) — see the data-integrity findings below.
+
+### Blockers — Kyle's test cannot complete today
+
+| # | Finding | Evidence |
+|---|---|---|
+| 1 | **The Service Catalog is empty (0 rows in `services`).** Finalizing an estimate requires at least one catalogue service, so steps 03–05 cannot start at all | `POST /quotes/:id/finalize` → 400 `At least one service is required` |
+| 2 | **Estimate → job conversion is disabled in code**, deliberately, with the implementation commented out awaiting "accepted-estimate scheduling". Both routes refuse | [`routes/quotes.ts:811`](artifacts/api-server/src/routes/quotes.ts) and [`routes/jobs.ts:548`](artifacts/api-server/src/routes/jobs.ts) → 409 `estimate_conversion_deferred` |
+| 3 | **No delivery provider is configured in the sandbox.** Estimate emails and texts are recorded as `provider_unconfigured` and never leave. The public link is real, but has to be copied by hand | `POST /quotes/:id/deliver` delivery row: `status: provider_unconfigured` |
+
+Items 1 and 3 are environment, not code. Item 2 is the one real piece of missing work on the
+test path, and it is exactly the "accepted-estimate scheduling" Kyle's step 05 describes.
+
+### Defects found
+
+| # | Finding | Detail |
+|---|---|---|
+| 4 | **The estimate appointment silently refuses to save.** The form says *"the selected property becomes its first location"*, but choosing the property does **not** tick it under "Estimate locations", and the save is rejected. The error — *"Choose a valid Chicago date, time, duration, active Field or Team Technician, and active customer location"* — never says which of the five is wrong. Kyle hits this on step 02 | `appointmentFallbackPropertyId` stays `""` and `appointmentPropertyIds` stays empty even with a property selected. See `prepareQuoteAppointment` in [`quote-appointment-submission.ts:108`](artifacts/crm/src/lib/quote-appointment-submission.ts) |
+| 5 | **The crew cannot see the customer's phone number.** With a property attached, the tech's job page shows name, email, address and notes — but no phone, on either the schedule or the job page. Kyle's step 06 expects contact details | `crew-job-with-property.png`; customer had both `cellPhone` and `homePhone` |
+| 6 | **Deleting an invoice leaves its `invoice_jobs` rows behind.** The job is then permanently undeletable: `DELETE /jobs/:id` refuses with `invoice_linked_job` for an invoice that no longer exists | Confirmed by SQL: `invoice_jobs` rows for invoices 1 and 2 survived their deletion |
+| 7 | **Deleting a customer leaves their `properties` rows behind.** Seven orphans are sitting in the sandbox now. No FK cascade | `SELECT … FROM properties p LEFT JOIN customers c … WHERE c.id IS NULL` returns ids 2–8 |
+| 8 | **The global error handler returns `err.message` verbatim on 500.** A Drizzle error message carries the failing SQL and its parameters; on the login route that includes the submitted username. Affects every route, not just login | [`app.ts:53-61`](artifacts/api-server/src/app.ts); the login route has no `try`/`catch` of its own ([`auth.ts:259`](artifacts/api-server/src/routes/auth.ts)) |
+
+### Gaps already known, now confirmed on the test path
+
+- No dashboard flag when an estimate is accepted (Kyle's step 04→05 handoff)
+- Moving a job saves silently — no notify-before-send prompt (the parked work, step 06)
+- No gift certificate payment method; offered methods are Cash, Check, Bank transfer, Other (step 08)
+- No partial acceptance of an estimate (step 04)
+
+### Friction Kyle will hit, working as designed
+
+- A future-dated job cannot be started or completed (`future_scheduled_job`), so his step 07
+  needs the job dated today
+- A completed job can never be deleted (`completed_job`), so test runs cannot clean up after
+  themselves through the API
+
+### What passed, end to end
+
+Prospect creation and profile; the profile's Activity / Notes / Communications tabs; estimate
+creation against the prospect with an appointment and an assignee; print view; job scheduling
+and crew assignment; the crew seeing their own job, its address and its notes, with pricing
+hidden; marking complete; invoice generation and its Send control; recording a payment; and the
+final profile showing the estimate, job and invoice together.
+
+### Fixed the same day — 2026-09-21
+
+Five of the findings above are fixed in the working tree. Typecheck clean on both packages;
+CRM 379/379 pass, API 502/516 with the same 14 pre-existing `DATABASE_URL` failures.
+**None of this is on Sandbox 2 yet** — it runs deployed code, so these are verified by tests and
+by root-cause tracing, not yet in a browser.
+
+| # | Fix |
+|---|---|
+| 4 | `appointmentFallbackPropertyId` and `appointmentDurationTouched` were hidden inputs written imperatively through refs; a remount reset them to their `defaultValue`, so the selected property never reached validation. Both are now bound to React state. The error also names the fields that are actually wrong instead of listing all five requirements |
+| 5 | The job payload served `customers.phone`, a legacy column nothing writes any more. New `primaryCustomerPhone()` resolves cell → home → legacy → work, so the crew sees a number |
+| 6 | Deleting an invoice now removes its `invoice_jobs` rows in the same transaction |
+| 7 | Deleting a customer now removes their properties, contacts and property relationships, and **refuses with 409 `customer_has_history`** when jobs, estimates, invoices or payments exist. Previously it was a bare `DELETE` with no guard at all — it orphaned everything silently |
+| 8 | 5xx responses return `Internal server error` plus a `reference` that the logs carry. 4xx keep their message, which is written for the caller. New `clientErrorResponse()` |
+
+New tests: `crm/src/lib/quote-appointment-submission.test.ts` (6),
+`api-server/src/lib/error-response.test.ts` (8), `api-server/src/lib/customer-phone.test.ts` (8).
+All three are registered in their package's `test` script.
+
+**Policy call made in #7, worth confirming with the client:** deleting a customer who has
+history is now refused rather than allowed to destroy it. Kyle's outstanding question about what
+the profile Delete button should mean can relax this later.
+
+**The real fix for #6 and #7 is a schema migration.** `properties.customer_id`,
+`contacts.customer_id` and `invoice_jobs` carry **no foreign key at all** — only
+`communication_preferences` has `onDelete: "cascade"`. Route-level cleanup was chosen because
+dev and Sandbox 2 still share one database and a migration there would hit Kyle's environment.
+Add the FKs once the dev branch is split.
+
+**Not fixed — needs a decision, not code:** the empty Service Catalog (finding #1). Either ask
+Kyle for his real service list or seed a few samples through `POST /services`. Nothing else on
+the test path moves until this exists.
+
+### Cleanup still owed
+
+The orphaned properties need removing. The permission classifier refused the write, so this is
+for the user to run:
+
+```sql
+DELETE FROM properties p
+WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = p.customer_id);
+```
 
 ---
 
@@ -1026,6 +1124,120 @@ uses name → email → id (`getPerformedBy`, copied across eight route files); 
 same order through `actorLabel` in `lib/schedule-queue-core.ts`, tested. Needs a deploy to reach
 Replit. The E2E run left nine `activity_logs` rows for the deleted test customer (id 2); they
 carry no foreign key, so they outlive it. Harmless, left in place.
+
+**Browser UI test on the live dev app, 2026-09-13** (commit `3ebd9b7` deployed). Playwright MCP
+still timed out, so the test drove the cached `playwright-core` 1.63 and the locally installed
+Chromium 1243 directly from a Node script — a real browser, not HTTP calls. **16 of 16 passed,
+zero browser console errors:** login through the form; the queue renders with three tabs and the
+old fallback panels stay hidden; cards show Needs Contact, Today and $125.00; Put on hold and
+Schedule stay disabled until a reason or date is given; hold moves the card to On Hold with its
+reason; release returns it as Ready to Schedule; the waiting-reason dropdown and the Contacted
+filter chip work; scheduling through the dialog removes the card and writes the date and time to
+the job; and queue actions are now logged as `Team Admin`, confirming the audit-identity fix
+reached Replit. Test data deleted afterwards.
+
+Two things that looked wrong in screenshots and were **measured, not fixed**:
+
+- Dialogs looked translucent. Computed style after the animation settles is
+  `rgb(245, 248, 250)`, opacity `1` — the screenshots caught the 200 ms open animation.
+- Right after "Job scheduled", the tab badge, chips and the header "unscheduled" count still showed
+  the old number for about a second, then all corrected once the refetch landed. A brief lag, not
+  stale data. Could be made instant by decrementing counts optimistically; not worth it yet.
+
+To rerun: the scripts live in the session scratchpad, not the repo. The approach — resolve
+`playwright-core` from the npx cache whose `browsers.json` matches the installed Chromium
+revision — works without the MCP server.
+
+**Visible (headed) walkthrough for the user, 2026-09-14.** Same approach with `headless: false`
+and a caption banner, following the manual test guide exactly and creating the customer and job
+**through the forms**, not the API. 16 of 17 passed on the first run. The one failure was the
+test, not the app: `getByRole("button", { name: "Hold" })` without `exact` matched the **On Hold
+tab**, and the tech had no assigned jobs, so "no buttons" was being checked on an empty queue.
+Rerun properly with an undated job assigned to `team_tech`: the tech sees that card with no
+Schedule, Hold, Release or reason dropdown, no price, and the server answers a hold attempt with
+**403**. 4 of 4 passed.
+
+Two things the walkthrough confirmed for anyone testing by hand: **New Job pre-fills today's
+date** — clear the field or the job goes straight onto the calendar instead of the queue; and
+clearing a job's date from the job page's Edit form sends it back to Ready to Schedule on its own.
+
+### Sandbox 2 republished — new code, but still on the old Replit database — 2026-09-14
+
+The user now has an **owner** login, which is what republishing needed; earlier attempts silently
+did nothing for lack of permission. Measured straight after publish:
+
+| Check | Result |
+|---|---|
+| Published asset `Last-Modified` | 14 Sep 06:50 GMT — new build live |
+| `GET /api/schedule-queue/statuses` | 200 — new API code |
+| Which database | **Old Replit production DB** (`ep-rapid-base`): its `sessions` went 8 → 9 on login, Neon stayed 13 → 13 |
+| `GET /api/schedule-queue?tab=ready` | **500** — `queue_status` column missing |
+| Data | Old data, 3 customers |
+
+**⚠️ Replit's publish generates its own schema SQL — from the wrong database.** Publishing showed
+"Development database changes detected → Generated migrations to apply to production database"
+and asked for approval. The SQL was additive (no `DROP`): the four calendar tables, their FKs and
+indexes, plus three reporting indexes. But it **omitted `queue_status`, its two constraints, the
+queue index, and the sync trigger and function**. It was diffed against Replit's own stale
+development database (helium), where our migrations only ever reached
+`calendar_schedule_entries_v1` — not against Neon. Approved deliberately, because nothing is
+destructive, a full backup exists (`C:\Users\HC\Documents\corstead-backups\`) and Replit keeps
+7-day point-in-time recovery, and publishing was the only way to learn which database the deployment
+binds to.
+
+**This will recur on every publish** while a Replit production database stays connected: Replit
+keeps diffing helium, not the schema our migrations own. That is the strongest argument for putting
+Sandbox 2 on Neon rather than patching the old database.
+
+**Why the switch is awkward:** while `DATABASE_URL` sits in Secrets, Replit shows "External database
+detected" and hides every production-database option. The Database → Settings page offers only
+connection details, point-in-time recovery, scheduled backups, **Regenerate credentials** (would take
+Sandbox 2 down) and **Delete database** (permanent). There is no disconnect.
+
+**Open decision:** (a) move Sandbox 2 to Neon — one database, full schema, trigger and ledger
+already verified — or (b) finish the schema on the old database by running the queue and sync
+migrations against it. Recommended (a), with Lute's go-ahead before anything is deleted.
+
+**Decided 2026-09-14 (user): (a) — Sandbox 2 moves to Neon**, since Neon is the long-term database
+anyway. Deleting the Replit production database waits on Lute's explicit OK. Meanwhile Sandbox 2
+runs the new code on the old database and shows "Failed to load the scheduling queue" in the queue
+section; the rest of the Schedule page works. Kyle should test the queue on the dev link until the
+switch is done.
+
+### ✅ Sandbox 2 moved to Neon — done 2026-09-14
+
+Verified after the final publish (build 12:43 GMT): login 200, **Neon `sessions` 13 → 14** on
+login, `GET /schedule-queue` 200 on both tabs, statuses/customers/calendar totals 200, and the data
+is Neon's (0 customers, the 3 seeded logins). The dev link and Sandbox 2 now share one database.
+
+**What it actually took — the part not to rediscover:**
+
+1. **Owner access.** Republish silently does nothing without it.
+2. **Fresh backup first** — `C:\Users\HC\Documents\corstead-backups\replit-production-2026-09-14-before-delete.sql`
+   (76 tables: 3 customers, 2 jobs, 4 users, 5 quotes, 3 invoices).
+3. **Delete the Replit production database.** Replit offers no disconnect; its options (and the
+   delete) are hidden while `DATABASE_URL` is in Secrets, so the Secret was removed first, the
+   database deleted with Lute's agreement, and the Secret re-added with the Neon value.
+4. **The trap: republishing still failed** with `The endpoint has been disabled` — the deleted
+   database. The workspace Secret was right, but **Publishing → Adjust settings → Production app
+   secrets** held a *separate, unsynced* `DATABASE_URL` (broken-link icon) with the old value, plus
+   `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` / `PGPORT` that Replit had injected for the old
+   database. Replit's banner explains it: production secrets created before 17 Apr 2025 do not
+   sync automatically. Fix: on `DATABASE_URL`, **⋮ → Sync to workspace value**; delete the five
+   `PG*` variables (nothing in the code reads them — grep confirmed); Publish.
+5. Secret changes only take effect on the **next** publish; probing before "published just now"
+   still shows the old build.
+
+**Diagnosis tip:** the login route's 500 body hides the driver's cause, but the deployment log
+line at `"level":50` carries it under `caused by:`. That line named the deleted endpoint.
+
+**Follow-ups this surfaced:**
+- The login route has no error handling ("Unhandled route error"), and the error handler returns
+  the raw Drizzle message to the client — **SQL text and the submitted username leak in the 500
+  body**. Fix: catch in the route and return a generic message; log the detail server-side only.
+- Replit's publish-time schema diff runs against its own development database, not our
+  migrations. With no Replit production database now attached it should stop proposing SQL, but
+  watch the next publish: if it offers to create a production database, decline.
 
 ### ⚠️ Never `drizzle-kit push` a database the migration framework will run on — 2026-09-13
 
