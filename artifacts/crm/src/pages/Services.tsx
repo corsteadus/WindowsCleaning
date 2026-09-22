@@ -20,12 +20,9 @@ import { hasClientCapability } from "@/lib/rbac";
 import { formatCurrency } from "@/lib/utils";
 import {
   canSubmitService, emptyServiceDraft, isServiceCategory, isServicePricingType,
-  serviceIdempotencyHeaders, SERVICE_CATEGORIES, SERVICE_PRICING, type ServiceDraft, validateServiceDraft,
+  newServiceIdempotencyKey as newIdempotencyKey, serviceDraftToBody,
+  serviceIdempotencyHeaders, SERVICE_CATEGORIES, SERVICE_PRICING, type ServiceDraft,
 } from "@/lib/service-form";
-
-function newIdempotencyKey(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
 
 export default function Services() {
   const { data: services, isLoading } = useListServices();
@@ -73,28 +70,12 @@ export default function Services() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!canSubmitService(create.isPending)) return;
-    const validation = validateServiceDraft(draft);
-    if (validation) {
-      setError(validation);
+    const prepared = serviceDraftToBody(draft);
+    if (!prepared.ok) {
+      setError(prepared.error);
       return;
     }
-    const pricing = SERVICE_PRICING.find(([value]) => value === draft.pricingType);
-    if (!pricing) {
-      setError("Select a valid pricing type.");
-      return;
-    }
-    create.mutate({
-      data: {
-        name: draft.name.trim(),
-        description: draft.description.trim() || null,
-        category: draft.category,
-        pricingType: draft.pricingType,
-        basePrice: Number(draft.basePrice),
-        unit: pricing[2],
-        estimatedDuration: draft.estimatedDuration.trim() ? Number(draft.estimatedDuration) : null,
-        isActive: draft.isActive,
-      },
-    });
+    create.mutate({ data: prepared.body });
   };
   const update = (field: keyof ServiceDraft, value: string | boolean) => {
     setDraft((current) => ({ ...current, [field]: value }));

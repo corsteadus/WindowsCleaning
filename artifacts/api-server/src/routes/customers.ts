@@ -56,6 +56,11 @@ import {
   prospectLifecycleTransition,
 } from "../lib/prospect-account.ts";
 import {
+  customerSinceOnCreate,
+  customerSinceOnTransition,
+  withoutClientCustomerSince,
+} from "../lib/customer-since.ts";
+import {
   CustomerInitialJobValidationError,
   normalizeInitialJob,
 } from "../lib/customer-initial-job.ts";
@@ -327,6 +332,7 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
     res.status(400).json({ error: normalized.error });
     return;
   }
+  withoutClientCustomerSince(normalized.fields);
   const existingCustomerId = body.existingCustomerId === undefined || body.existingCustomerId === null || body.existingCustomerId === ""
     ? null
     : Number(body.existingCustomerId);
@@ -342,6 +348,13 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
     overrideReason,
     existingCustomerId,
   });
+  // Set after the idempotency fingerprint is taken, so a retry on a later day
+  // is still recognised as the same request.
+  const customerSince = customerSinceOnCreate(
+    normalized.fields.lifecycleStatus as string | undefined,
+    businessDateStr(),
+  );
+  if (customerSince) normalized.fields.customerDate = customerSince;
 
   type CustomerCreateRecord = {
     id: number;
@@ -787,11 +800,13 @@ router.patch(["/customers/:id", "/prospects/:id"], async (req, res): Promise<voi
     res.status(400).json({ error: normalized.error });
     return;
   }
-  const updateData = normalized.fields;
+  const updateData = withoutClientCustomerSince(normalized.fields);
 
   const { before, customer } = await db.transaction(async (tx) => {
     await lockAccount(tx, id);
     const [before] = await tx.select({
+      lifecycleStatus: customersTable.lifecycleStatus,
+      customerDate: customersTable.customerDate,
       notes: customersTable.notes,
       specificNotes: customersTable.specificNotes,
       callbackNotes: customersTable.callbackNotes,
@@ -805,10 +820,22 @@ router.patch(["/customers/:id", "/prospects/:id"], async (req, res): Promise<voi
       altPhone: customersTable.altPhone,
       alternatePhone: customersTable.alternatePhone,
     }).from(customersTable).where(target);
-    const [customer] = await tx.update(customersTable)
-      .set(updateData as typeof customersTable.$inferInsert)
-      .where(target)
-      .returning();
+    if (before && updateData.lifecycleStatus !== undefined) {
+      const customerSince = customerSinceOnTransition(
+        { lifecycle: before.lifecycleStatus, customerSince: before.customerDate },
+        updateData.lifecycleStatus as string,
+        businessDateStr(),
+      );
+      if (customerSince) updateData.customerDate = customerSince;
+    }
+    // A body that only tried to set Customer Since is now empty; Drizzle refuses
+    // an empty SET, so read the row back instead.
+    const [customer] = Object.keys(updateData).length
+      ? await tx.update(customersTable)
+        .set(updateData as typeof customersTable.$inferInsert)
+        .where(target)
+        .returning()
+      : await tx.select().from(customersTable).where(target).limit(1);
     if (!customer) return { before, customer: null };
 
     const legacyContactFields = [
@@ -910,6 +937,7 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
   const [current] = await db.select({
     status: customersTable.status,
     lifecycleStatus: customersTable.lifecycleStatus,
+    customerDate: customersTable.customerDate,
   }).from(customersTable).where(target);
   if (!current) { res.status(404).json({ error: "Customer not found" }); return; }
 
@@ -923,8 +951,14 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
     lifecycle,
     businessDateStr(),
   );
-  if (transition.customerDate) {
-    updatePayload.customerDate = transition.customerDate;
+  // Either route can make someone a customer; only the first time sets the date.
+  const customerSince = customerSinceOnTransition(
+    { lifecycle: customerLifecycleStatus(current), customerSince: current.customerDate },
+    lifecycle,
+    businessDateStr(),
+  );
+  if (customerSince) {
+    updatePayload.customerDate = customerSince;
   }
   if (deactivating) {
     updatePayload.deactivatedAt     = new Date();

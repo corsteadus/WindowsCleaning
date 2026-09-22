@@ -64,6 +64,104 @@ let the database move stall the feature build.
 
 ---
 
+## Work plan — profiles and the lifecycle, agreed 2026-09-22
+
+Sequenced around Kyle's nine-step lifecycle test, not around the order of the edit lists.
+Item numbers: `A#` = `Requirements PDFs/Prospect Profile Notes.pdf`, `B#` =
+`Requirements PDFs/Random Edits.pdf`. Text of both extracted with pdf.js into
+`scratchpad/pdfjs/*.txt`; the Read tool cannot render them on this machine (no poppler).
+
+**Rules — one shared database.** The user decided on 2026-09-22 against a separate Neon `dev`
+branch: local, the Replit workspace and Sandbox 2 all use `Development`, so local work lands
+where Kyle tests. Therefore:
+
+1. Test records are named `ZZ…` and removed at the end of every run
+2. **Additive migrations only** before a deploy — new tables, nullable columns, indexes,
+   foreign keys. Nothing that drops or renames what the deployed Sandbox 2 code reads; that
+   waits until the new code is live
+3. Tell the user before any migration runs, because it takes effect in Kyle's environment
+   immediately
+4. Local API keeps `APP_MIGRATION_ENVIRONMENT=sandbox` with migrations and background workers off
+
+Where the table below says "`dev` branch", read "an additive migration against `Development`,
+announced first".
+
+| Phase | Scope | Kyle's step | Needs | Size |
+|---|---|---|---|---|
+| **0 Setup** | Neon `dev` branch off `development` (user); local on `dev`; migration gate configured for local; commit the 2026-09-21 fixes; orphan-property SQL on `development` | — | User | S |
+| **1 Profile form** | A#1 Residential/Commercial first; A#4 Customer Since set on creation and read-only; A#5 remove Preferred Contact; A#6 remove Sending Preferences (screen only — the communication-safety logic behind it stays); A#12 remove Has Screens / Hard Water / Has Tracks; A#13 remove Windows / Stories / Type | 01 | — | S |
+| **2 Services and quotes from the profile** | A#22 add services from the profile and the job form, new ones join the Service Catalog; A#16 new quote from the profile's Quotes tab; A#15 schedule the estimate while creating the profile | 02–03 | — | M |
+| ⤷ **Deploy** | Kyle can run steps 01–03. Sandbox 2 needs at least one catalogue service | | | |
+| **3 Contacts and locations** | A#8 a name on every phone and email; A#10 main + additional service addresses; A#14 customisable dropdown lists | 01 | — | M |
+| **4 Data integrity** | Foreign keys on `properties.customer_id`, `contacts.customer_id`, `invoice_jobs`; replaces the route-level cleanup of 2026-09-21 | — | `dev` branch | S |
+| **5 Estimate → job** | B#4 statuses Draft→Expired, automatic transitions, audited manual correction; accepted-estimate scheduling and **Convert to Customer & Job** (A#17, re-enables the deferred convert); A#18 no job straight from a prospect; A#19 converted accounts leave Prospects; dashboard flag for accepted estimates | 03–05 | `dev` branch; answers on partial acceptance and notification shape parts of it | L |
+| ⤷ **Deploy** | Kyle can run steps 01–05 | | | |
+| **6 Crew and schedule changes** | Notify-before-send prompt (the parked work); pricing visibility as an admin permission | 06 | Answer: which changes trigger the prompt | M |
+| **7 Billing** | Gift certificate; a delivery provider so estimate and invoice emails actually leave | 07–08 | Answer: gift certificate vs credits. Provider keys from Lute | S–M |
+| **8 History** | B#3 General Notes card on Overview with who and when; B#5 Communication & Activity tab with filters; B#6 audit history, and Created / Last updated on Overview | 09 | `dev` branch (who/when columns) | M |
+| ⤷ **Deploy** | Kyle can run the whole test | | | |
+| **9 Off the test path** | A#21 archive the whole profile without the primary-contact warning, searchable, unarchive; A#7 deactivate an email or number per channel; A#9 address the specific contact | — | — | M |
+| **Waiting on the client** | A#2/A#3 custom fields; Gate Code and Access Notes (A#13); A#20 delete; A#11/B#2 address autocomplete; B#1 sub-customers | — | Answers | — |
+
+### Phase 1 — done in the working tree, 2026-09-22
+
+Verified in a real browser against the local build (13/13) and by tests; **not deployed**.
+
+- **A#1** the new-account form opens with a Residential / Commercial choice, above Contact Information
+- **A#4** Customer Since is set by the server — the day an account is created as a customer, or
+  the day a prospect first becomes one — and is never moved afterwards. Any client-supplied
+  `customerDate` is dropped on create and on edit. The profile shows it read-only. New
+  `lib/customer-since.ts`, used by `POST`, `PATCH` and `POST …/status` in `routes/customers.ts`.
+  This also covers conversion through `/customers/:id/status`, which previously set no date at all
+- **A#5, A#6** Preferred Contact and Sending Preferences removed from both forms. The columns and
+  the communication-safety rules that read them are untouched
+- **A#12, A#13 (partial)** Has Screens / Hard Water / Has Tracks, Type, Windows and Stories removed
+  from both property forms (`CustomerDetail.tsx` and `Properties.tsx`). Their values still ride
+  along in form state, so editing an older property does not wipe what it has. Gate Code and
+  Access Notes stay until Kyle answers
+
+Tests: `api-server/src/lib/customer-since.test.ts` (8), `crm/src/pages/profile-form-edits.test.ts` (7).
+Suites: API 510/524 with the known 14 `DATABASE_URL` failures; CRM 386/386.
+
+### Phase 2 — done in the working tree, 2026-09-22
+
+Verified in a real browser against the local build (11/11) and by tests; **not deployed**. CRM
+395/395. No server change and no schema change.
+
+- **A#22** New `components/QuickAddService.tsx` adds a service to the company-wide Service
+  Catalog from the estimate's service picker and from the job form, and puts it straight onto
+  the estimate line or the job (price filled in). An empty catalogue opens the picker on the
+  quick-add. Offered only with `services.manage`; others are told to ask an admin. It is not a
+  `<form>`, because the job form contains it. The request body is built by the new
+  `serviceDraftToBody()` in `lib/service-form.ts`, which the Service Catalog page now uses too,
+  so both store a service identically
+- **A#16** The profile's New Estimate was hidden for prospects (`lifecycleStatus ===
+  "customer"` only) — the account type that needs it most. Now offered to prospects and
+  customers, in the header and inside the Quotes tab
+- **A#15** The New Prospect form has "Schedule the estimate next", ticked by default. Saving
+  goes straight to that prospect's new estimate with the appointment date focused. The
+  appointment is not embedded in the prospect form because on the server an appointment only
+  exists on an estimate (`POST /quotes/with-appointment`); duplicating that logic in the dialog
+  would also lose atomicity. **Confirm with Kyle this is what he meant**
+
+**Interpretation to confirm with Kyle (A#22):** "add and delete services from the prospect or
+customer screen" was read as: add new catalogue services wherever services are chosen, and
+remove them from an estimate or job as lines. There is no per-customer service list in the
+data model, and none was added.
+
+Tests: `crm/src/pages/profile-services-quotes.test.ts` (7), two new cases in
+`crm/src/lib/service-form.test.ts`.
+
+**Found on the way — fixed:** `index.ts` ignored the error Express 5 passes to the `listen`
+callback, so a failed bind logged "Server listening" and exited with code 0. It now aborts with
+the real error and exit code 1.
+
+After this: calendar Steps 3–5 (filters and side drawer, move a whole day, bulk invoicing).
+Go-live track, separately: production path in the migration gate, production schema, nightly
+export, restore test, Neon ownership to Lute, password rotation.
+
+---
+
 ## We ran Kyle's own lifecycle test against Sandbox 2 — 2026-09-21
 
 Kyle's `Requirements PDFs/Customer Lifecycle Testing - General.pdf` is his nine-step
@@ -805,6 +903,7 @@ Also: the three reschedule sites disagree on blank values. `Schedule.tsx:182` se
 | 2026-09-04 | The overnight-cron question is **to be asked of the client**, not decided internally |
 | 2026-09-04 | **Park the notification implementation.** Do not build it yet |
 | 2026-09-04 | Maintain this file as the persistent handoff record |
+| 2026-09-22 | **No separate Neon `dev` branch.** Work locally against `Development` (branch `br-green-frost-aruwjw1f`, endpoint `ep-ancient-resonance-ar0ob1sr` — the one Sandbox 2 runs on); `production` is kept for go-live. Accepted consequence: local work lands in the database Kyle tests in |
 
 ### Client decisions (Lute / Kyle)
 
@@ -1482,6 +1581,26 @@ This sets the pattern at zero risk, then `jobs.ts` gets extracted when Step 4 to
 
 ## Environment gotchas
 
+- **Running the app locally on this Windows machine — verified 2026-09-22.** Three things block
+  a plain start, none of them fixable in the repo without side effects:
+  1. `pnpm-workspace.yaml` overrides away every non-Linux native binary, so Vite dies on a
+     missing `@rollup/rollup-win32-x64-msvc`. The Windows builds of Rollup 4.59.0, LightningCSS
+     1.31.1 and `@tailwindcss/oxide` 4.2.1 are installed in `scratchpad/win-natives` and reached
+     through `NODE_PATH` — the repo and its `node_modules` are untouched.
+  2. **Windows reserves TCP 8000–8099** (Hyper-V/WSL; `netsh interface ipv4 show
+     excludedportrange protocol=tcp`), so the API cannot bind 8080: `listen EACCES`. The
+     ranges move between reboots. Use `PORT=3001`.
+  3. Git Bash rewrites `BASE_PATH=/` into `C:/Program Files/Git/`. Prefix `MSYS_NO_PATHCONV=1`.
+
+  API: `node ./build.mjs`, then `PORT=3001 NODE_ENV=development APP_MIGRATION_ENVIRONMENT=sandbox
+  APP_MIGRATIONS_ENABLED=false BACKGROUND_PROCESSING_ENABLED=false DATABASE_URL=… node
+  ./dist/index.mjs`. **`APP_MIGRATION_ENVIRONMENT=sandbox` is what keeps the background
+  schedulers off** — without it they start and write to whatever database `DATABASE_URL` names.
+  CRM: `MSYS_NO_PATHCONV=1 NODE_PATH=<win-natives>/node_modules PORT=5174 BASE_PATH=/
+  API_PROXY_TARGET=http://localhost:3001 npx vite --config vite.config.ts --strictPort`, then
+  http://localhost:5174. Until the Neon `dev` branch exists this points at the same database as
+  Sandbox 2.
+
 - **`node_modules` was found broken on 2026-09-05 and has been repaired.** Every top-level
   package directory was empty (`typescript`, `drizzle-orm`, `zod`, `date-fns`) while
   `node_modules/.pnpm` still held the content — the symlinks pnpm puts at the top level were
@@ -1495,7 +1614,9 @@ This sets the pattern at zero risk, then `jobs.ts` gets extracted when Step 4 to
   script that calls `pnpm` recursively (the root `typecheck` does) needs a `pnpm.cmd` shim on
   PATH forwarding to `corepack pnpm@10`.
 
-- **There is no local database.** No `.env` anywhere and `DATABASE_URL` is unset; `.replit`
+- **Superseded by the Neon move (2026-09-11):** the database is now reachable from this machine
+  with the Neon connection string; the note below describes the Replit-only era.
+  **There is no local database.** No `.env` anywhere and `DATABASE_URL` is unset; `.replit`
   provisions `postgresql-16`, so the database lives in the Replit environment. Consequently
   `drizzle-kit push` and the migration CLI **cannot be run from this machine** — they have to
   run where `DATABASE_URL` exists.

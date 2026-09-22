@@ -420,6 +420,12 @@ export default function CustomerDetail() {
     : [customer.firstName?.[0], customer.lastName?.[0]].filter(Boolean).join("")
   ).toUpperCase();
   const activeProperties = customer.properties.filter((property) => !property.archivedAt);
+  // Prospects need estimates most — it is how they become customers (Profile Notes #16).
+  const canQuoteThisAccount = canCreateEstimates && (
+    customer.lifecycleStatus === "customer"
+    || customer.lifecycleStatus === "prospect"
+    || customer.status === "active"
+  );
 
   // Revenue = all completed jobs (covers TCF-imported jobs that have no invoices,
   // and new CRM jobs – jobs are the primary record of work done)
@@ -488,8 +494,8 @@ export default function CustomerDetail() {
                 <Plus className="w-3.5 h-3.5" /> Schedule Job
               </button>
             )}
-            {/* New Quote */}
-            {!isEditing && canCreateEstimates && (customer.lifecycleStatus === "customer" || customer.status === "active") && (
+            {/* New Quote — prospects too: an estimate is how a prospect becomes a customer (#16) */}
+            {!isEditing && canQuoteThisAccount && (
               <button
                 onClick={() => navigate(`/quotes/new?customerId=${customer.id}`)}
                 className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-primary/30 text-primary bg-white text-xs font-semibold hover:bg-primary/5 transition-colors"
@@ -793,7 +799,7 @@ export default function CustomerDetail() {
             <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} />
           )}
           {activeTab === "quotes" && (
-            <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} />
+            <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} />
           )}
           {activeTab === "invoices" && (
             <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
@@ -1454,17 +1460,16 @@ function OverviewTab({ customer, isEditing, form }: {
             )}
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Preferred Contact"    value={customer.preferredContactMethod} editing={isEditing} name="preferredContactMethod" form={form} placeholder="Email / Phone / Text" />
-          <FieldRow label="Sending Preferences"  value={customer.sendingPreferences}     editing={isEditing} name="sendingPreferences"     form={form} placeholder="email, sms" />
-        </div>
+        {/* Preferred Contact and Sending Preferences removed (Profile Notes #5, #6).
+            The communication-safety rules that read them are unchanged. */}
         <div className="grid grid-cols-2 gap-4">
           <FieldRow label="How Did They Hear?" value={customer.howHeard} editing={isEditing} name="howHeard" form={form} placeholder="Referral, Google, …" />
           <FieldRow label="Tags"               value={customer.tags}    editing={isEditing} name="tags"    form={form} placeholder="comma-separated tags" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <FieldRow label="Prospect Date"  value={customer.prospectDate}  editing={isEditing} name="prospectDate"  form={form} placeholder="YYYY-MM-DD" />
-          <FieldRow label="Customer Since" value={customer.customerDate}  editing={isEditing} name="customerDate"  form={form} placeholder="YYYY-MM-DD" />
+          {/* Set by the system on creation or conversion, never typed (#4). */}
+          <FieldRow label="Customer Since" value={customer.customerDate}  editing={false} name="customerDate"  form={form} />
         </div>
       </Section>
     </div>
@@ -2004,24 +2009,9 @@ function AddPropertyForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className={LBL}>Type</label>
-          <select className={INP} value={form.propertyType} onChange={e => set("propertyType", e.target.value)}>
-            {["residential","commercial","condo","hoa"].map(t => (
-              <option key={t} value={t} className="capitalize">{t}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={LBL}>Windows</label>
-          <input type="number" className={INP} value={form.windowCount} onChange={e => set("windowCount", e.target.value)} placeholder="24" />
-        </div>
-        <div>
-          <label className={LBL}>Stories</label>
-          <input type="number" className={INP} value={form.stories} onChange={e => set("stories", e.target.value)} placeholder="2" />
-        </div>
-      </div>
+      {/* Type, Windows and Stories removed from the form (Profile Notes #13), and
+          the Has Screens / Hard Water / Has Tracks boxes below (#12). Their
+          values stay in `form`, so editing an older property keeps what it has. */}
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -2047,21 +2037,6 @@ function AddPropertyForm({
       <div>
         <label className={LBL}>Location Notes</label>
         <textarea className={INP} value={form.locationNotes} onChange={e => set("locationNotes", e.target.value)} placeholder="Notes that stay with this service location" />
-      </div>
-
-      <div className="flex flex-wrap gap-5 py-1">
-        {[
-          { key: "hasScreens",   label: "Has Screens" },
-          { key: "hasHardWater", label: "Hard Water" },
-          { key: "hasTracks",    label: "Has Tracks" },
-        ].map(({ key, label }) => (
-          <label key={key} className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="w-4 h-4 rounded accent-primary"
-              checked={(form as Record<string, unknown>)[key] as boolean}
-              onChange={e => set(key, e.target.checked)} />
-            <span className="text-sm text-slate-700">{label}</span>
-          </label>
-        ))}
       </div>
 
       <div className="pt-1 border-t border-slate-200 flex flex-wrap gap-5">
@@ -2205,10 +2180,20 @@ function PaymentsTab({ payments }: { payments: PaymentRecord[] }) {
 }
 
 // ─── Quotes Tab ───────────────────────────────────────────────────────────────
-function QuotesTab({ quotes, customerId }: { quotes: Quote[]; customerId: number }) {
+function QuotesTab({ quotes, customerId, canCreate }: { quotes: Quote[]; customerId: number; canCreate: boolean }) {
   return (
     <div className="space-y-3">
-      <p className="text-sm text-slate-500">{quotes.length} quote{quotes.length !== 1 ? "s" : ""}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">{quotes.length} quote{quotes.length !== 1 ? "s" : ""}</p>
+        {canCreate && (
+          <Link
+            href={`/quotes/new?customerId=${customerId}`}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90"
+          >
+            <Plus className="w-3.5 h-3.5" /> New Estimate
+          </Link>
+        )}
+      </div>
       {quotes.length === 0 ? (
         <Empty icon={FileText} message="No quotes yet" />
       ) : (

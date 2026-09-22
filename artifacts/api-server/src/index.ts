@@ -30,7 +30,14 @@ async function startServer() {
   logger.info(migrationStatus, "Application migration startup gate evaluated");
 
   await new Promise<void>((resolve, reject) => {
-    const server = app.listen(port, () => {
+    // Express 5 hands a bind failure (EADDRINUSE, or EACCES on a port Windows
+    // has reserved) to this callback. Ignoring it logged "Server listening" and
+    // then exited with code 0 once the event loop emptied.
+    const server = app.listen(port, (error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
       logger.info({ port }, "Server listening");
       resolve();
     });

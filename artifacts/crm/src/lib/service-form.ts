@@ -1,4 +1,5 @@
 import type {
+  ServiceInput,
   ServiceInputCategory,
   ServiceInputPricingType,
   ServiceInputUnit,
@@ -46,6 +47,37 @@ export function canSubmitService(isPending: boolean): boolean {
   return !isPending;
 }
 
+export function newServiceIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `service-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function serviceIdempotencyHeaders(key: string): HeadersInit {
   return { "Idempotency-Key": key };
+}
+
+/**
+ * The catalogue request body for a draft, or the reason it cannot be sent.
+ * Shared by the Service Catalog page and the quick-add used on quotes and jobs,
+ * so a service added from either place is stored exactly the same way.
+ */
+export function serviceDraftToBody(
+  draft: ServiceDraft,
+): { ok: true; body: ServiceInput } | { ok: false; error: string } {
+  const validation = validateServiceDraft(draft);
+  if (validation) return { ok: false, error: validation };
+  const pricing = SERVICE_PRICING.find(([value]) => value === draft.pricingType);
+  if (!pricing) return { ok: false, error: "Select a valid pricing type." };
+  return {
+    ok: true,
+    body: {
+      name: draft.name.trim(),
+      description: draft.description.trim() || null,
+      category: draft.category,
+      pricingType: draft.pricingType,
+      basePrice: Number(draft.basePrice),
+      unit: pricing[2],
+      estimatedDuration: draft.estimatedDuration.trim() ? Number(draft.estimatedDuration) : null,
+      isActive: draft.isActive,
+    },
+  };
 }

@@ -260,6 +260,11 @@ function NewCustomerForm({
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const canScheduleInitialJob = hasClientCapability(user, "schedule.manage");
+  // Profile Notes #15: a new prospect's estimate is scheduled in the same sitting.
+  // The appointment belongs to an estimate on the server, so creating the
+  // prospect carries straight on into its estimate with the appointment open.
+  const canScheduleEstimate = isProspect && hasClientCapability(user, "quotes.manage");
+  const [scheduleEstimateNext, setScheduleEstimateNext] = useState(true);
   const [, navigate] = useLocation();
   const [duplicateState, setDuplicateState] = useState<"idle" | "checking" | "none" | "candidates" | "error">("idle");
   const [duplicateCandidates, setDuplicateCandidates] = useState<any[]>([]);
@@ -296,6 +301,7 @@ function NewCustomerForm({
   const [firstName, lastName, email, homePhone, workPhone, cellPhone, altPhone] = watch([
     "firstName", "lastName", "email", "homePhone", "workPhone", "cellPhone", "altPhone",
   ]);
+  const accountType = watch("accountType");
   const handleDuplicateSuccess = (result: { candidates?: any[]; candidateCount: number }) => {
     setDuplicateCandidates(result.candidates ?? []);
     setDuplicateDecision(null);
@@ -346,7 +352,7 @@ function NewCustomerForm({
     return () => window.clearTimeout(timer);
   }, [firstName, lastName, email, homePhone, workPhone, cellPhone, altPhone, isProspect]);
 
-  const handleCreateSuccess = () => {
+  const handleCreateSuccess = (created?: { id?: number }) => {
     submitInFlight.current = false;
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customers"]) });
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["prospects"]) });
@@ -355,6 +361,9 @@ function NewCustomerForm({
     toast({ title: `${entityLabel} created successfully` });
     reset();
     onSuccess();
+    if (canScheduleEstimate && scheduleEstimateNext && created?.id) {
+      navigate(`/quotes/new?customerId=${created.id}&schedule=estimate`);
+    }
   };
   const handleCreateError = (err: unknown) => {
     submitInFlight.current = false;
@@ -457,6 +466,30 @@ function NewCustomerForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-1">
+
+      {/* ── Account type — the first choice (Kyle, Profile Notes #1) ──────── */}
+      <fieldset>
+        <legend className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Account type</legend>
+        <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Account type">
+          {([
+            { value: "residential", label: "Residential", hint: "A home or individual" },
+            { value: "commercial", label: "Commercial", hint: "A business or organisation" },
+          ] as const).map(({ value, label, hint }) => (
+            <label
+              key={value}
+              className={`flex cursor-pointer flex-col rounded-xl border p-3 transition-colors focus-within:ring-2 focus-within:ring-primary/40 ${
+                accountType === value
+                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                  : "border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              <input type="radio" value={value} {...register("accountType")} className="sr-only" />
+              <span className="text-sm font-semibold text-slate-900">{label}</span>
+              <span className="text-xs text-slate-500">{hint}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       {/* ── Contact Information ─────────────────────────────────────────── */}
       <FormSection icon={User} title="Contact Information">
@@ -582,26 +615,10 @@ function NewCustomerForm({
               </select>
             )}
           </F>
-          <F label="Account Type">
-            <select {...register("accountType")} className={SELECT_CLS}>
-              <option value="residential">Residential</option>
-              <option value="commercial">Commercial</option>
-            </select>
-          </F>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Customer Since">
-            <input {...register("customerDate")} placeholder="YYYY-MM-DD" className={INPUT_CLS} />
-          </F>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Preferred Contact">
-            <input {...register("preferredContactMethod")} placeholder="Email / Phone / Text" className={INPUT_CLS} />
-          </F>
-          <F label="Sending Preferences">
-            <input {...register("sendingPreferences")} placeholder="email, sms" className={INPUT_CLS} />
-          </F>
-        </div>
+        {/* Customer Since is set by the server on creation or conversion (#4).
+            Preferred Contact (#5) and Sending Preferences (#6) were removed at
+            Kyle's request; the communication-safety rules behind them are unchanged. */}
         <div className="grid grid-cols-2 gap-3">
           <F label="How Did They Hear?">
             <input {...register("howHeard")} placeholder="Referral, Google, Door Hanger…" className={INPUT_CLS} />
@@ -713,6 +730,23 @@ function NewCustomerForm({
         </FormSection>
       )}
 
+      {canScheduleEstimate && (
+        <FormSection icon={CalendarClock} title="Estimate">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={scheduleEstimateNext}
+              onChange={(event) => setScheduleEstimateNext(event.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded accent-primary"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-slate-800">Schedule the estimate next</span>
+              <span className="block text-xs text-slate-500">After saving, go straight to this prospect's estimate with the appointment ready to fill in.</span>
+            </span>
+          </label>
+        </FormSection>
+      )}
+
       <DuplicateReviewPanel
         state={duplicateState}
         candidates={duplicateCandidates}
@@ -733,7 +767,13 @@ function NewCustomerForm({
           className="w-full h-11 rounded-xl bg-primary text-white text-sm font-bold
                      shadow-sm shadow-primary/20 hover:bg-primary/90 active:scale-[.98] transition-all disabled:opacity-60"
         >
-          {isCreatePending ? "Saving…" : includeInitialJob && !isProspect ? "Create Customer & Schedule Job" : `Create ${entityLabel}`}
+          {isCreatePending
+            ? "Saving…"
+            : includeInitialJob && !isProspect
+              ? "Create Customer & Schedule Job"
+              : canScheduleEstimate && scheduleEstimateNext
+                ? "Create Prospect & Schedule Estimate"
+                : `Create ${entityLabel}`}
         </button>
       </div>
     </form>

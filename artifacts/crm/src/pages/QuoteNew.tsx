@@ -34,6 +34,7 @@ import { formatCurrency } from "@/lib/utils";
 import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 import { PropertyPicker } from "@/components/PropertyPicker";
 import { CustomerCombobox } from "@/components/CustomerCombobox";
+import { QuickAddService } from "@/components/QuickAddService";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@workspace/replit-auth-web";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
@@ -194,6 +195,9 @@ function ServicePickerDialog({
   navigate: (to: string) => void;
 }) {
   const active = services.filter((s) => s.isActive);
+  // An empty catalogue opens straight onto the quick-add; otherwise it is one click away.
+  const [adding, setAdding] = useState(false);
+  const showQuickAdd = adding || active.length === 0;
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg rounded-2xl">
@@ -203,15 +207,28 @@ function ServicePickerDialog({
             Add from Service Catalog
           </DialogTitle>
         </DialogHeader>
+        {showQuickAdd ? (
+          <QuickAddService
+            onCreated={(service) => onAdd(service)}
+            onCancel={active.length > 0 ? () => setAdding(false) : undefined}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 py-2 text-sm font-medium text-primary hover:bg-primary/5"
+          >
+            <Plus className="h-4 w-4" /> New service
+          </button>
+        )}
         <div className="max-h-[60vh] overflow-y-auto space-y-1.5 -mx-2 px-2">
           {active.length === 0 ? (
-            <div className="text-center py-10 text-slate-400 text-sm">
-              <FileText className="w-10 h-10 mx-auto mb-2 text-slate-200" />
-              No active services yet.{" "}
+            <p className="py-2 text-center text-xs text-slate-400">
+              The catalog is empty. A service you add here is saved to it for every profile.{" "}
               <button type="button" className="text-primary font-medium hover:underline" onClick={() => { onClose(); navigate("/services"); }}>
-                Set up your catalog
+                Open the catalog
               </button>
-            </div>
+            </p>
           ) : (
             active.map((service) => (
               <button
@@ -288,6 +305,20 @@ export default function QuoteNew() {
     // Only initialize once from the URL; user selection afterwards wins.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlCustomer]);
+
+  // Arriving from "Create Prospect & Schedule Estimate" (Profile Notes #15):
+  // open on the appointment, once the prospect has loaded into the form.
+  const scheduleOnArrival = useRef(
+    new URLSearchParams(window.location.search).get("schedule") === "estimate",
+  );
+  useEffect(() => {
+    if (!scheduleOnArrival.current || !selectedCustomer) return;
+    scheduleOnArrival.current = false;
+    requestAnimationFrame(() => {
+      document.getElementById("estimate-appointment")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector<HTMLInputElement>('input[name="appointmentDate"]')?.focus({ preventScroll: true });
+    });
+  }, [selectedCustomer]);
   const { data: selectedCustomerDetails } = useGetCustomer(Number(customerId) || 0, {
     query: {
       enabled: !!customerId,
@@ -732,7 +763,7 @@ export default function QuoteNew() {
 
           <div className="bg-white rounded-2xl border border-sky-100 p-5 space-y-4">
             <div>
-              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Estimate Appointment</h2>
+              <h2 id="estimate-appointment" className="text-sm font-bold text-slate-700 uppercase tracking-wide">Estimate Appointment</h2>
               <p className="mt-1 text-xs text-slate-400">Optional. Schedule the on-site estimate; the selected property becomes its first location.</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">

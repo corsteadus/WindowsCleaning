@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Layout } from "@/components/Layout";
 import {
-  ArrowLeft, Calendar, Clock, User, Briefcase, Users, FileText, RefreshCw,
+  ArrowLeft, Calendar, Clock, User, Briefcase, Users, FileText, RefreshCw, Plus,
 } from "lucide-react";
 import {
   useCreateJob,
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { CustomerCombobox } from "@/components/CustomerCombobox";
 import { PropertyPicker } from "@/components/PropertyPicker";
+import { QuickAddService } from "@/components/QuickAddService";
 import { nextIdSelectValue, nextOptionalSelectValue } from "@/lib/select-guards";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@workspace/replit-auth-web";
@@ -137,6 +138,7 @@ export default function JobNew() {
 
   const { data: servicesData } = useListServices();
   const services = (servicesData ?? []) as ServiceLike[];
+  const [addingService, setAddingService] = useState(false);
 
   // Auto-fill amount when service selected
   useEffect(() => {
@@ -299,6 +301,25 @@ export default function JobNew() {
                   ))}
                 </SelectContent>
               </Select>
+              {addingService ? (
+                <QuickAddService
+                  onCreated={(service) => {
+                    setServiceType(service.name);
+                    if (!totalAmount && service.basePrice != null) setTotalAmount(String(service.basePrice));
+                    setAddingService(false);
+                  }}
+                  onCancel={() => setAddingService(false)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAddingService(true)}
+                  className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {services.length === 0 ? "The catalog is empty — add a service" : "New service"}
+                </button>
+              )}
             </div>
 
             <div className="space-y-1.5">

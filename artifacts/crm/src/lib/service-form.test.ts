@@ -20,3 +20,25 @@ test("service dialog draft supports cancel/reset, validation, and pending double
   assert.equal(isServiceCategory("window_cleaning"), true);
   assert.equal(isServicePricingType("per_hour"), true);
 });
+// Profile Notes #22: the catalogue page and the quick-add on quotes and jobs
+// must store a service the same way, so both go through serviceDraftToBody.
+test("a draft becomes the catalogue body the Service Catalog page sends", async () => {
+  const { serviceDraftToBody } = await import("./service-form.ts");
+  const prepared = serviceDraftToBody({
+    ...emptyServiceDraft(), name: "  Exterior windows  ", pricingType: "per_window", basePrice: "4.5",
+  });
+  assert.equal(prepared.ok, true);
+  if (!prepared.ok) return;
+  assert.deepEqual(prepared.body, {
+    name: "Exterior windows", description: null, category: "window_cleaning",
+    pricingType: "per_window", basePrice: 4.5, unit: "window", estimatedDuration: null, isActive: true,
+  });
+});
+
+test("an invalid draft is refused with the validator's reason", async () => {
+  const { serviceDraftToBody } = await import("./service-form.ts");
+  assert.deepEqual(serviceDraftToBody({ ...emptyServiceDraft(), basePrice: "10" }),
+    { ok: false, error: "Service name is required." });
+  assert.deepEqual(serviceDraftToBody({ ...emptyServiceDraft(), name: "Gutters", basePrice: "-1" }),
+    { ok: false, error: "Price must be a finite nonnegative number." });
+});
