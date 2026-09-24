@@ -21,7 +21,9 @@ test("#14 the manager adds and removes through the catalogue API and refreshes e
 });
 
 test("#14 payment terms carry a number of days", () => {
-  assert.match(manager, /const withDays = catalog === "paymentTerms"/);
+  // withDays moved to the caller when the manager was generalised for
+  // custom-field dropdown choices (Phase 4).
+  assert.match(source, /withDays=\{managing === "paymentTerms"\}/);
   assert.match(manager, /daysUntilDue: Number\(days\)/);
 });
 

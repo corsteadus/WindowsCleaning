@@ -93,15 +93,30 @@ announced first".
 | **2 Services and quotes from the profile** | A#22 add services from the profile and the job form, new ones join the Service Catalog; A#16 new quote from the profile's Quotes tab; A#15 schedule the estimate while creating the profile | 02–03 | — | M |
 | ⤷ **Deploy** | Kyle can run steps 01–03. Sandbox 2 needs at least one catalogue service | | | |
 | **3 Contacts and locations** | A#8 a name on every phone and email; A#10 main + additional service addresses; A#14 customisable dropdown lists | 01 | — | M |
-| **4 Data integrity** | Foreign keys on every customer-owned table that lacks one — `properties`, `contacts`, `property_account_relationships`, `contact_channels`, `contact_channel_purposes`, `custom_field_values`, `account_profile_settings` — and on `invoice_jobs`; replaces the route-level cleanup of 2026-09-21/22 | — | `dev` branch | S |
-| **5 Estimate → job** | B#4 statuses Draft→Expired, automatic transitions, audited manual correction; accepted-estimate scheduling and **Convert to Customer & Job** (A#17, re-enables the deferred convert); A#18 no job straight from a prospect; A#19 converted accounts leave Prospects; dashboard flag for accepted estimates | 03–05 | `dev` branch; answers on partial acceptance and notification shape parts of it | L |
-| ⤷ **Deploy** | Kyle can run steps 01–05 | | | |
-| **6 Crew and schedule changes** | Notify-before-send prompt (the parked work); pricing visibility as an admin permission | 06 | Answer: which changes trigger the prompt | M |
-| **7 Billing** | Gift certificate; a delivery provider so estimate and invoice emails actually leave | 07–08 | Answer: gift certificate vs credits. Provider keys from Lute | S–M |
-| **8 History** | B#3 General Notes card on Overview with who and when; B#5 Communication & Activity tab with filters; B#6 audit history, and Created / Last updated on Overview | 09 | `dev` branch (who/when columns) | M |
-| ⤷ **Deploy** | Kyle can run the whole test | | | |
-| **9 Off the test path** | A#21 archive the whole profile without the primary-contact warning, searchable, unarchive; A#7 deactivate an email or number per channel; A#9 address the specific contact | — | — | M |
-| **Waiting on the client** | Partial acceptance shape, acceptance notification, gift certificate, which changes trigger the prompt. A#11/B#2 address autocomplete waits on **Lute** (account, billing, cost) | — | Answers | — |
+| **3b Sensitive fields** | Gate Code and Access Notes removed as built-in fields everywhere, crew view included (Kyle 2026-09-23 #2) | 01, 06 | — | S |
+| ⤷ **Deploy** | **Owed now.** Sandbox 2 still runs pre-Phase-1 code | | | |
+
+### Re-ordered after Kyle's answers — 2026-09-24
+
+Kyle's #7: *"Get the Prospect and Customer profiles working first, then move to the remaining
+calendar work."* Everything below follows that. Phases 1–3b above are done in the working tree.
+
+| Phase | Scope | Kyle's step | Needs | Size |
+|---|---|---|---|---|
+| **4 Custom fields** | A#2, A#3 with the types he named: text, number, date, dropdown, checkbox. Created and named from the profile; dropdown choices managed by the user. Replaces the old Window & Property Details section | 01 | Additive migration for dropdown choices | M |
+| **5 Delete** | A#20 as answered: a profile deletes permanently with everything attached — jobs, estimates, invoices, payments, notes, history. Individual jobs and estimates delete from their profile sections. **Reverses** the 2026-09-22 `customer_has_history` guard, and relaxes `completed_job` / `invoice_linked_job` on this path. Irreversible, so: capability, typed confirmation, audit row | — | — | M |
+| **6 Estimate statuses** | B#4 Draft, Sent, Viewed, Accepted, Declined, Expired. Automatic on send, open, accept, decline and expiry; an authorised manual correction is recorded in activity history. Shown in the list, on the estimate, and wherever it appears in scheduling | 03–04 | Possibly a status column constraint | M |
+| **7 Communication & Activity** | B#5 one tab on both profile types: every email and text sent from Corstead with date, type, recipient, subject/preview, the related estimate/job/invoice, who sent it and delivery status; newest first; filters for All / Email / Text / Profile changes. B#6 audit history in the same tab, plus Created by/on and Last updated by/on on Overview. B#3 General Notes card on Overview with who and when | 09 | Migration only if who/when columns are missing | M–L |
+| ⤷ **Deploy** | **The profiles are "working" in Kyle's sense.** He can test profile basics end to end | | | |
+| **8 Profile housekeeping** | A#21 archive a whole profile without the primary-contact warning; archived profiles stay searchable, are marked, and can be unarchived. A#7 deactivate an email or number for email/text while keeping it on file. A#9 address a message to the contact that owns the channel | — | — | M |
+| **9 Data integrity** | Foreign keys on every customer-owned table that lacks one — `properties`, `contacts`, `property_account_relationships`, `contact_channels`, `contact_channel_purposes`, `custom_field_values`, `account_profile_settings` — and on `invoice_jobs`. Replaces the route-level cleanup. **Then** drop `properties.gate_code` and `access_notes`, which is destructive and must follow the deploy above | — | Migration, announced first | S–M |
+| **10 Estimate → job** | Accepted-estimate scheduling and **Convert to Customer & Job** (A#17), re-enabling the deferred convert; A#18 no job straight from a prospect; A#19 converted accounts leave the Prospects database; the office is told when an estimate is accepted | 04–05 | Answers: partial acceptance shape, how the office is told | L |
+| **11 Crew and schedule changes** | Notify-before-send prompt; pricing visibility as an Admin-set permission (Kyle confirmed the rule) | 06 | Answer: does cancelling or changing crew also prompt? | M |
+| **12 Billing** | Gift certificate against an invoice; a delivery provider so estimates and invoices actually leave | 07–08 | Answer: credits or separate. Provider keys from Lute | S–M |
+| **13 Sub-customers** | B#1 as answered: linking only — any profile beneath a main profile, residential or commercial, one or many. **No bill-to-parent, no combined invoices.** Kyle: may come later, must not delay the basics | — | — | M |
+| **14 Calendar** | The remaining spec work Kyle deferred until profiles are done: Step 3 filters and job side drawer, Step 4 move a whole day, Step 5 bulk invoicing | — | — | L |
+| **15 Go-live** | Production path in the migration gate; schema on the `production` branch; nightly `pg_dump` export; prove a restore; Neon ownership to Lute; rotate the password | — | — | M |
+| **Blocked** | A#11/B#2 address autocomplete — **Lute** owns the account, billing and cost check. Square vs Stripe before any payment work | — | Lute / Kyle | — |
 
 ### Kyle answered the seven profile questions — 2026-09-23
 
@@ -146,6 +161,30 @@ API 519/533 with the known 14.
 
 **Flag for later:** the system has Stripe; Kyle is thinking about Square. Not urgent, but the
 processor question should be settled before any payment work.
+
+### Phase 4 — custom fields, done in the working tree 2026-09-24
+
+Verified in a real browser against the local build (10/10), walked as the operator the way
+Kyle's lifecycle document asks. CRM 410/410, API 525/539 with the known 14. **No migration.**
+
+- The five types Kyle named are offered when creating a field: Text, Number, Date, Dropdown,
+  Checkbox. `checkbox` is the existing `boolean`; `multiline` stays for fields already using it
+- A field is created and named **from the profile**, and appears on every prospect and customer
+- Each value is entered the way its type should be: number input, date picker, checkbox, select
+- **A dropdown's choices live in `profile_catalog_items`**, the table that already holds every
+  other profile dropdown's options, under a catalogue of its own per field
+  (`custom_field_<definitionId>`, served by the existing `/catalogs/:type` routes through the
+  slug `custom-field-<id>`). That reuses the add / remove / re-add behaviour built in Phase 3
+  **and avoids a schema change entirely** — the alternative was a new table or column, which on
+  the shared database would have meant a migration in Kyle's environment
+- Creating a dropdown opens its choices immediately, so the field is never left unusable
+- A value that is no longer one of the choices is still shown, so history is not silently lost
+- Add and remove need `custom_fields.manage` (owner / super_admin). Removing a field deactivates
+  the definition; values already entered are kept
+
+New: `api-server/src/lib/custom-field-types.ts` (+6 tests),
+`crm/src/components/custom-fields.test.ts` (8). `CatalogManager` now takes a slug and title, so
+the same dialog serves profile dropdowns and custom-field choices.
 
 ### Phase 1 — done in the working tree, 2026-09-22
 

@@ -37,7 +37,9 @@ function errorMessage(body: string): string {
 
 type ChannelPurpose = "general" | "billing" | "estimates";
 type Channel = { id: number; type: "email" | "phone"; label?: string | null; value: string; purposes?: ChannelPurpose[]; purpose?: ChannelPurpose | null; contactId?: number | null };
-type FieldValue = { id?: number; fieldId?: number; label?: string; name?: string; value: string; position?: number };
+type FieldValue = { id?: number; fieldId?: number; label?: string; name?: string; value: string; position?: number; fieldType?: string; choices?: string[] };
+// Kyle (2026-09-23, #6): the types a user may choose when creating a field.
+const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["date", "Date"], ["dropdown", "Dropdown"], ["boolean", "Checkbox"]] as const;
 type CatalogItem = { id?: number; value?: string; name?: string; label?: string; daysUntilDue?: number | null };
 
 // Profile Notes #14: the dropdowns under Profile Details, and the catalogue each draws on.
@@ -94,6 +96,9 @@ export function ProfileDetailsTab({
   const [settings, setSettings] = useState<ProfileDetails>({});
   const [draftChannel, setDraftChannel] = useState(EMPTY_CHANNEL);
   const [newPerson, setNewPerson] = useState(EMPTY_PERSON);
+  const canManageFields = hasClientCapability(user, "custom_fields.manage");
+  const [newField, setNewField] = useState({ label: "", fieldType: "text" });
+  const [choiceCatalog, setChoiceCatalog] = useState<{ slug: string; title: string } | null>(null);
   const namingNewPerson = draftChannel.contactId === NEW_PERSON;
   const newPersonComplete = Boolean(newPerson.firstName.trim() && newPerson.lastName.trim());
 
@@ -160,6 +165,31 @@ export function ProfileDetailsTab({
     onSuccess: refresh,
     onError: () => toast({ title: "Could not update channel", variant: "destructive" }),
   });
+  // Custom field definitions are company-wide: adding one adds it to every
+  // prospect and customer profile (Profile Notes #2, #3; Kyle 2026-09-23 #6).
+  const createField = useMutation({
+    mutationFn: () => apiFetch<{ id: number; label: string; fieldType: string }>("/api/custom-fields/definitions", {
+      method: "POST",
+      body: JSON.stringify({ label: newField.label.trim(), fieldType: newField.fieldType }),
+    }),
+    onSuccess: (created) => {
+      setNewField({ label: "", fieldType: "text" });
+      refresh();
+      toast({ title: `${created.label} added`, description: "Available on every profile." });
+      // A dropdown is useless without choices, so open them straight away.
+      if (created.fieldType === "dropdown") setChoiceCatalog({ slug: `custom-field-${created.id}`, title: `${created.label} choices` });
+    },
+    onError: (cause: unknown) => toast({
+      title: "Could not add the field",
+      description: cause instanceof Error ? cause.message : undefined,
+      variant: "destructive",
+    }),
+  });
+  const removeField = useMutation({
+    mutationFn: (fieldId: number) => apiFetch<void>(`/api/custom-fields/definitions/${fieldId}`, { method: "DELETE" }),
+    onSuccess: () => { refresh(); toast({ title: "Field removed", description: "Values already entered are kept." }); },
+    onError: () => toast({ title: "Could not remove the field", variant: "destructive" }),
+  });
   const deleteChannel = useMutation({
     mutationFn: (channel: Channel) => apiFetch(`/api/contact-channels/${channel.id}`, { method: "DELETE" }),
     onSuccess: () => { refresh(); toast({ title: "Channel removed" }); },
@@ -208,9 +238,47 @@ export function ProfileDetailsTab({
       </div>
     </section>
 
-    <section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex justify-between gap-3"><div><h2 className="font-bold text-slate-900">Custom fields</h2><p className="mt-1 text-xs text-slate-500">Values retain their configured display order.</p></div><button onClick={() => saveFields.mutate(customFields)} disabled={saveFields.isPending} className="text-xs font-semibold text-primary disabled:opacity-50">Save custom fields</button></div><div className="mt-4 space-y-2">{customFields.length ? customFields.map((field, index) => <label key={field.id ?? field.fieldId ?? index} className="grid gap-2 text-xs font-semibold text-slate-600 md:grid-cols-[190px_1fr]"><span className="py-2">{field.label ?? field.name ?? `Field ${index + 1}`}</span><input value={field.value ?? ""} onChange={e => { const next = [...customFields]; next[index] = { ...field, value: e.target.value, position: index }; update({ customFields: next }); }} className="input-lite" /></label>) : <p className="text-sm text-slate-400">No custom fields are configured.</p>}</div></section>
+    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="flex justify-between gap-3">
+        <div>
+          <h2 className="font-bold text-slate-900">Custom fields</h2>
+          <p className="mt-1 text-xs text-slate-500">Track whatever this company needs. A field added here appears on every prospect and customer profile.</p>
+        </div>
+        <button onClick={() => saveFields.mutate(customFields)} disabled={saveFields.isPending} className="text-xs font-semibold text-primary disabled:opacity-50">Save custom fields</button>
+      </div>
+      <div className="mt-4 space-y-2">
+        {customFields.length ? customFields.map((field, index) => {
+          const fieldId = field.fieldId ?? field.id;
+          const setValue = (value: string) => {
+            const next = [...customFields];
+            next[index] = { ...field, value, position: index };
+            update({ customFields: next });
+          };
+          return <div key={fieldId ?? index} className="grid items-center gap-2 text-xs font-semibold text-slate-600 md:grid-cols-[190px_1fr_auto]">
+            <span className="py-2">{field.label ?? field.name ?? `Field ${index + 1}`}</span>
+            <CustomFieldInput field={field} onChange={setValue} />
+            <div className="flex items-center gap-1">
+              {canManageFields && field.fieldType === "dropdown" && fieldId != null && (
+                <button type="button" onClick={() => setChoiceCatalog({ slug: `custom-field-${fieldId}`, title: `${field.label ?? "Field"} choices` })} className="text-[11px] font-semibold text-primary hover:underline">Choices</button>
+              )}
+              {canManageFields && fieldId != null && (
+                <button type="button" aria-label={`Remove ${field.label ?? "field"}`} onClick={() => removeField.mutate(fieldId)} disabled={removeField.isPending} className="rounded-md p-1 text-red-500 hover:bg-red-50 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /></button>
+              )}
+            </div>
+          </div>;
+        }) : <p className="text-sm text-slate-400">No custom fields yet.</p>}
+      </div>
+      {canManageFields && <div className="mt-4 grid gap-2 rounded-xl bg-slate-50 p-3 md:grid-cols-[1fr_150px_auto]" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); if (newField.label.trim()) createField.mutate(); } }}>
+        <input aria-label="New field name" value={newField.label} onChange={e => setNewField(f => ({ ...f, label: e.target.value }))} placeholder="New field, e.g. Tools needed" className="input-lite" disabled={createField.isPending} />
+        <select aria-label="New field type" value={newField.fieldType} onChange={e => setNewField(f => ({ ...f, fieldType: e.target.value }))} className="input-lite" disabled={createField.isPending}>
+          {FIELD_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        <button type="button" onClick={() => createField.mutate()} disabled={!newField.label.trim() || createField.isPending} className="rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white disabled:opacity-50"><Plus className="inline h-3.5 w-3.5" /> Add field</button>
+      </div>}
+    </section>
 
-    {managing && <CatalogManager catalog={managing} onClose={() => setManaging(null)} />}
+    {managing && <CatalogManager slug={CATALOGS[managing].slug} title={CATALOGS[managing].title} withDays={managing === "paymentTerms"} onClose={() => setManaging(null)} />}
+    {choiceCatalog && <CatalogManager slug={choiceCatalog.slug} title={choiceCatalog.title} onClose={() => { setChoiceCatalog(null); refresh(); }} />}
 
     <section className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-bold text-slate-900">Locations</h2><p className="mt-1 text-xs text-slate-500"><strong>General notes</strong> belong to this {entityLabel.toLowerCase()}; <strong>location notes</strong> stay with each address; <strong>estimate and job notes</strong> stay with the individual estimate or job.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{locations.length ? locations.map(location => <div key={location.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /><p className="text-sm font-bold text-slate-800">{location.name || location.address}</p>{location.isPrimary && <span className="ml-auto text-[10px] font-bold uppercase text-primary">Primary</span>}</div>{location.name && <p className="ml-6 mt-1 text-xs text-slate-500">{location.address}</p>}<p className="ml-6 text-xs text-slate-500">{[location.city, location.state, location.zip].filter(Boolean).join(", ")}</p>{location.serviceNotes ? <p className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-500">{location.serviceNotes}</p> : null}</div>) : <p className="text-sm text-slate-400">No locations on this profile.</p>}</div></section>
   </div>;
@@ -236,11 +304,9 @@ function ChannelRow({ channel, contacts, onSave, onDelete }: { channel: Channel;
  * option is available on every prospect and customer at once; removing one only
  * hides it, so profiles that already use it keep their value.
  */
-function CatalogManager({ catalog, onClose }: { catalog: CatalogKey; onClose: () => void }) {
+function CatalogManager({ slug, title, withDays = false, onClose }: { slug: string; title: string; withDays?: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { slug, title } = CATALOGS[catalog];
-  const withDays = catalog === "paymentTerms";
   const [name, setName] = useState("");
   const [days, setDays] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -300,4 +366,27 @@ function CatalogManager({ catalog, onClose }: { catalog: CatalogKey; onClose: ()
       {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
     </DialogContent>
   </Dialog>;
+}
+
+/** One custom field's value, drawn the way its type should be entered. */
+function CustomFieldInput({ field, onChange }: { field: FieldValue; onChange: (value: string) => void }) {
+  const value = field.value ?? "";
+  switch (field.fieldType) {
+    case "boolean":
+      return <input type="checkbox" aria-label={field.label ?? "Field"} checked={value === "true"} onChange={e => onChange(e.target.checked ? "true" : "false")} className="h-4 w-4 accent-primary" />;
+    case "number":
+      return <input type="number" aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
+    case "date":
+      return <input type="date" aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
+    case "multiline":
+      return <textarea aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} rows={2} className="input-lite" />;
+    case "dropdown":
+      return <select aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite">
+        <option value="">Not set</option>
+        {value && !(field.choices ?? []).includes(value) && <option value={value}>{value}</option>}
+        {(field.choices ?? []).map(choice => <option key={choice} value={choice}>{choice}</option>)}
+      </select>;
+    default:
+      return <input aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
+  }
 }

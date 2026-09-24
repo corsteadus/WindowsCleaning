@@ -15,6 +15,11 @@ import {
 import { AccountRelationError, lockAccount, requireCustomer } from "../lib/account-relations.js";
 import { catalogSelectionInput, channelPurposePatch } from "../lib/profile-details-core.js";
 import { catalogAddPlan, catalogOptionCode } from "../lib/catalog-options.js";
+import {
+  customFieldChoiceCatalog,
+  customFieldChoiceSlugId,
+  isCustomFieldType,
+} from "../lib/custom-field-types.js";
 
 const router: IRouter = Router();
 const CHANNEL_TYPES = new Set(["email", "phone"]);
@@ -51,6 +56,10 @@ function actor(req: Request): string | null {
 }
 
 function catalogType(slug: unknown): string {
+  // A dropdown custom field keeps its choices in a catalogue of its own, served
+  // by these same routes (see lib/custom-field-types.ts).
+  const definitionId = customFieldChoiceSlugId(String(slug));
+  if (definitionId !== null) return customFieldChoiceCatalog(definitionId);
   const type = CATALOG_TYPES[String(slug)];
   if (!type) throw new AccountRelationError(404, "Catalog not found");
   return type;
@@ -138,6 +147,19 @@ async function readCustomFields(customerId: number, template: string) {
       inArray(customFieldValuesTable.definitionId, applicable.map((field) => field.id)),
     ))
     : [];
+  // A dropdown's choices live in its own catalogue, so the profile can render
+  // the field without a second request per field.
+  const dropdowns = applicable.filter((definition) => definition.fieldType === "dropdown");
+  const choiceRows = dropdowns.length
+    ? await db.select({
+      catalogType: profileCatalogItemsTable.catalogType,
+      name: profileCatalogItemsTable.name,
+      sortOrder: profileCatalogItemsTable.sortOrder,
+    }).from(profileCatalogItemsTable).where(and(
+      inArray(profileCatalogItemsTable.catalogType, dropdowns.map((field) => customFieldChoiceCatalog(field.id))),
+      eq(profileCatalogItemsTable.isActive, true),
+    )).orderBy(asc(profileCatalogItemsTable.sortOrder), asc(profileCatalogItemsTable.name))
+    : [];
   return applicable.map((definition) => ({
     id: definition.id,
     fieldId: definition.id,
@@ -147,6 +169,13 @@ async function readCustomFields(customerId: number, template: string) {
     required: definition.isRequired,
     position: definition.sortOrder,
     value: values.find((value) => value.definitionId === definition.id)?.value ?? "",
+    ...(definition.fieldType === "dropdown"
+      ? {
+        choices: choiceRows
+          .filter((row) => row.catalogType === customFieldChoiceCatalog(definition.id))
+          .map((row) => row.name),
+      }
+      : {}),
   }));
 }
 
@@ -551,7 +580,7 @@ router.post("/custom-fields/definitions", async (req, res) => {
     const label = text(body.label);
     if (!label) throw new AccountRelationError(400, "label is required");
     const fieldType = text(body.fieldType) ?? "text";
-    if (!["text", "multiline", "number", "date", "boolean"].includes(fieldType)) {
+    if (!isCustomFieldType(fieldType)) {
       throw new AccountRelationError(400, "fieldType is invalid");
     }
     const scope = text(body.scope ?? body.entityType) ?? "account";
@@ -583,7 +612,11 @@ router.patch("/custom-fields/definitions/:id", async (req, res) => {
     const update: Record<string, unknown> = { updatedAt: new Date() };
     if (body.label !== undefined) update.label = text(body.label);
     if (body.fieldKey !== undefined) update.fieldKey = text(body.fieldKey);
-    if (body.fieldType !== undefined) update.fieldType = text(body.fieldType);
+    if (body.fieldType !== undefined) {
+      const fieldType = text(body.fieldType);
+      if (!isCustomFieldType(fieldType)) throw new AccountRelationError(400, "fieldType is invalid");
+      update.fieldType = fieldType;
+    }
     if (body.scope !== undefined || body.entityType !== undefined) {
       const scope = text(body.scope ?? body.entityType);
       if (scope !== "account") throw new AccountRelationError(400, "Only account-scoped custom fields are supported");
