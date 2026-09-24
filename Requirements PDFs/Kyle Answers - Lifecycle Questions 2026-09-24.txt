@@ -1,0 +1,63 @@
+Corstead Customer Lifecycle — Responses to Development Questions
+Direction for current lifecycle development
+From: Kyle Stafford (Corstead LLC). Received 2026-09-24, pasted into chat.
+
+1. Partial Acceptance of Estimate Line Items
+ - Each service on an estimate should be its own line item with its own price.
+ - Jobs should follow the same structure, with each service shown as a separate priced line item.
+ - On the customer-facing estimate, place a checkbox on the left side of each service line item.
+ - The customer can check the individual services they want to purchase. Selected items should be
+   visually highlighted so it is obvious what they are accepting.
+ - The customer does not have to accept the entire estimate. Acceptance should work at the
+   individual service-line-item level, not only through a separate optional add-ons section.
+ - When the office later creates the job, the job should be based on the line items the customer
+   actually accepted.
+
+2. Acceptance Notification to the Office
+ - Use both an in-app/dashboard notification and an email notification when an estimate is accepted.
+ - Add an Estimate Status area or module on the dashboard so the office can quickly see the current
+   status of estimates.
+ - The dashboard should include status groupings such as: Open, Pending, Accepted,
+   Accepted & Scheduled, Declined, and Closed.
+ - Accepted estimates that still require office action should be highlighted prominently at the top.
+ - Show a clear count such as: "3 estimates need to be scheduled."
+ - When an estimate is accepted, also send an email notification to the company's main office email
+   address.
+ - Acceptance should alert the office that action is required. The system should not automatically
+   convert the prospect to a customer or automatically schedule the job.
+
+3. Gift Certificates
+ - Treat Gift Certificate as a normal invoice payment method, not as a separate customer-credit
+   system.
+ - When recording payment on an invoice, the user should be able to select the payment method.
+ - Payment method options should include at least: Cash, Credit Card, Check, and Gift Certificate.
+
+4. Schedule-Change Customer Notification Prompt
+ - This feature must be optional. The business should be able to turn scheduling notifications on or
+   off in Settings.
+ - If the feature is enabled, prompt the user when a job is first scheduled with a date and time.
+ - Also prompt the user any time the job date or time is changed later.
+ - The prompt should ask whether the user wants to send a scheduling notification to the customer.
+ - Nothing should be sent automatically simply because a job was scheduled, dragged, moved, or
+   edited.
+ - Based on the current direction, a crew-only change does not need to trigger the scheduling
+   notification prompt.
+
+5. Custom Field Types
+ - When a user creates a custom field, let the user choose the field type.
+ - Support these field types: Text, Number, Date, Dropdown, and Checkbox.
+ - For a Dropdown field, the user should also be able to create and manage the available choices.
+ - Custom fields should be created and named by the user rather than being fixed by Corstead.
+
+6. Gate Code and Access Notes
+ - Remove Gate Code and Access Notes as built-in Corstead fields entirely, not just from the
+   property form.
+ - Do not continue showing dedicated Gate Code or Access Notes fields to crews on assigned jobs.
+ - Corstead should not include built-in fields or prompts that suggest businesses should collect or
+   store sensitive access information such as gate codes or credit-card information.
+ - If a business independently chooses to create its own custom field for this type of information,
+   that is the business user's decision. Corstead should not provide or recommend a dedicated field
+   for it.
+
+Current focus: Keep development centered on completing the customer lifecycle path first. Items
+outside that path can follow afterward unless they are required to make these steps work correctly.

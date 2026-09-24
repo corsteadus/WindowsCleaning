@@ -11,6 +11,10 @@ import { useAuth } from "@workspace/replit-auth-web";
 import { hasClientCapability } from "@/lib/rbac";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { estimateStatusOf } from "@/lib/estimate-status";
+import {
+  buildActivityFeed, countFeed, filterFeed, lastNoteChange, profileStewardship,
+  type FeedFilter,
+} from "@/lib/activity-feed";
 import { getListCustomersQueryKey, getListProspectsQueryKey } from "@workspace/api-client-react";
 import {
   ArrowLeft, Edit2, Save, X, Phone, Mail, MapPin, Tag,
@@ -242,7 +246,7 @@ interface MessageLog {
 }
 
 // ─── Tab config ───────────────────────────────────────────────────────────────
-type Tab = "overview" | "profile" | "contacts" | "properties" | "jobs" | "quotes" | "invoices" | "payments" | "communications" | "callbacks" | "notes" | "files" | "activity";
+type Tab = "overview" | "profile" | "contacts" | "properties" | "jobs" | "quotes" | "invoices" | "payments" | "callbacks" | "notes" | "files" | "activity";
 
 const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "overview",       label: "Overview",        icon: User },
@@ -253,11 +257,11 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
   { id: "quotes",         label: "Quotes",          icon: FileText },
   { id: "invoices",       label: "Invoices",        icon: Receipt },
   { id: "payments",       label: "Payments",        icon: CreditCard },
-  { id: "communications", label: "Communications",  icon: MessageSquare },
+
   { id: "callbacks",      label: "Callbacks",       icon: PhoneCall },
   { id: "notes",          label: "Notes",           icon: StickyNote },
   { id: "files",          label: "Files",           icon: Paperclip },
-  { id: "activity",       label: "Activity",        icon: Activity },
+  { id: "activity",       label: "Communication & Activity", icon: Activity },
 ];
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -287,7 +291,7 @@ export default function CustomerDetail() {
     (tab.id !== "quotes" || hasClientCapability(user, "quotes.view"))
     && (tab.id !== "invoices" || canViewFinancials)
     && (tab.id !== "payments" || hasClientCapability(user, "payments.view"))
-    && (tab.id !== "communications" || hasClientCapability(user, "communication.view"))
+    && (tab.id !== "activity" || hasClientCapability(user, "communication.view"))
     && (tab.id !== "profile" || canManageCustomer)
     && (tab.id !== "callbacks" || canManageCustomer)
     && (tab.id !== "files" || canManageCustomer)
@@ -859,9 +863,7 @@ export default function CustomerDetail() {
           {activeTab === "payments" && (
             <PaymentsTab payments={customer.payments ?? []} />
           )}
-          {activeTab === "communications" && (
-            <CommunicationsTab messages={customer.messages} customerId={customer.id} />
-          )}
+
           {activeTab === "callbacks" && (
             <CallbacksTab customer={customer} isEditing={isEditing} form={form} />
           )}
@@ -872,7 +874,11 @@ export default function CustomerDetail() {
             <FilesTab entityType="customer" entityId={customer.id} />
           )}
           {activeTab === "activity" && (
-            <ActivityTab logs={customer.activityLogs} />
+            <CommunicationActivityTab
+              messages={customer.messages}
+              logs={customer.activityLogs ?? []}
+              customerId={customer.id}
+            />
           )}
         </div>
 
@@ -952,8 +958,8 @@ function getTabCount(tab: Tab, customer: CustomerDetail): number | null {
     return customer.properties.filter((property) => !property.archivedAt).length;
   }
   if (tab === "contacts")       return customer.contacts?.length ?? 0;
-  if (tab === "communications") return customer.messages.length;
-  if (tab === "activity")       return customer.activityLogs?.length ?? 0;
+  // one tab now shows both, so the badge counts both
+  if (tab === "activity") return (customer.messages?.length ?? 0) + (customer.activityLogs?.length ?? 0);
   return null;
 }
 
@@ -1420,8 +1426,46 @@ function OverviewTab({ customer, isEditing, form }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   form: any;
 }) {
+  // Who last wrote a general note, and who created and last touched the
+  // profile — both read from the recorded history (Random Edits #3, #6).
+  const noteChange = lastNoteChange((customer.activityLogs ?? []) as never);
+  const stewardship = profileStewardship((customer.activityLogs ?? []) as never, {
+    createdAt: customer.createdAt, updatedAt: customer.updatedAt,
+  });
+  const when = (value: string | null) => (value ? new Date(value).toLocaleString() : "—");
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      {/* General notes, on the Overview rather than buried in Profile Details */}
+      <Section title="General Notes" icon={StickyNote}>
+        {isEditing ? (
+          <textarea {...form.register("notes")} rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Notes about this account…" />
+        ) : (
+          <p className="whitespace-pre-wrap text-sm text-slate-700">{customer.notes?.trim() || "No general notes yet."}</p>
+        )}
+        <p className="mt-2 text-[11px] text-slate-400">
+          {noteChange
+            ? `Last updated by ${noteChange.performedBy ?? "someone"} on ${when(noteChange.createdAt)}`
+            : "Job, estimate and location notes are kept with their own records."}
+        </p>
+      </Section>
+
+      {/* Who created it, and who touched it last */}
+      <Section title="Record" icon={Activity}>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Created by</p>
+            <p className="text-slate-800">{stewardship.createdBy ?? "—"}</p>
+            <p className="text-xs text-slate-500">{when(stewardship.createdAt)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Last updated by</p>
+            <p className="text-slate-800">{stewardship.updatedBy ?? "—"}</p>
+            <p className="text-xs text-slate-500">{when(stewardship.updatedAt)}</p>
+          </div>
+        </div>
+      </Section>
 
       {/* Contact Info */}
       <Section title="Contact Information" icon={Phone}>
@@ -2354,48 +2398,7 @@ function InvoicesTab({ invoices, customerId }: { invoices: Invoice[]; customerId
 }
 
 // ─── Communications Tab ───────────────────────────────────────────────────────
-function CommunicationsTab({ messages, customerId }: { messages: MessageLog[]; customerId: number }) {
-  const channelIcon: Record<string, React.ComponentType<{ className?: string }>> = {
-    email: Mail,
-    sms: Phone,
-    letter: FileText,
-  };
-  return (
-    <div className="space-y-3">
-      <CommunicationSafetyCard customerId={customerId} />
-      <p className="text-sm text-slate-500">{messages.length} message{messages.length !== 1 ? "s" : ""}</p>
-      {messages.length === 0 ? (
-        <Empty icon={MessageSquare} message="No communications yet" />
-      ) : (
-        messages.map(m => {
-          const Icon = channelIcon[m.channel] ?? MessageSquare;
-          return (
-            <div key={m.id} className="bg-white rounded-2xl border border-slate-200 p-4">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                  <Icon className="w-4 h-4 text-slate-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-bold text-slate-900">{m.subject ?? m.triggerType}</p>
-                    <StatusBadge status={m.status} />
-                    <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 capitalize">{m.channel}</span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{m.body}</p>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    {m.sentAt ? `Sent ${new Date(m.sentAt).toLocaleString()}` : `Created ${new Date(m.createdAt).toLocaleString()}`}
-                  </p>
-                </div>
-              </div>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
 
-// ─── Callbacks Tab ────────────────────────────────────────────────────────────
 function CallbacksTab({ customer, isEditing, form }: {
   customer: CustomerDetail; isEditing: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2476,107 +2479,84 @@ function NotesTab({ customer, isEditing, form }: {
 }
 
 // ─── Activity Tab ─────────────────────────────────────────────────────────────
-function ActivityTab({ logs }: { logs: ActivityLog[] }) {
-  if (!logs || logs.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-slate-300">
-        <Activity className="w-10 h-10 mb-3" />
-        <p className="text-sm font-medium">No activity recorded yet</p>
-      </div>
-    );
-  }
-
-  const actionLabel: Record<string, string> = {
-    deactivated:                    "Deactivated",
-    reactivated:                    "Reactivated",
-    status_changed:                 "Status Changed",
-    note_added:                     "Note Added",
-    note_updated:                   "Note Updated",
-    field_updated:                  "Field Updated",
-    customer_created:               "Customer Created",
-    customer_updated:               "Customer Updated",
-    created:                        "Created",
-    email_sent:                     "Email Sent",
-    quote_created:                  "Quote Created",
-    quote_updated:                  "Quote Updated",
-    quote_status_changed:           "Quote Status Changed",
-    quote_converted:                "Quote Converted to Job",
-    job_created:                    "Job Created",
-    job_status_changed:             "Job Status Changed",
-    job_rescheduled:                "Job Rescheduled",
-    job_crew_assigned:              "Crew Assigned",
-    job_deleted:                    "Job Deleted",
-    invoice_created:                "Invoice Created",
-    invoice_generated:              "Invoice Generated",
-    invoice_status_changed:         "Invoice Status Changed",
-    file_uploaded:                  "File Uploaded",
-    file_deleted:                   "File Deleted",
-    recurring_plan_created:         "Recurring Plan Created",
-    recurring_plan_updated:         "Recurring Plan Updated",
-    recurring_plan_status_changed:  "Recurring Plan Status Changed",
-    recurring_plan_deleted:         "Recurring Plan Deleted",
+/**
+ * Random Edits #5 and #6: one tab for everything that has happened on a
+ * profile — the emails and texts Corstead sent, and who did what to the
+ * profile — newest first, filterable.
+ */
+function CommunicationActivityTab({ messages, logs, customerId }: {
+  messages: MessageLog[];
+  logs: ActivityLog[];
+  customerId: number;
+}) {
+  const [filter, setFilter] = useState<FeedFilter>("all");
+  const feed = buildActivityFeed(messages as never, logs as never);
+  const counts = countFeed(feed);
+  const shown = filterFeed(feed, filter);
+  const chips: Array<{ key: FeedFilter; label: string }> = [
+    { key: "all", label: "All activity" },
+    { key: "email", label: "Email" },
+    { key: "text", label: "Text" },
+    { key: "change", label: "Profile changes" },
+  ];
+  const icons: Record<string, React.ComponentType<{ className?: string }>> = {
+    email: Mail, text: Phone, change: Activity,
   };
 
   return (
-    <div className="relative pl-6">
-      <div className="absolute left-2.5 top-0 bottom-0 w-px bg-slate-100" />
-      {logs.map(log => (
-        <div key={log.id} className="relative mb-4">
-          <div className={`absolute -left-3.5 top-1.5 w-2.5 h-2.5 rounded-full border-2 ${
-            log.action === "deactivated"                   ? "bg-orange-200 border-orange-500" :
-            log.action === "reactivated"                   ? "bg-emerald-200 border-emerald-500" :
-            log.action === "email_sent"                    ? "bg-blue-200 border-blue-500" :
-            log.action === "quote_converted"               ? "bg-violet-200 border-violet-500" :
-            log.action === "job_created"                   ? "bg-cyan-200 border-cyan-500" :
-            log.action === "job_deleted"                   ? "bg-red-200 border-red-400" :
-            log.action === "job_rescheduled"               ? "bg-amber-200 border-amber-500" :
-            log.action === "job_crew_assigned"             ? "bg-indigo-200 border-indigo-500" :
-            log.action === "invoice_created"               ? "bg-emerald-200 border-emerald-500" :
-            log.action === "invoice_generated"             ? "bg-emerald-200 border-emerald-500" :
-            log.action === "invoice_status_changed"        ? "bg-emerald-200 border-emerald-500" :
-            log.action === "file_uploaded"                 ? "bg-slate-200 border-slate-400" :
-            log.action === "file_deleted"                  ? "bg-red-200 border-red-400" :
-            log.action === "customer_created"              ? "bg-cyan-200 border-cyan-500" :
-            log.action === "recurring_plan_created"        ? "bg-violet-200 border-violet-400" :
-            log.action === "recurring_plan_deleted"        ? "bg-red-200 border-red-400" :
-            log.action === "recurring_plan_status_changed" ? "bg-amber-200 border-amber-500" :
-            log.action === "recurring_plan_updated"        ? "bg-indigo-200 border-indigo-400" :
-            "bg-primary/20 border-primary/60"
-          }`} />
-          <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
-            <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                {actionLabel[log.action] ?? log.action.replace(/_/g, " ")}
-              </span>
-              <span className="text-[10px] text-slate-400">
-                {new Date(log.createdAt).toLocaleDateString("en-US", {
-                  month: "short", day: "numeric", year: "numeric",
-                  hour: "2-digit", minute: "2-digit",
-                })}
-              </span>
-            </div>
-            {log.note && <p className="text-sm text-slate-700 whitespace-pre-wrap">{log.note}</p>}
-            {log.fromValue && log.toValue && (
-              <p className="text-xs text-slate-500">
-                <span className="font-medium">{log.fromValue}</span>
-                {" → "}
-                <span className="font-medium text-primary">{log.toValue}</span>
-              </p>
-            )}
-            {log.reason && (
-              <p className="text-xs text-slate-500 mt-0.5">Reason: {log.reason}</p>
-            )}
-            {log.performedBy && (
-              <p className="text-[10px] text-slate-400 mt-1">{log.performedBy}</p>
-            )}
-          </div>
+    <div className="space-y-3">
+      <CommunicationSafetyCard customerId={customerId} />
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Activity filters">
+        {chips.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setFilter(key)}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+              filter === key ? "bg-primary text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {label} <span className="opacity-70">{counts[key]}</span>
+          </button>
+        ))}
+      </div>
+      {shown.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-slate-300">
+          <Activity className="w-10 h-10 mb-3" />
+          <p className="text-sm font-medium">Nothing recorded yet</p>
         </div>
-      ))}
+      ) : (
+        <ol className="space-y-2">
+          {shown.map((item) => {
+            const Icon = icons[item.kind] ?? Activity;
+            return (
+              <li key={item.key} className="flex gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                    {item.status && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500">{item.status.replace(/_/g, " ")}</span>}
+                    {item.related && (
+                      <Link href={`/${item.related.type === "quote" ? "quotes" : item.related.type === "invoice" ? "invoices" : "jobs"}/${item.related.id}`} className="text-[11px] font-semibold text-primary hover:underline">
+                        {item.related.type} #{item.related.id}
+                      </Link>
+                    )}
+                  </div>
+                  {item.detail && <p className="mt-0.5 truncate text-xs text-slate-500">{item.detail}</p>}
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {new Date(item.at).toLocaleString()}{item.actor ? ` · ${item.actor}` : ""}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <p className="text-[11px] text-slate-400">History is recorded automatically and cannot be edited here.</p>
     </div>
   );
 }
 
-// ─── Tiny helpers ─────────────────────────────────────────────────────────────
 function Empty({ icon: Icon, message }: { icon: React.ComponentType<{ className?: string }>; message: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-slate-300">

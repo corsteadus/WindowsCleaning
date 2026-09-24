@@ -118,6 +118,36 @@ calendar work."* Everything below follows that. Phases 1–3b above are done in 
 | **15 Go-live** | Production path in the migration gate; schema on the `production` branch; nightly `pg_dump` export; prove a restore; Neon ownership to Lute; rotate the password | — | — | M |
 | **Blocked** | A#11/B#2 address autocomplete — **Lute** owns the account, billing and cost check. Square vs Stripe before any payment work | — | Lute / Kyle | — |
 
+### Kyle answered the four lifecycle questions — 2026-09-24
+
+`Requirements PDFs/Kyle Answers - Lifecycle Questions 2026-09-24.txt`. **Nothing is waiting on
+Kyle now**; only address autocomplete still waits on Lute.
+
+| # | Question | Kyle's answer |
+|---|---|---|
+| 1 | Partial acceptance | **Per line item.** Every service is its own priced line, on the estimate and on the job. The customer-facing estimate puts a **checkbox on the left of each line**; ticked lines are highlighted. Acceptance is at line level, **not** a separate add-ons section. The job is built from the lines the customer actually accepted |
+| 2 | How the office is told | **Both**: a dashboard notification and an email to the company's main office email. Plus an **Estimate Status module** on the dashboard grouped as Open, Pending, Accepted, Accepted & Scheduled, Declined, Closed, with accepted-and-unscheduled highlighted at the top and a count — *"3 estimates need to be scheduled."* Still no automatic conversion or scheduling |
+| 3 | Gift certificates | **Just a payment method**, not the credits module. The method list needs at least Cash, Credit Card, Check, Gift Certificate |
+| 4 | Schedule-change prompt | **Optional, with a Settings switch.** When on: prompt when a job is first given a date and time, and whenever the date or time changes. The prompt asks whether to send. Nothing is ever sent automatically by scheduling, dragging, moving or editing. **A crew-only change does not prompt** |
+| 5 | Custom field types | Repeats his 2026-09-23 answer — text, number, date, dropdown, checkbox, user-named, user-managed choices. **Matches Phase 4 as built** |
+| 6 | Gate Code / Access Notes | Repeats it — gone entirely, crew view included. **Matches Phase 3b as built** |
+
+He closes: *"Keep development centered on completing the customer lifecycle path first."*
+
+**What this changes**
+
+1. **Phase 10 grew.** Partial acceptance means per-line selection on the public estimate, the
+   accepted set stored with the decision (`estimate_public_links.accepted_snapshot` already
+   exists), and conversion building the job from accepted lines only
+2. **A dashboard Estimate Status module is new work**, and the six groupings are his words, not
+   our statuses. Proposed mapping, to confirm with him: Open = draft and scheduled;
+   Pending = sent and viewed; Accepted; Accepted & Scheduled; Declined; Closed = expired
+3. **An office email address setting** is needed for the acceptance email
+4. **Phase 11 gains a Settings switch** for scheduling notifications, and crew-only changes are
+   explicitly excluded
+5. **Phase 12 shrank**: gift certificate is one more entry in the payment-method list, which
+   currently offers Cash, Check, Bank transfer, Other — Credit Card is missing from it too
+
 ### Kyle answered the seven profile questions — 2026-09-23
 
 `Requirements PDFs/Kyle Answers - Profile Questions 2026-09-23.pdf` (text extracted alongside
@@ -255,6 +285,31 @@ refused, a missing estimate is a 404, a field tech gets 403, and the list and pr
 New: `api-server/src/lib/estimate-status-batch.ts` (+6 tests), 6 more cases in
 `estimate-lifecycle.test.ts`, `crm/src/lib/estimate-status.ts`,
 `crm/src/pages/estimate-status-ui.test.ts` (8).
+
+### Phase 7 — Communication & Activity, done in the working tree 2026-09-24
+
+Verified in a real browser (15/15) on a profile given a real history: created, notes written, an
+estimate finalized and emailed, a status corrected. CRM 446/446, API 544/558 with the known 14.
+No migration.
+
+- **B#5 — one tab.** "Communications" and "Activity" were two separate tabs; they are now one
+  **Communication & Activity**, newest first, with the four filters Kyle named: All activity,
+  Email, Text, Profile changes. Each item says what it was, to whom, its delivery state, and
+  links to the estimate, job or invoice it belongs to. The merge and the filters live in
+  `crm/src/lib/activity-feed.ts`, so they are tested without a browser
+- **B#6 — the audit.** Profile changes appear in the same tab with the old and new value and who
+  made the change. The tab writes nothing and says so: *"History is recorded automatically and
+  cannot be edited here."* The Overview carries **Created by / Created on / Last updated by /
+  Last updated on**, read from the recorded history rather than from new columns
+- **B#3 — General Notes on the Overview**, editable in place, with *"Last updated by … on …"*
+  under it, and a line saying job, estimate and location notes stay with their own records
+
+**Gap found and fixed:** an estimate emailed to a customer is recorded in
+`estimate_delivery_requests`, not in `message_logs`, so **no estimate that went out appeared in
+the profile's communications at all**. The profile payload now includes deliveries, mapped into
+the same shape (negative ids, so they cannot collide with message logs) and masked the same way.
+
+New: `crm/src/lib/activity-feed.ts` (+12 tests), `crm/src/pages/communication-activity-ui.test.ts` (8).
 
 ### Phase 1 — done in the working tree, 2026-09-22
 

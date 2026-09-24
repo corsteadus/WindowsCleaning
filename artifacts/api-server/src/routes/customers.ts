@@ -20,6 +20,7 @@ import {
   estimateAppointmentsTable,
   estimateRevisionsTable,
   estimatePublicLinksTable,
+  estimateDeliveryRequestsTable,
 } from "@workspace/db";
 import {
   maskCommunicationDestination,
@@ -613,11 +614,38 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
     ...(quotes.length ? [and(eq(messageLogsTable.relatedType, "quote"), inArray(messageLogsTable.relatedId, quotes.map((quote) => quote.id)))] : []),
     ...(invoices.length ? [and(eq(messageLogsTable.relatedType, "invoice"), inArray(messageLogsTable.relatedId, invoices.map((invoice) => invoice.id)))] : []),
   ];
-  const messages = canViewCommunications
+  const loggedMessages = canViewCommunications
     ? await db.select().from(messageLogsTable)
       .where(or(...communicationScopes))
       .orderBy(desc(messageLogsTable.createdAt))
     : [];
+  // An estimate sent to a customer is recorded as a delivery request, not as a
+  // message log, so the Communication & Activity tab would have missed every
+  // estimate that went out (Random Edits #5: "every email or text sent
+  // through Corstead").
+  const deliveries = canViewCommunications && quotes.length
+    ? await db.select().from(estimateDeliveryRequestsTable)
+      .where(inArray(estimateDeliveryRequestsTable.quoteId, quotes.map((quote) => quote.id)))
+      .orderBy(desc(estimateDeliveryRequestsTable.requestedAt))
+    : [];
+  const quoteNumbers = new Map(quotes.map((quote) => [quote.id, quote.quoteNumber]));
+  const messages = [
+    ...loggedMessages,
+    ...deliveries.map((delivery) => ({
+      id: -delivery.id,                       // negative, so it cannot collide with a message log
+      channel: delivery.channel === "sms" ? "sms" : "email",
+      triggerType: "estimate_sent",
+      subject: `Estimate ${quoteNumbers.get(delivery.quoteId) ?? delivery.quoteId}`,
+      body: "[redacted]",
+      recipient: delivery.recipient,
+      status: delivery.status,
+      relatedType: "quote" as const,
+      relatedId: delivery.quoteId,
+      sentAt: delivery.requestedAt,
+      createdAt: delivery.requestedAt,
+      updatedAt: delivery.updatedAt,
+    })),
+  ];
   const paymentIds = payments.map((payment) => payment.id);
   const paymentAllocations = paymentIds.length
     ? await db.select().from(paymentAllocationsTable)
