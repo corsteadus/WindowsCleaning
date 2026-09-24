@@ -45,7 +45,7 @@ test("#22 a service can be added from the estimate's picker and from the job for
 test("#16 prospects get New Estimate too, in the header and in the Quotes tab", () => {
   assert.match(detail, /customer\.lifecycleStatus === "prospect"/);
   assert.match(detail, /!isEditing && canQuoteThisAccount && \(/);
-  assert.match(detail, /<QuotesTab quotes=\{customer\.quotes \?\? \[\]\} customerId=\{customer\.id\} canCreate=\{canQuoteThisAccount\} \/>/);
+  assert.match(detail, /<QuotesTab [^>]*canCreate=\{canQuoteThisAccount\}/);
   const tab = detail.slice(detail.indexOf("function QuotesTab("));
   assert.match(tab.slice(0, 1200), /href=\{`\/quotes\/new\?customerId=\$\{customerId\}`\}/);
 });

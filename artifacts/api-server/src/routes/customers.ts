@@ -59,6 +59,7 @@ import {
   canonicalProspectCreateBody,
   prospectLifecycleTransition,
 } from "../lib/prospect-account.ts";
+import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
 import {
   customerSinceOnCreate,
   customerSinceOnTransition,
@@ -997,6 +998,10 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
 // invoices out of reach at the same time, without saying so. Work the profile
 // is meant to carry now blocks the delete; the rows that only describe the
 // customer go with them.
+// Kyle (2026-09-23, #3): deleting a profile erases it and everything that
+// belongs to it - jobs, estimates, invoices, payments, notes and history.
+// Deletion, not archiving. The order lives in lib/customer-purge.ts, and the
+// transaction refuses to commit if anything is left pointing at the profile.
 router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void> => {
   const id = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
@@ -1004,12 +1009,28 @@ router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<vo
     ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
     : eq(customersTable.id, id);
 
+  // This cannot be undone, so it is never the result of a stray DELETE.
+  if (String(req.query.confirm ?? "") !== "delete-everything") {
+    res.status(400).json({
+      error: "Deleting a profile erases its jobs, estimates, invoices, payments and history. "
+        + "Repeat the request with ?confirm=delete-everything to go ahead.",
+      code: "confirmation_required",
+    });
+    return;
+  }
+  const performedBy = getPerformedBy(req);
+
   const outcome = await db.transaction(async (tx) => {
-    const [customer] = await tx.select({ id: customersTable.id })
-      .from(customersTable).where(target).limit(1);
+    const [customer] = await tx.select({
+      id: customersTable.id,
+      firstName: customersTable.firstName,
+      lastName: customersTable.lastName,
+      companyName: customersTable.companyName,
+    }).from(customersTable).where(target).for("update");
     if (!customer) return { kind: "notFound" as const };
 
-    const history: Array<[string, number]> = [];
+    // What is about to go, recorded before it goes.
+    const erased: Record<string, number> = {};
     for (const [label, table] of [
       ["jobs", jobsTable],
       ["estimates", quotesTable],
@@ -1018,41 +1039,44 @@ router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<vo
     ] as const) {
       const [row] = await tx.select({ n: sql<number>`count(*)::int` })
         .from(table).where(eq(table.customerId, id));
-      if (row && row.n > 0) history.push([label, row.n]);
+      if (row && row.n > 0) erased[label] = row.n;
     }
-    if (history.length) return { kind: "hasHistory" as const, history };
 
-    // None of these carry a foreign key either (Profile Details tables included),
-    // so each is cleared explicitly. Channel purposes hang off channels.
-    const channelIds = tx.select({ id: contactChannelsTable.id })
-      .from(contactChannelsTable).where(eq(contactChannelsTable.customerId, id));
-    await tx.delete(contactChannelPurposesTable)
-      .where(inArray(contactChannelPurposesTable.channelId, channelIds));
-    await tx.delete(contactChannelsTable).where(eq(contactChannelsTable.customerId, id));
-    await tx.delete(customFieldValuesTable).where(eq(customFieldValuesTable.customerId, id));
-    await tx.delete(accountProfileSettingsTable).where(eq(accountProfileSettingsTable.customerId, id));
-    await tx.delete(propertyAccountRelationshipsTable)
-      .where(eq(propertyAccountRelationshipsTable.customerId, id));
-    await tx.delete(propertiesTable).where(eq(propertiesTable.customerId, id));
-    await tx.delete(contactsTable).where(eq(contactsTable.customerId, id));
-    await tx.delete(customersTable).where(eq(customersTable.id, id));
-    return { kind: "deleted" as const };
+    for (const statement of purgeStatements(id)) {
+      await tx.execute(sql.raw(statement));
+    }
+
+    // If any table was missed, roll back rather than leave half a profile.
+    const remaining = await tx.execute(sql.raw(remainingReferenceQuery(id)));
+    const rows = (remaining as unknown as { rows?: Array<{ table_name: string; remaining: number }> }).rows
+      ?? (remaining as unknown as Array<{ table_name: string; remaining: number }>);
+    const leftovers = (rows ?? []).filter((row) => Number(row.remaining) > 0);
+    if (leftovers.length) {
+      throw new Error(`Profile ${id} still has rows in ${leftovers.map((row) => row.table_name).join(", ")}`);
+    }
+
+    // The profile's own history was just erased, so this row is written after
+    // it and survives as the record that the deletion happened.
+    const name = customer.companyName?.trim()
+      || [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim()
+      || `#${id}`;
+    const summary = Object.entries(erased).map(([label, n]) => `${n} ${label}`).join(", ");
+    await tx.insert(activityLogsTable).values({
+      entityType: "customer",
+      entityId: id,
+      action: "customer_deleted",
+      fromValue: name,
+      note: summary ? `${name} deleted permanently, with ${summary}` : `${name} deleted permanently`,
+      performedBy,
+    });
+    return { kind: "deleted" as const, name, erased };
   });
 
   if (outcome.kind === "notFound") {
     res.status(404).json({ error: "Customer not found" });
     return;
   }
-  if (outcome.kind === "hasHistory") {
-    res.status(409).json({
-      error: `This customer has ${outcome.history.map(([label, n]) => `${n} ${label}`).join(", ")}. `
-        + "Delete or reassign that work first, or archive the customer instead.",
-      code: "customer_has_history",
-      counts: Object.fromEntries(outcome.history),
-    });
-    return;
-  }
-  res.sendStatus(204);
+  res.json({ deleted: true, name: outcome.name, erased: outcome.erased });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

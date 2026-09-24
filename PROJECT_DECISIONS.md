@@ -186,6 +186,43 @@ New: `api-server/src/lib/custom-field-types.ts` (+6 tests),
 `crm/src/components/custom-fields.test.ts` (8). `CatalogManager` now takes a slug and title, so
 the same dialog serves profile dropdowns and custom-field choices.
 
+### Phase 5 — deletion, done in the working tree 2026-09-24
+
+Verified in a real browser against the local build (10/10) on a profile carrying an estimate, a
+job, an invoice, a payment and notes. CRM 418/418, API 538/552 with the known 14. No migration.
+
+- **A profile deletes permanently, with everything on it.** The 2026-09-22 `customer_has_history`
+  guard is gone, as Kyle asked. The order lives in `lib/customer-purge.ts` — 40 tables, children
+  before parents — because almost nothing has a foreign key to `customers`
+- **The transaction refuses to commit if a table was missed.** After the deletes it counts what
+  still points at the profile; anything above zero throws and rolls back
+- **It cannot happen by accident.** The API refuses without `?confirm=delete-everything`, and the
+  dialog counts what will go and requires the profile's name to be typed
+- **The deletion is recorded.** The audit row is written after the profile's own history is
+  erased, so it survives: *"ZZPhaseFive Delete deleted permanently, with 1 jobs, 1 estimates,
+  1 invoices, 1 payments — by Team Admin"*
+- **Single jobs and estimates delete from their own sections.** A job takes its calendar entry
+  with it; an estimate takes its revisions, public links, appointments, locations and activities,
+  and a job that came from it keeps its own record, pointing at nothing
+
+Two judgement calls, both worth confirming with Kyle:
+
+1. **A job billed on an invoice still cannot be deleted on its own** (`invoice_linked_job`), since
+   deleting it would corrupt the invoice. The message now says to delete the invoice first, or
+   the whole profile. The completed-job guard is gone
+2. **An accepted estimate can now be deleted**; the old `estimate_locked` refusal is gone
+
+Two bugs found and fixed on the way:
+
+- `DELETE /quotes/:id` removed the quote and its line items only, orphaning revisions, public
+  links, appointments, locations and activities
+- `DELETE /jobs/:id` left the job's `schedule_entries` row behind, so the calendar kept it
+
+New: `api-server/src/lib/customer-purge.ts` (+9 tests), rewritten
+`api-server/src/routes/customer-delete-cleanup.test.ts` (7),
+`crm/src/pages/profile-delete.test.ts` (8). `scratchpad/validate-purge.mjs` plans every statement
+against the live schema — it caught `estimate_line_metadata`, which has no `quote_id`.
+
 ### Phase 1 — done in the working tree, 2026-09-22
 
 Verified in a real browser against the local build (13/13) and by tests; **not deployed**.

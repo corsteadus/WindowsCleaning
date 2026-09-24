@@ -272,6 +272,10 @@ export default function CustomerDetail() {
   const { toast } = useToast();
   const { user } = useAuth();
   const canManageCustomer = hasClientCapability(user, "customers.manage");
+  // Kyle (2026-09-23, #3): a profile deletes permanently, with everything on it.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const canManageProperties = hasClientCapability(user, "properties.manage");
   const canManageContacts = hasClientCapability(user, "contacts.manage");
   const canScheduleJobs = hasClientCapability(user, "schedule.manage");
@@ -296,6 +300,47 @@ export default function CustomerDetail() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [emailSending, setEmailSending] = useState(false);
+
+  // A single job or estimate, deleted from its own section (Kyle 2026-09-23 #3).
+  const deleteRecord = useMutation({
+    mutationFn: async ({ kind, recordId }: { kind: "jobs" | "quotes"; recordId: number }) => {
+      const response = await protectedFetch(`/api/${kind}/${recordId}`, { method: "DELETE" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? "It could not be deleted");
+      }
+    },
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
+      toast({ title: variables.kind === "jobs" ? "Job deleted" : "Estimate deleted" });
+    },
+    onError: (cause: unknown) => toast({
+      title: "Could not delete",
+      description: cause instanceof Error ? cause.message : undefined,
+      variant: "destructive",
+    }),
+  });
+  const confirmDeleteRecord = (kind: "jobs" | "quotes", recordId: number, label: string) => {
+    if (window.confirm(`Delete ${label}? This cannot be undone.`)) deleteRecord.mutate({ kind, recordId });
+  };
+
+  const deleteProfile = useMutation({
+    mutationFn: async () => {
+      const response = await protectedFetch(`${apiBase}/${id}?confirm=delete-everything`, { method: "DELETE" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((body as { error?: string }).error ?? "The profile could not be deleted");
+      return body as { name?: string; erased?: Record<string, number> };
+    },
+    onSuccess: (result) => {
+      const erased = Object.entries(result.erased ?? {}).map(([label, count]) => `${count} ${label}`).join(", ");
+      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customers"]) });
+      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["prospects"]) });
+      toast({ title: `${result.name ?? entityLabel} deleted`, description: erased ? `Erased with ${erased}.` : undefined });
+      setDeleteOpen(false);
+      navigate(isProspectRoute ? "/prospects" : "/customers");
+    },
+    onError: (cause: unknown) => setDeleteError(cause instanceof Error ? cause.message : "The profile could not be deleted"),
+  });
 
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: authScopedQueryKey(user, ["customer", id]),
@@ -499,6 +544,14 @@ export default function CustomerDetail() {
                 className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-primary/30 text-primary bg-white text-xs font-semibold hover:bg-primary/5 transition-colors"
               >
                 <FileText className="w-3.5 h-3.5" /> New Estimate
+              </button>
+            )}
+            {!isEditing && canManageCustomer && (
+              <button
+                onClick={() => { setDeleteConfirmation(""); setDeleteError(null); setDeleteOpen(true); }}
+                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-red-200 text-red-600 bg-white text-xs font-semibold hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete
               </button>
             )}
             {/* One-off email button */}
@@ -794,10 +847,10 @@ export default function CustomerDetail() {
               : <ReadOnlyProperties customer={customer} properties={customer.properties} />
           )}
           {activeTab === "jobs" && (
-            <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} />
+            <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
           )}
           {activeTab === "quotes" && (
-            <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} />
+            <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
           )}
           {activeTab === "invoices" && (
             <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
@@ -821,6 +874,45 @@ export default function CustomerDetail() {
             <ActivityTab logs={customer.activityLogs} />
           )}
         </div>
+
+      {/* Permanent, so it asks for the name to be typed out (Kyle 2026-09-23 #3). */}
+      <Dialog open={deleteOpen} onOpenChange={(open) => { if (!open && !deleteProfile.isPending) setDeleteOpen(false); }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader><DialogTitle className="text-base">Delete {accountName}?</DialogTitle></DialogHeader>
+          <p className="text-sm text-slate-600">
+            This erases the profile and everything on it — jobs, estimates, invoices, payments, notes and history.
+            It cannot be undone.
+          </p>
+          <ul className="grid grid-cols-2 gap-1 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+            <li>{customer.jobs.length} job{customer.jobs.length === 1 ? "" : "s"}</li>
+            <li>{(customer.quotes ?? []).length} estimate{(customer.quotes ?? []).length === 1 ? "" : "s"}</li>
+            <li>{(customer.invoices ?? []).length} invoice{(customer.invoices ?? []).length === 1 ? "" : "s"}</li>
+            <li>{activeProperties.length} propert{activeProperties.length === 1 ? "y" : "ies"}</li>
+          </ul>
+          <label className="block text-xs font-semibold text-slate-600">
+            Type <span className="font-mono text-slate-900">{accountName}</span> to confirm
+            <input
+              aria-label="Type the name to confirm"
+              value={deleteConfirmation}
+              onChange={(e) => setDeleteConfirmation(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal"
+              disabled={deleteProfile.isPending}
+            />
+          </label>
+          {deleteError && <p className="text-xs text-red-600" role="alert">{deleteError}</p>}
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setDeleteOpen(false)} disabled={deleteProfile.isPending} className="h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-600">Cancel</button>
+            <button
+              type="button"
+              onClick={() => deleteProfile.mutate()}
+              disabled={deleteConfirmation.trim() !== accountName || deleteProfile.isPending}
+              className="h-9 rounded-xl bg-red-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {deleteProfile.isPending ? "Deleting…" : "Delete permanently"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
       </div>
     </Layout>
   );
@@ -2056,7 +2148,7 @@ function AddPropertyForm({
 }
 
 // ─── Jobs Tab ─────────────────────────────────────────────────────────────────
-function JobsTab({ jobs, customerId, canSchedule }: { jobs: Job[]; customerId: number; canSchedule: boolean }) {
+function JobsTab({ jobs, customerId, canSchedule, onDelete }: { jobs: Job[]; customerId: number; canSchedule: boolean; onDelete?: (kind: "jobs" | "quotes", recordId: number, label: string) => void }) {
   const [, navigate] = useLocation();
   const scheduledJobs = jobs.filter((job) => job.status !== "completed");
   const completedJobs = jobs.filter((job) => job.status === "completed");
@@ -2117,6 +2209,16 @@ function JobsTab({ jobs, customerId, canSchedule }: { jobs: Job[]; customerId: n
                 <p className="font-bold text-slate-900 text-sm">${parseFloat(j.totalAmount).toFixed(2)}</p>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+              {onDelete && (
+                <button
+                  type="button"
+                  aria-label={`Delete job ${j.jobNumber}`}
+                  onClick={(event) => { event.preventDefault(); event.stopPropagation(); onDelete("jobs", j.id, `job ${j.jobNumber}`); }}
+                  className="shrink-0 rounded-md p-1 text-red-500 hover:bg-red-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </Link>
               ))}
@@ -2165,7 +2267,7 @@ function PaymentsTab({ payments }: { payments: PaymentRecord[] }) {
 }
 
 // ─── Quotes Tab ───────────────────────────────────────────────────────────────
-function QuotesTab({ quotes, customerId, canCreate }: { quotes: Quote[]; customerId: number; canCreate: boolean }) {
+function QuotesTab({ quotes, customerId, canCreate, onDelete }: { quotes: Quote[]; customerId: number; canCreate: boolean; onDelete?: (kind: "jobs" | "quotes", recordId: number, label: string) => void }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -2196,6 +2298,16 @@ function QuotesTab({ quotes, customerId, canCreate }: { quotes: Quote[]; custome
                 </p>
               </div>
               <p className="font-bold text-slate-900 text-sm shrink-0">${parseFloat(q.totalAmount).toFixed(2)}</p>
+              {onDelete && (
+                <button
+                  type="button"
+                  aria-label={`Delete estimate ${q.quoteNumber}`}
+                  onClick={(event) => { event.preventDefault(); event.stopPropagation(); onDelete("quotes", q.id, `estimate ${q.quoteNumber}`); }}
+                  className="shrink-0 rounded-md p-1 text-red-500 hover:bg-red-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
               <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
             </div>
           </Link>

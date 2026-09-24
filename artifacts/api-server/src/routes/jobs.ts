@@ -12,6 +12,7 @@ import {
   activityLogsTable,
   usersTable,
   crewsTable,
+  scheduleEntriesTable,
 } from "@workspace/db";
 import { customerDisplayName } from "../lib/customer-display.ts";
 import { primaryCustomerPhone } from "../lib/customer-phone.ts";
@@ -1282,10 +1283,15 @@ router.delete("/jobs/:id", requireCapability("jobs.manage"), async (req, res): P
         tx.select({ invoiceId: invoiceJobsTable.invoiceId }).from(invoiceJobsTable)
           .where(eq(invoiceJobsTable.jobId, id)).limit(1),
       ]);
-      if (job.status === "completed") return { kind: "completed" as const };
+      // Kyle (2026-09-23, #3): jobs delete from the profile, completed ones
+      // included. An invoice still blocks it — deleting a job an invoice bills
+      // for would corrupt the billing record. Deleting the whole profile does
+      // take the invoice with it.
       if (legacyLink || junctionLink) return { kind: "invoiced" as const };
       const [deleted] = await tx.delete(jobsTable).where(eq(jobsTable.id, id)).returning();
       if (!deleted) return { kind: "notFound" as const };
+      // The calendar entry the sync trigger keeps for this job goes with it.
+      await tx.delete(scheduleEntriesTable).where(eq(scheduleEntriesTable.jobId, id));
       await tx.insert(activityLogsTable).values({
         entityType: "customer",
         entityId: job.customerId,
@@ -1302,10 +1308,8 @@ router.delete("/jobs/:id", requireCapability("jobs.manage"), async (req, res): P
     }
     if (result.kind !== "deleted") {
       res.status(409).json({
-        error: result.kind === "completed"
-          ? "Completed jobs cannot be deleted"
-          : "Jobs linked to an invoice cannot be deleted",
-        code: result.kind === "completed" ? "completed_job" : "invoice_linked_job",
+        error: "This job is billed on an invoice. Delete that invoice first, or delete the whole profile.",
+        code: "invoice_linked_job",
       });
       return;
     }

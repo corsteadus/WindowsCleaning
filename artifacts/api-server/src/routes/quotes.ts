@@ -28,6 +28,7 @@ import {
   requireActivePropertyForCustomer,
 } from "../lib/account-relations.js";
 import { hasCapability } from "../lib/authorization.js";
+import { quotePurgeStatements } from "../lib/customer-purge.js";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 
@@ -763,15 +764,16 @@ router.delete("/quotes/:id", async (req, res): Promise<void> => {
     const quote = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteAdvisoryLockKey(id)})`);
       const [current] = await tx.select().from(quotesTable).where(eq(quotesTable.id, id)).limit(1);
-      if (isTerminalEstimateStatus(current?.status)) return "locked" as const;
-      await tx.delete(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
-      const [deleted] = await tx.delete(quotesTable).where(eq(quotesTable.id, id)).returning();
-      return deleted ?? null;
+      if (!current) return null;
+      // Kyle (2026-09-23, #3): estimates delete from the profile, accepted ones
+      // included. Everything hanging off the estimate goes with it — revisions,
+      // public links, appointments, locations and activities — and a job that
+      // came from it keeps its own record, simply pointing at nothing.
+      for (const statement of quotePurgeStatements(id)) {
+        await tx.execute(sql.raw(statement));
+      }
+      return current;
     });
-    if (quote === "locked") {
-      res.status(409).json({ error: "Accepted estimates cannot be deleted", code: "estimate_locked" });
-      return;
-    }
     if (!quote) {
       res.status(404).json({ error: "Quote not found" });
       return;
