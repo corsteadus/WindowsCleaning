@@ -191,8 +191,7 @@ router.post("/properties", async (req, res): Promise<void> => {
         propertyType: nullableText(body.propertyType) ?? "residential",
         stories: nullableNumber(body.stories),
         windowCount: nullableNumber(body.windowCount),
-        accessNotes: nullableText(body.accessNotes),
-        gateCode: nullableText(body.gateCode),
+        // accessNotes and gateCode are no longer accepted — removed as built-in fields.
         hasScreens: body.hasScreens === true,
         hasHardWater: body.hasHardWater === true,
         hasTracks: body.hasTracks === true,
@@ -261,9 +260,9 @@ router.patch("/properties/:id", async (req, res): Promise<void> => {
       for (const field of [
         "name", "address", "city", "state", "zip", "county", "subdivision", "directions", "locationNotes",
         "billingAddress", "billingCity", "billingState", "billingZip",
-        "propertyType", "accessNotes", "gateCode", "riskNotes", "serviceNotes",
+        "propertyType", "riskNotes", "serviceNotes",
       ] as const) {
-        if (body[field] !== undefined) updateData[field] = field === "name" || field.startsWith("billing") || field.includes("Notes") || field === "gateCode" || field === "propertyType" || field === "county" || field === "subdivision" || field === "directions"
+        if (body[field] !== undefined) updateData[field] = field === "name" || field.startsWith("billing") || field.includes("Notes") || field === "propertyType" || field === "county" || field === "subdivision" || field === "directions"
           ? nullableText(body[field])
           : requiredText(body[field], field);
       }
@@ -643,8 +642,6 @@ function serializeFieldProperty(property: typeof propertiesTable.$inferSelect): 
     windowCount: property.windowCount,
     directions: property.directions,
     locationNotes: property.locationNotes,
-    accessNotes: property.accessNotes,
-    gateCode: property.gateCode,
     riskNotes: property.riskNotes,
     serviceNotes: property.serviceNotes,
     hasScreens: property.hasScreens,

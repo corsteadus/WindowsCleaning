@@ -26,8 +26,6 @@ import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 type Property = PropertyLike & {
   customerId: number;
   propertyType: string;
-  accessNotes?: string | null;
-  gateCode?: string | null;
   serviceNotes?: string | null;
   county?: string | null;
   subdivision?: string | null;
@@ -45,13 +43,12 @@ type Property = PropertyLike & {
 };
 type Draft = {
   name: string; address: string; city: string; state: string; zip: string; county: string; subdivision: string;
-  propertyType: string; stories: string; windowCount: string; accessNotes: string;
-  gateCode: string; serviceNotes: string; directions: string; locationNotes: string; hasScreens: boolean; hasHardWater: boolean; hasTracks: boolean;
+  propertyType: string; stories: string; windowCount: string; serviceNotes: string; directions: string; locationNotes: string; hasScreens: boolean; hasHardWater: boolean; hasTracks: boolean;
   isBillingAddress: boolean;
 };
 const emptyDraft: Draft = {
   name: "", address: "", city: "", state: "", zip: "", county: "", subdivision: "", propertyType: "residential",
-  stories: "", windowCount: "", accessNotes: "", gateCode: "", serviceNotes: "", directions: "", locationNotes: "",
+  stories: "", windowCount: "", serviceNotes: "", directions: "", locationNotes: "",
   hasScreens: false, hasHardWater: false, hasTracks: false, isBillingAddress: false,
 };
 const customerLabel = (c: CustomerComboboxRecord & { firstName?: string; lastName?: string; companyName?: string | null }) =>
@@ -70,7 +67,7 @@ function draftFrom(property?: Property): Draft {
     county: property.county ?? "", subdivision: property.subdivision ?? "",
     stories: property.stories == null ? "" : String(property.stories),
     windowCount: property.windowCount == null ? "" : String(property.windowCount),
-    accessNotes: property.accessNotes ?? "", gateCode: property.gateCode ?? "", serviceNotes: property.serviceNotes ?? "",
+    serviceNotes: property.serviceNotes ?? "",
     directions: property.directions ?? "", locationNotes: property.locationNotes ?? "",
     hasScreens: !!property.hasScreens, hasHardWater: !!property.hasHardWater, hasTracks: !!property.hasTracks,
     isBillingAddress: !!property.isBillingAddress,
@@ -211,7 +208,7 @@ export default function Properties() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><div><Label>City</Label><Input required value={draft.city} onChange={(e) => setField("city", e.target.value)} className="mt-1 rounded-xl" /></div><div><Label>State</Label><Input required value={draft.state} onChange={(e) => setField("state", e.target.value)} className="mt-1 rounded-xl" /></div><div><Label>ZIP</Label><Input required value={draft.zip} onChange={(e) => setField("zip", e.target.value)} className="mt-1 rounded-xl" /></div></div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><Label>County</Label><Input value={draft.county} onChange={(e) => setField("county", e.target.value)} className="mt-1 rounded-xl" /></div><div><Label>Subdivision</Label><Input value={draft.subdivision} onChange={(e) => setField("subdivision", e.target.value)} className="mt-1 rounded-xl" /></div></div>
             {/* Type, Stories and Windows removed (Profile Notes #13); the draft keeps any stored values. */}
-            <div className="grid gap-3 sm:grid-cols-2"><div><Label>Gate code</Label><Input value={draft.gateCode} onChange={(e) => setField("gateCode", e.target.value)} className="mt-1 rounded-xl" /></div><div><Label>Access notes</Label><Input value={draft.accessNotes} onChange={(e) => setField("accessNotes", e.target.value)} className="mt-1 rounded-xl" /></div></div>
+            {/* Gate code and Access notes removed as built-in fields (Kyle, 2026-09-23 #2). */}
             <div><Label>Directions</Label><textarea value={draft.directions} onChange={(e) => setField("directions", e.target.value)} className="mt-1 min-h-16 w-full rounded-xl border border-slate-200 p-3 text-sm" placeholder="Arrival, parking, or entrance directions" /></div>
             <div><Label>Location notes</Label><textarea value={draft.locationNotes} onChange={(e) => setField("locationNotes", e.target.value)} className="mt-1 min-h-20 w-full rounded-xl border border-slate-200 p-3 text-sm" placeholder="Notes that belong to this location only" /></div>
             <div><Label>Service notes</Label><textarea value={draft.serviceNotes} onChange={(e) => setField("serviceNotes", e.target.value)} className="mt-1 min-h-20 w-full rounded-xl border border-slate-200 p-3 text-sm" /></div>
@@ -233,7 +230,7 @@ export default function Properties() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Stories</p><p className="font-semibold text-slate-800">{detailProperty.stories ?? "—"}</p></div>
                 <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Windows</p><p className="font-semibold text-slate-800">{detailProperty.windowCount ?? "—"}</p></div>
-                <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Access notes</p><p className="font-semibold text-slate-800">{detailProperty.accessNotes || "—"}</p></div>
+                
                 <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Service notes</p><p className="font-semibold text-slate-800">{detailProperty.serviceNotes || "—"}</p></div>
                 <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">County / subdivision</p><p className="font-semibold text-slate-800">{[detailProperty.county, detailProperty.subdivision].filter(Boolean).join(" · ") || "—"}</p></div>
                 <div><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Directions</p><p className="font-semibold text-slate-800">{detailProperty.directions || "—"}</p></div>

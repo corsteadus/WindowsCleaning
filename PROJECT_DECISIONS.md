@@ -93,7 +93,7 @@ announced first".
 | **2 Services and quotes from the profile** | A#22 add services from the profile and the job form, new ones join the Service Catalog; A#16 new quote from the profile's Quotes tab; A#15 schedule the estimate while creating the profile | 02–03 | — | M |
 | ⤷ **Deploy** | Kyle can run steps 01–03. Sandbox 2 needs at least one catalogue service | | | |
 | **3 Contacts and locations** | A#8 a name on every phone and email; A#10 main + additional service addresses; A#14 customisable dropdown lists | 01 | — | M |
-| **4 Data integrity** | Foreign keys on `properties.customer_id`, `contacts.customer_id`, `invoice_jobs`; replaces the route-level cleanup of 2026-09-21 | — | `dev` branch | S |
+| **4 Data integrity** | Foreign keys on every customer-owned table that lacks one — `properties`, `contacts`, `property_account_relationships`, `contact_channels`, `contact_channel_purposes`, `custom_field_values`, `account_profile_settings` — and on `invoice_jobs`; replaces the route-level cleanup of 2026-09-21/22 | — | `dev` branch | S |
 | **5 Estimate → job** | B#4 statuses Draft→Expired, automatic transitions, audited manual correction; accepted-estimate scheduling and **Convert to Customer & Job** (A#17, re-enables the deferred convert); A#18 no job straight from a prospect; A#19 converted accounts leave Prospects; dashboard flag for accepted estimates | 03–05 | `dev` branch; answers on partial acceptance and notification shape parts of it | L |
 | ⤷ **Deploy** | Kyle can run steps 01–05 | | | |
 | **6 Crew and schedule changes** | Notify-before-send prompt (the parked work); pricing visibility as an admin permission | 06 | Answer: which changes trigger the prompt | M |
@@ -101,7 +101,51 @@ announced first".
 | **8 History** | B#3 General Notes card on Overview with who and when; B#5 Communication & Activity tab with filters; B#6 audit history, and Created / Last updated on Overview | 09 | `dev` branch (who/when columns) | M |
 | ⤷ **Deploy** | Kyle can run the whole test | | | |
 | **9 Off the test path** | A#21 archive the whole profile without the primary-contact warning, searchable, unarchive; A#7 deactivate an email or number per channel; A#9 address the specific contact | — | — | M |
-| **Waiting on the client** | A#2/A#3 custom fields; Gate Code and Access Notes (A#13); A#20 delete; A#11/B#2 address autocomplete; B#1 sub-customers | — | Answers | — |
+| **Waiting on the client** | Partial acceptance shape, acceptance notification, gift certificate, which changes trigger the prompt. A#11/B#2 address autocomplete waits on **Lute** (account, billing, cost) | — | Answers | — |
+
+### Kyle answered the seven profile questions — 2026-09-23
+
+`Requirements PDFs/Kyle Answers - Profile Questions 2026-09-23.pdf` (text extracted alongside
+it). It answers all seven; the four raised by the lifecycle-testing document are still open.
+
+| # | Question | Kyle's answer |
+|---|---|---|
+| 1 | Video walkthrough items in scope? | **No, not this phase.** Credit cards wanted eventually, "probably through Square", processor not chosen. Surveys and printed letters later. **He asks us to clarify what we meant by "Square cards", callbacks and reviews** |
+| 2 | Gate Code / Access Notes | **Remove entirely as built-in fields** — the property form *and* their display on assigned jobs. Corstead must not prompt anyone to store gate codes or card details; a company that wants it can make its own custom field. Liability is the reason |
+| 3 | Delete | **Full delete, including profiles with jobs and invoices.** Deleting a profile permanently erases everything belonging to it — jobs, estimates, invoices, payments, notes, history. Deletion, not archiving. Individual jobs and estimates must also be deletable from their sections on the profile |
+| 4 | Address autocomplete account | **Lute decides** the account and billing; check the cost before committing. Still wanted |
+| 5 | Sub-customers | **Linking only.** Any profile can sit beneath a main profile, residential or commercial, one or many. **No "bill to parent", no combined invoices** — linking changes nothing about billing. Can come later; must not delay the basics |
+| 6 | Custom field types | **text, number, date, dropdown, checkbox.** Created and named from the profile; for dropdowns the user manages the choices |
+| 7 | Priority | **Profiles first, then the remaining calendar work.** Finish and surface what already exists: named contacts with several phones and emails, billing/estimate contact purposes, multiple service addresses with a main one, customisable dropdowns, the service catalog, the Communication & Activity tab, estimate statuses |
+
+**What this changes in the plan**
+
+1. **A#13 is now bigger, not smaller.** Gate Code and Access Notes come out of the crew's job
+   view as well. They appear in `field-tech-scope.ts` (`OPERATIONAL_PROPERTY_FIELDS`),
+   `routes/properties.ts`, `routes/customers.ts`, `CustomerDetail.tsx`, `Properties.tsx`,
+   `ProfileDetailsTab.tsx` and `seed-demo.ts`. Dropping the columns is destructive, so it waits
+   until the new code is deployed
+2. **The delete policy of 2026-09-22 is reversed.** The 409 `customer_has_history` guard has to
+   go, replaced by a permanent cascading delete behind a clear confirmation, plus per-job and
+   per-estimate delete on the profile. That also means relaxing "Completed jobs cannot be
+   deleted" and `invoice_linked_job` for this path. Being irreversible, it needs a capability,
+   a typed confirmation and an audit entry
+3. **Custom fields (A#2, A#3) are unblocked.** `custom_field_definitions.fieldType` already
+   exists and accepts text/multiline/number/date/boolean; **dropdown and its choices do not
+   exist** and need an additive migration, plus a UI to create a field from the profile
+4. **Sub-customers shrank** to profile linking, and stay late in the order
+5. **Phase 8 (Communication & Activity) and estimate statuses move earlier** — they are on
+   Kyle's "finish these" list for the profile workflow
+
+**Done from these answers (2026-09-24, working tree, not deployed):** Gate Code and Access Notes
+are out of both property forms, both property displays, the locations card, the property and
+customer API payloads, and `OPERATIONAL_PROPERTY_FIELDS` — so they no longer reach a crew's job
+either. The columns still exist; dropping them is destructive and waits until this code is live.
+`profile-form-edits.test.ts` now asserts their absence instead of their presence. CRM 402/402,
+API 519/533 with the known 14.
+
+**Flag for later:** the system has Stripe; Kyle is thinking about Square. Not urgent, but the
+processor question should be settled before any payment work.
 
 ### Phase 1 — done in the working tree, 2026-09-22
 
@@ -151,6 +195,42 @@ data model, and none was added.
 
 Tests: `crm/src/pages/profile-services-quotes.test.ts` (7), two new cases in
 `crm/src/lib/service-form.test.ts`.
+
+### Phase 3 — done in the working tree, 2026-09-22
+
+Verified in a real browser against the local build (11/11) and by tests; **not deployed**. CRM
+402/402, API 519/533 with the known 14. No schema change.
+
+The audit came first, and most of Phase 3 already existed:
+
+- **A#10 was already built** — the Properties tab adds any number of service addresses, one
+  marked default. Verified with a second address; nothing changed. The UI says "Default
+  property" / "Primary" where Kyle says "Main Service Address"; wording left alone unless he asks
+- **A#8 was half built** — every channel could already belong to a named contact, but naming
+  someone new meant leaving for the Contacts tab first. The channel form now offers
+  "+ New person…": first and last name, the contact is created, then the channel is attached to
+  them. A failed channel save does not create the person twice on retry
+- **A#14 had the API but no UI** — each of the four Profile Details dropdowns now has "Manage
+  options" (with `catalogs.manage`): add, remove, and for payment terms the days until due
+
+Bugs found on the way, all fixed:
+
+1. **Re-adding a removed dropdown option failed.** Remove only deactivates, and
+   `(catalog_type, code)` is unique, so re-adding hit the index and returned the raw
+   "duplicate key" text. `POST /catalogs/:type` now brings the old row back, and refuses an
+   option that is already active with `"X" is already an option`. New `lib/catalog-options.ts`
+2. **Profile Details never refreshed the profile it sits on.** It invalidated `["customer", id]`
+   while the page caches under `["auth-scope", fingerprint, "customer", id]`. Now uses
+   `authScopedQueryKey`
+3. **Its `apiFetch` parsed every response as JSON**, so any 204 (a catalogue DELETE) reported an
+   error after succeeding. It also showed errors as raw JSON; it now shows the message
+4. **Customer delete still orphaned Profile Details data** — `contact_channels` (and their
+   purposes), `custom_field_values` and `account_profile_settings` carry no foreign key either.
+   The delete now clears them too. `routes/customer-delete-cleanup.test.ts` guards the list
+
+Tests: `api-server/src/lib/catalog-options.test.ts` (6),
+`api-server/src/routes/customer-delete-cleanup.test.ts` (3),
+`crm/src/components/profile-details-phase3.test.ts` (7).
 
 **Found on the way — fixed:** `index.ts` ignored the error Express 5 passes to the `listen`
 callback, so a failed bind logged "Server listening" and exited with code 0. It now aborts with
@@ -248,15 +328,17 @@ Add the FKs once the dev branch is split.
 Kyle for his real service list or seed a few samples through `POST /services`. Nothing else on
 the test path moves until this exists.
 
-### Cleanup still owed
+### ✅ Cleanup done — 2026-09-22
 
-The orphaned properties need removing. The permission classifier refused the write, so this is
-for the user to run:
+The test runs had left 7 orphaned `properties` (ids 2–8) and 16 orphaned `contacts` (ids 1–7,
+9–17), all from before the customer-delete fix. The seven properties were visible on Sandbox 2's
+Properties page. The user ran the `DELETE … WHERE NOT EXISTS (customer)` statements on
+`Development` in the Neon SQL editor. Verified afterwards: 0 orphans; the database holds one
+customer (9, Lute Atieh), property 1 and contact 8; Sandbox 2 shows only property 1.
 
-```sql
-DELETE FROM properties p
-WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.id = p.customer_id);
-```
+An earlier attempt did not reach `Development`; the cause was not confirmed (the SQL editor's
+branch dropdown pointing at `production` is the likely one). **Check that dropdown says
+`Development` before running anything meant for Sandbox 2.**
 
 ---
 

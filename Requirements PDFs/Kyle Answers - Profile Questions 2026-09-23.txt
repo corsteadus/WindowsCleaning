@@ -1,0 +1,63 @@
+
+===== page 1 =====
+Corstead LLC
+Kyle Stafford 1 / 2
+Prospect and Customer Profiles
+Responses to Toheed's development questions
+From: Kyle Stafford To: Toheed and Lute Atieh September 23, 2026
+1. Square, callbacks, reviews, surveys and printed letters
+These are not primary items for the current profile work and do not need to be built in this phase.
+ Credit cards: We want the ability to accept credit cards, probably through Square. The processor is not
+finalized.
+ Surveys and printed letters: We may want to send surveys and create letters that can be printed. These can
+come later.
+I am not sure which specific walkthrough features you mean by "Square cards," callbacks and reviews. Please
+clarify those references. They should not hold up the basic profile work.
+2. Gate Code, Access Notes and sensitive information
+Remove Gate Code and Access Notes as built-in fields entirely, not just from the property form.
+That also means removing their dedicated display from assigned jobs. Do not include built-in fields, prompts or
+examples that suggest users should collect or store gate codes, credit-card details or similar sensitive
+information.
+By users, I mean the business owner, operator, office staff or technician using Corstead. I do not want us
+encouraging that collection, particularly given my liability concerns.
+Users can still create their own custom fields. If a company chooses to create a field for that information, it is
+their choice, not something Corstead should prompt or recommend. This is separate from accepting card
+payments through a payment processor.
+3. Deleting profiles, jobs and estimates
+The full-profile Delete button should work even when jobs or invoices are attached. It is not limited to empty
+profiles.
+Allow users to delete individual jobs and estimates/quotes from their respective sections on the profile.
+If an authorized user deletes the entire prospect or customer profile, permanently erase that profile and
+everything belonging to it, including jobs, estimates/quotes, invoices, related payment records, notes and
+history. This means deletion, not archiving.
+
+===== page 2 =====
+Corstead LLC
+Kyle Stafford 2 / 2
+4. Address autocomplete account and cost
+Lute can answer whose account should own the API key and handle the monthly billing.
+We should also check the expected cost before committing to a provider. Address autocomplete is still desired,
+but account ownership, billing and cost need to be clear first.
+5. Sub-customers and parent billing
+We only need to link profiles. We do not need a "bill to parent" feature.
+Let any profile be linked beneath a main profile, with one or multiple sub-customer profiles underneath it. This
+should work for both residential and commercial accounts.
+The relationship could be a family member, a separately tracked property, another business location or another
+related account. The system does not need special rules based on that relationship.
+This is for organizing profiles together. Do not build combined invoices or automatic parent billing for this scope.
+Linking the profiles should not change how they are billed.
+Sub-customers remain a desired feature, but they can be added in the near future if there is not time to address
+them now. They should not delay getting the basic profiles working.
+6. Custom field types
+Let the user choose the field type when creating a custom field.
+Offer text, number, date, dropdown and checkbox. The user should be able to create and name the field directly
+from the profile. For dropdowns, let the user create and manage the available choices.
+7. Priority and build order
+Get the Prospect and Customer profiles working first, then move to the remaining calendar work.
+The basics need to be functional, organized and set up the way we want. This does not mean every advanced
+profile feature has to be finished before returning to the calendar.
+Use the existing work you identified and finish making it available in the profile workflow: named contacts with
+multiple phone numbers and emails, billing/estimate contact purposes, multiple service addresses with a main
+address, customizable dropdowns, the service catalog, the Communication & Activity tab, and estimate statuses.
+Please build the phased plan around that order. The smaller profile edits can move ahead first; once the core
+profiles are ironed out, move on to the remaining calendar work.

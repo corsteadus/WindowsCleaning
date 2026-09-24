@@ -13,6 +13,10 @@ import {
   activityLogsTable,
   paymentsTable,
   paymentAllocationsTable,
+  contactChannelsTable,
+  contactChannelPurposesTable,
+  accountProfileSettingsTable,
+  customFieldValuesTable,
 } from "@workspace/db";
 import {
   maskCommunicationDestination,
@@ -757,8 +761,6 @@ function serializeFieldProperty(property: typeof propertiesTable.$inferSelect) {
     zip: property.zip,
     directions: property.directions,
     locationNotes: property.locationNotes,
-    accessNotes: property.accessNotes,
-    gateCode: property.gateCode,
     riskNotes: property.riskNotes,
     serviceNotes: property.serviceNotes,
     stories: property.stories,
@@ -1020,6 +1022,15 @@ router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<vo
     }
     if (history.length) return { kind: "hasHistory" as const, history };
 
+    // None of these carry a foreign key either (Profile Details tables included),
+    // so each is cleared explicitly. Channel purposes hang off channels.
+    const channelIds = tx.select({ id: contactChannelsTable.id })
+      .from(contactChannelsTable).where(eq(contactChannelsTable.customerId, id));
+    await tx.delete(contactChannelPurposesTable)
+      .where(inArray(contactChannelPurposesTable.channelId, channelIds));
+    await tx.delete(contactChannelsTable).where(eq(contactChannelsTable.customerId, id));
+    await tx.delete(customFieldValuesTable).where(eq(customFieldValuesTable.customerId, id));
+    await tx.delete(accountProfileSettingsTable).where(eq(accountProfileSettingsTable.customerId, id));
     await tx.delete(propertyAccountRelationshipsTable)
       .where(eq(propertyAccountRelationshipsTable.customerId, id));
     await tx.delete(propertiesTable).where(eq(propertiesTable.customerId, id));

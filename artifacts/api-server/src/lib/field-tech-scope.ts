@@ -80,10 +80,14 @@ const OPERATIONAL_CUSTOMER_FIELDS = new Set([
   "homePhone", "workPhone", "cellPhone", "altPhone", "preferredContactMethod",
 ]);
 
+// Gate Code and Access Notes are deliberately absent: Kyle asked for both to be
+// removed as built-in fields, including from the crew's view of a job, so that
+// Corstead never invites anyone to store a gate code (2026-09-23 answers, #2).
+// A company that wants to keep one can make its own custom field.
 const OPERATIONAL_PROPERTY_FIELDS = new Set([
   "id", "customerId", "name", "address", "city", "state", "zip", "propertyType",
-  "stories", "windowCount", "directions", "locationNotes", "accessNotes",
-  "gateCode", "riskNotes", "serviceNotes", "hasScreens", "hasHardWater", "hasTracks",
+  "stories", "windowCount", "directions", "locationNotes",
+  "riskNotes", "serviceNotes", "hasScreens", "hasHardWater", "hasTracks",
 ]);
 
 const TOP_LEVEL_COMPLEX_FIELDS = new Set(["lineItems", "customer", "property"]);

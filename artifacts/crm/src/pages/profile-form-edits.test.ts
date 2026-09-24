@@ -45,9 +45,16 @@ test("#13 no Type, Windows or Stories inputs on either property form", () => {
   assert.doesNotMatch(properties, /setField\("propertyType"|setField\("windowCount"|setField\("stories"/);
 });
 
-test("#13 Gate Code and Access Notes stay until Kyle answers whether crews still need them", () => {
-  assert.match(detail, /set\("gateCode"/);
-  assert.match(detail, /set\("accessNotes"/);
+// Kyle answered on 2026-09-23: remove both entirely, form and crew view, so that
+// Corstead never invites anyone to store a gate code. Custom fields remain a
+// company's own choice.
+test("#13 Gate Code and Access Notes are gone from every property screen", () => {
+  for (const source of [detail, properties]) {
+    // the comments explaining the removal say the words; the code must not
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\/.*$/gm, "");
+    assert.doesNotMatch(code, /gateCode|accessNotes/);
+    assert.doesNotMatch(code, /Gate [Cc]ode|Access [Nn]otes/);
+  }
 });
 
 test("an older property keeps its stored values when edited", () => {

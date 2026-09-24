@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { AccountRelationError, lockAccount, requireCustomer } from "../lib/account-relations.js";
 import { catalogSelectionInput, channelPurposePatch } from "../lib/profile-details-core.js";
+import { catalogAddPlan, catalogOptionCode } from "../lib/catalog-options.js";
 
 const router: IRouter = Router();
 const CHANNEL_TYPES = new Set(["email", "phone"]);
@@ -445,9 +446,36 @@ router.post("/catalogs/:type", async (req, res) => {
     const body = req.body as Record<string, unknown>;
     const name = text(body.name ?? body.label);
     if (!name) throw new AccountRelationError(400, "name is required");
+    const code = text(body.code) ?? catalogOptionCode(name);
+    const [existing] = await db.select({
+      id: profileCatalogItemsTable.id,
+      name: profileCatalogItemsTable.name,
+      isActive: profileCatalogItemsTable.isActive,
+    }).from(profileCatalogItemsTable)
+      .where(and(eq(profileCatalogItemsTable.catalogType, type), eq(profileCatalogItemsTable.code, code)))
+      .limit(1);
+    const plan = catalogAddPlan(existing);
+    if (plan.kind === "duplicate") {
+      throw new AccountRelationError(409, `"${plan.name}" is already an option`);
+    }
+    if (plan.kind === "reactivate") {
+      const [restored] = await db.update(profileCatalogItemsTable)
+        .set({
+          name,
+          isActive: true,
+          ...(body.daysUntilDue !== undefined
+            ? { daysUntilDue: body.daysUntilDue == null ? null : Number(body.daysUntilDue) }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(profileCatalogItemsTable.id, plan.id))
+        .returning();
+      res.status(200).json({ ...restored, label: restored.name, value: restored.name, active: restored.isActive });
+      return;
+    }
     const [created] = await db.insert(profileCatalogItemsTable).values({
       catalogType: type,
-      code: text(body.code) ?? slugify(name),
+      code,
       name,
       description: text(body.description),
       pricingType: text(body.pricingType),

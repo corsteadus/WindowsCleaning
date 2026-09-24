@@ -179,8 +179,6 @@ interface Property {
   propertyType: string;
   stories?: number | null;
   windowCount?: number | null;
-  accessNotes?: string | null;
-  gateCode?: string | null;
   hasScreens: boolean;
   hasHardWater: boolean;
   hasTracks: boolean;
@@ -908,8 +906,6 @@ function ReadOnlyProperties({ customer, properties }: { customer: CustomerDetail
           <p className="mt-1 text-sm text-slate-600">
             {[property.address, property.city, property.state, property.zip].filter(Boolean).join(", ")}
           </p>
-          {property.gateCode && <p className="mt-2 text-sm"><strong>Gate code:</strong> {property.gateCode}</p>}
-          {property.accessNotes && <p className="mt-1 text-sm"><strong>Access:</strong> {property.accessNotes}</p>}
           {property.directions && <p className="mt-1 text-sm"><strong>Directions:</strong> {property.directions}</p>}
           {property.serviceNotes && <p className="mt-1 text-sm"><strong>Service notes:</strong> {property.serviceNotes}</p>}
         </div>
@@ -1733,10 +1729,8 @@ function PropertiesTab({
               {p.hasTracks   && <Badge label="Has Tracks" />}
             </div>
           )}
-          {(p.accessNotes || p.gateCode || p.serviceNotes || p.riskNotes) && (
+          {(p.serviceNotes || p.riskNotes) && (
             <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {p.gateCode     && <Detail label="Gate Code"    value={p.gateCode} />}
-              {p.accessNotes  && <Detail label="Access Notes" value={p.accessNotes} />}
               {p.serviceNotes && <Detail label="Service Notes" value={p.serviceNotes} />}
               {p.riskNotes    && <Detail label="Risk Notes"   value={p.riskNotes} color="red" />}
             </div>
@@ -1943,8 +1937,6 @@ function AddPropertyForm({
     propertyType: initialProperty?.propertyType ?? "residential",
     windowCount: initialProperty?.windowCount != null ? String(initialProperty.windowCount) : "",
     stories: initialProperty?.stories != null ? String(initialProperty.stories) : "",
-    gateCode: initialProperty?.gateCode ?? "",
-    accessNotes: initialProperty?.accessNotes ?? "",
     serviceNotes: initialProperty?.serviceNotes ?? "",
     directions: initialProperty?.directions ?? "",
     locationNotes: initialProperty?.locationNotes ?? "",
@@ -2013,16 +2005,9 @@ function AddPropertyForm({
           the Has Screens / Hard Water / Has Tracks boxes below (#12). Their
           values stay in `form`, so editing an older property keeps what it has. */}
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={LBL}>Gate Code</label>
-          <input className={INP} value={form.gateCode} onChange={e => set("gateCode", e.target.value)} placeholder="#1234" />
-        </div>
-        <div>
-          <label className={LBL}>Access Notes</label>
-          <input className={INP} value={form.accessNotes} onChange={e => set("accessNotes", e.target.value)} placeholder="Side gate on left" />
-        </div>
-      </div>
+      {/* Gate Code and Access Notes removed as built-in fields (Kyle, 2026-09-23 #2):
+          Corstead should not invite anyone to store a gate code. A company that
+          wants one can add its own custom field. */}
 
       <div>
         <label className={LBL}>Service Notes</label>
