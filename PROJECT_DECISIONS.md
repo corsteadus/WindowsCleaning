@@ -223,6 +223,39 @@ New: `api-server/src/lib/customer-purge.ts` (+9 tests), rewritten
 `crm/src/pages/profile-delete.test.ts` (8). `scratchpad/validate-purge.mjs` plans every statement
 against the live schema — it caught `estimate_line_metadata`, which has no `quote_id`.
 
+### Phase 6 — estimate statuses, done in the working tree 2026-09-24
+
+Verified in a real browser against the local build, **24 checks covering every status and the
+edge cases around them**. CRM 426/426, API 544/558 with the known 14. No migration.
+
+Kyle's V1 set (Random Edits #4) now exists end to end: **Draft, Sent, Viewed, Accepted,
+Declined, Expired**, plus the finer *Scheduled* and *Accepted & Scheduled* the system already drew.
+
+- **The status is derived, not stored.** `deriveEstimateStatus` reads what actually happened —
+  sent, opened, decided, expired — so it cannot drift from the facts. **Expired needs no cron**:
+  an undecided estimate past its link's date simply reads as expired
+- **One value on every screen.** The list, the profile's Quotes tab and the estimate page all
+  show the same `displayStatus`; a new `lib/estimate-status-batch.ts` derives a whole page in
+  four set-based reads rather than a query per row
+- **The list's filters were the old column's words** — Approved, Rejected. They are now Kyle's
+  statuses, and the counters and colouring follow the derived status too
+- **An authorised employee may correct a status**, and the correction is written to the activity
+  history with the old and new value and any reason given
+- **Acceptance is never typed in.** The correctable set is draft, sent, viewed, declined,
+  expired; the API refuses `accepted` (400), and refuses any correction at all once the customer
+  has accepted (409). A field tech is refused (403)
+
+Checked in the browser, each as it happens in real use: a new estimate is Draft; with an
+appointment it is Scheduled; finalizing and sending makes it Sent; the customer opening the link
+makes it Viewed; accepting makes it Accepted; declining another makes it Declined; pushing the
+link's date into the past makes a third Expired. Then: the correction dialog offers only the
+correctable statuses, the correction sticks and is audited, `accepted` and nonsense statuses are
+refused, a missing estimate is a 404, a field tech gets 403, and the list and profile agree.
+
+New: `api-server/src/lib/estimate-status-batch.ts` (+6 tests), 6 more cases in
+`estimate-lifecycle.test.ts`, `crm/src/lib/estimate-status.ts`,
+`crm/src/pages/estimate-status-ui.test.ts` (8).
+
 ### Phase 1 — done in the working tree, 2026-09-22
 
 Verified in a real browser against the local build (13/13) and by tests; **not deployed**.
@@ -332,7 +365,7 @@ All test data was removed afterwards; the sandbox is back to its single original
 
 | # | Finding | Evidence |
 |---|---|---|
-| 1 | **The Service Catalog is empty (0 rows in `services`).** Finalizing an estimate requires at least one catalogue service, so steps 03–05 cannot start at all | `POST /quotes/:id/finalize` → 400 `At least one service is required` |
+| 1 | ~~**The Service Catalog is empty (0 rows in `services`).** Finalizing an estimate requires at least one catalogue service, so steps 03–05 cannot start at all~~ **Wrong — corrected 2026-09-24.** `POST /quotes/:id/finalize` takes the lines to finalize **in the request body**; it does not read them from the estimate. The 400 came from our own script sending `{}`. The UI sends the estimate's own line items, so finalizing works with an empty catalogue. An empty catalogue is still friction — there is nothing to pick from — but it blocks nothing | `POST /quotes/:id/finalize` → 400 `At least one service is required` when `lineItems` is absent |
 | 2 | **Estimate → job conversion is disabled in code**, deliberately, with the implementation commented out awaiting "accepted-estimate scheduling". Both routes refuse | [`routes/quotes.ts:811`](artifacts/api-server/src/routes/quotes.ts) and [`routes/jobs.ts:548`](artifacts/api-server/src/routes/jobs.ts) → 409 `estimate_conversion_deferred` |
 | 3 | **No delivery provider is configured in the sandbox.** Estimate emails and texts are recorded as `provider_unconfigured` and never leave. The public link is real, but has to be copied by hand | `POST /quotes/:id/deliver` delivery row: `status: provider_unconfigured` |
 

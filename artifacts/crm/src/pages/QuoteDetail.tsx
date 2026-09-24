@@ -32,6 +32,9 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { CORRECTABLE_ESTIMATE_STATUSES, ESTIMATE_STATUS_LABELS, estimateStatusLabel } from "@/lib/estimate-status";
+import { hasClientCapability } from "@/lib/rbac";
+import { useAuth } from "@workspace/replit-auth-web";
 import { Link, useLocation, useParams } from "wouter";
 import { useBackNavigation } from "@/hooks/use-back-navigation";
 import { format } from "date-fns";
@@ -57,15 +60,36 @@ async function estimateApi<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-const ESTIMATE_STATUS_LABELS: Record<string, string> = {
-  scheduled: "Scheduled", draft: "Draft", sent: "Sent", viewed: "Viewed",
-  accepted: "Accepted", accepted_scheduled: "Accepted & Scheduled", declined: "Declined",
-};
+// Labels live in lib/estimate-status.ts so the list, the profile and this page agree.
 
 function EstimateLifecyclePanel({ quote }: { quote: any }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // Random Edits #4: an authorised employee may correct a status, and the
+  // correction is written to the activity history by the server.
+  const canCorrectStatus = hasClientCapability(user, "quotes.manage");
+  const [correcting, setCorrecting] = useState(false);
+  const [correction, setCorrection] = useState("draft");
+  const [correctionReason, setCorrectionReason] = useState("");
   const key = ["estimate-lifecycle", quote.id];
+  const correctStatus = useMutation({
+    mutationFn: () => estimateApi<any>(`/quotes/${quote.id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: correction, reason: correctionReason }),
+    }),
+    onSuccess: () => {
+      setCorrecting(false);
+      void refetch();
+      queryClient.invalidateQueries({ queryKey: ["quotes"] });
+      toast({ title: `Status corrected to ${ESTIMATE_STATUS_LABELS[correction] ?? correction}` });
+    },
+    onError: (cause: unknown) => toast({
+      title: "Could not correct the status",
+      description: cause instanceof Error ? cause.message : undefined,
+      variant: "destructive",
+    }),
+  });
   const { data, refetch } = useQuery({
     queryKey: key,
     queryFn: () => estimateApi<any>(`/quotes/${quote.id}/estimate-lifecycle`),
@@ -188,10 +212,16 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
   });
   const secureUrl = publicPath ? `${window.location.origin}${BASE}${publicPath}` : "";
   return (
+    <>
     <section className="bg-white rounded-2xl border border-sky-100 p-5 mb-4 space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="font-bold text-slate-900">Estimate lifecycle</h2><p className="text-xs text-slate-500 mt-1">Appointment, finalization, delivery, customer activity, and decision history.</p></div>
-        <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">{ESTIMATE_STATUS_LABELS[status] ?? status}</span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">{estimateStatusLabel(status)}</span>
+          {canCorrectStatus && status !== "accepted" && status !== "accepted_scheduled" && (
+            <button type="button" onClick={() => { setCorrection(status); setCorrectionReason(""); setCorrecting(true); }} className="text-[11px] font-semibold text-primary hover:underline">Correct status</button>
+          )}
+        </div>
       </div>
       {locked && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"><div className="flex gap-2"><LockKeyhole className="h-4 w-4 mt-0.5 shrink-0" /><span>The accepted estimate snapshot is locked. Create a revision rather than changing accepted terms.</span></div><Button size="sm" disabled={action.isPending} onClick={() => action.mutate({ path: `/quotes/${quote.id}/revisions`, body: {} })}><History className="mr-2 h-4 w-4" /> Create revision</Button></div>}
       {data?.revision && status !== "accepted_scheduled" && (
@@ -231,6 +261,25 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
         <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><History className="h-3.5 w-3.5" /> Activity</h3><div className="mt-2 space-y-2 max-h-44 overflow-auto">{data.activities.map((item: any) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><strong>{item.activityType.replaceAll("_", " ")}</strong><span className="ml-2 text-slate-400">{new Date(item.occurredAt).toLocaleString()}</span></div>)}</div></div>
       </div>}
     </section>
+      <Dialog open={correcting} onOpenChange={(open) => !open && setCorrecting(false)}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader><DialogTitle className="text-base">Correct the status</DialogTitle></DialogHeader>
+          <p className="text-xs text-slate-500">The correction is recorded in the activity history. An estimate becomes accepted only through the customer's own decision.</p>
+          <label className="block text-xs font-semibold text-slate-600">Status
+            <select aria-label="Corrected status" value={correction} onChange={(e) => setCorrection(e.target.value)} className="input-lite mt-1 w-full">
+              {CORRECTABLE_ESTIMATE_STATUSES.map((value) => <option key={value} value={value}>{ESTIMATE_STATUS_LABELS[value]}</option>)}
+            </select>
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">Reason <span className="font-normal text-slate-400">(optional)</span>
+            <input aria-label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} className="input-lite mt-1 w-full" placeholder="e.g. customer declined by phone" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setCorrecting(false)} className="h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-600">Cancel</button>
+            <button type="button" onClick={() => correctStatus.mutate()} disabled={correctStatus.isPending} className="h-9 rounded-xl bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50">{correctStatus.isPending ? "Saving…" : "Save correction"}</button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

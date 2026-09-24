@@ -90,6 +90,7 @@ async function lifecycleForQuote(quoteId: number, legacyStatus?: string | null) 
     legacyStatus, hasAppointment: !!appointment[0], hasFinalizedRevision: !!revision[0],
     sentAt: effectiveLink?.sentAt, firstOpenedAt: effectiveLink?.firstOpenedAt,
     decision: effectiveLink?.decision, hasLinkedJob: !!job[0],
+    expiresAt: effectiveLink?.expiresAt,
   });
   return { status, appointment: appointment[0] ?? null, revision: revision[0] ?? null, publicLink: effectiveLink };
 }

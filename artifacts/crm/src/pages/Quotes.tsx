@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
+import { estimateStatusOf } from "@/lib/estimate-status";
 import {
   FileText, Plus, Search, ArrowRightCircle, Trash2,
-  CheckCircle2, XCircle, Send, Clock,
+  CheckCircle2, XCircle, Send, Clock, Eye,
 } from "lucide-react";
 import {
   useListQuotes,
@@ -19,10 +20,10 @@ import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 
 // ─── Status filter setup ──────────────────────────────────────────────────────
 
-const FILTERS = ["all", "draft", "sent", "approved", "rejected"] as const;
+const FILTERS = ["all", "draft", "sent", "viewed", "accepted", "declined", "expired"] as const;
 type Filter = typeof FILTERS[number];
 const FILTER_LABELS: Record<Filter, string> = {
-  all: "All", draft: "Draft", sent: "Sent", approved: "Approved", rejected: "Rejected",
+  all: "All", draft: "Draft", sent: "Sent", viewed: "Viewed", accepted: "Accepted", declined: "Declined", expired: "Expired",
 };
 
 function fmtDate(d?: string | null) {
@@ -53,8 +54,8 @@ function QuoteCard({
   convertLoading: boolean;
   deleteLoading: boolean;
 }) {
-  const isApproved = quote.status === "approved";
-  const isRejected = quote.status === "rejected";
+  const isApproved = estimateStatusOf(quote).startsWith("accepted");
+  const isRejected = ["declined", "expired"].includes(estimateStatusOf(quote));
   const canConvert = !isApproved && !isRejected;
 
   const property = quote.propertyName || quote.propertyAddress;
@@ -101,7 +102,7 @@ function QuoteCard({
 
           {/* Right */}
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <StatusBadge status={quote.status} />
+            <StatusBadge status={estimateStatusOf(quote)} />
             <span className="text-xl font-bold text-slate-900 tabular-nums">
               {formatCurrency(quote.totalAmount)}
             </span>
@@ -183,14 +184,17 @@ export default function Quotes() {
 
   const counts = {
     all:      quotes?.length ?? 0,
-    draft:    quotes?.filter((q) => q.status === "draft").length    ?? 0,
-    sent:     quotes?.filter((q) => q.status === "sent").length     ?? 0,
-    approved: quotes?.filter((q) => q.status === "approved").length ?? 0,
-    rejected: quotes?.filter((q) => q.status === "rejected").length ?? 0,
+    draft:    quotes?.filter((q) => estimateStatusOf(q) === "draft").length    ?? 0,
+    sent:     quotes?.filter((q) => estimateStatusOf(q) === "sent").length     ?? 0,
+    viewed:   quotes?.filter((q) => estimateStatusOf(q) === "viewed").length   ?? 0,
+    // an accepted estimate reads "accepted & scheduled" once it has a job
+    accepted: quotes?.filter((q) => estimateStatusOf(q).startsWith("accepted")).length ?? 0,
+    declined: quotes?.filter((q) => estimateStatusOf(q) === "declined").length ?? 0,
+    expired:  quotes?.filter((q) => estimateStatusOf(q) === "expired").length  ?? 0,
   };
 
   const filtered = (quotes ?? []).filter((q) => {
-    const matchStatus = filter === "all" || q.status === filter;
+    const matchStatus = filter === "all" || estimateStatusOf(q) === filter;
     const ql = search.toLowerCase();
     const matchSearch = !ql
       || q.quoteNumber.toLowerCase().includes(ql)
@@ -219,12 +223,14 @@ export default function Quotes() {
 
       {/* ─── Summary chips ────────────────────────────── */}
       {(quotes?.length ?? 0) > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
           {[
-            { key: "approved" as Filter, label: "Approved", icon: CheckCircle2, bg: "bg-emerald-50", text: "text-emerald-700" },
+            { key: "accepted" as Filter, label: "Accepted", icon: CheckCircle2, bg: "bg-emerald-50", text: "text-emerald-700" },
+            { key: "viewed"   as Filter, label: "Viewed",   icon: Eye,           bg: "bg-sky-50",     text: "text-sky-700"     },
             { key: "sent"     as Filter, label: "Sent",     icon: Send,          bg: "bg-blue-50",    text: "text-blue-700"    },
             { key: "draft"    as Filter, label: "Draft",    icon: FileText,      bg: "bg-slate-50",   text: "text-slate-600"   },
-            { key: "rejected" as Filter, label: "Rejected", icon: XCircle,       bg: "bg-red-50",     text: "text-red-700"     },
+            { key: "declined" as Filter, label: "Declined", icon: XCircle,       bg: "bg-red-50",     text: "text-red-700"     },
+            { key: "expired"  as Filter, label: "Expired",  icon: Clock,         bg: "bg-slate-50",   text: "text-slate-500"   },
           ].map(({ key, label, icon: Icon, bg, text }) => (
             <button
               key={key}

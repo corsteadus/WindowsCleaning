@@ -3,6 +3,7 @@ import { eq, inArray, asc, isNotNull, ilike, or, desc, and, sql } from "drizzle-
 import {
   db, quotesTable, quoteLineItemsTable, jobsTable, customersTable, propertiesTable, leadsTable,
   activityLogsTable, estimateAppointmentsTable, estimateLocationsTable, estimateActivitiesTable, usersTable,
+  estimateRevisionsTable, estimatePublicLinksTable,
 } from "@workspace/db";
 import {
   buildJobLineItemsJson,
@@ -29,6 +30,8 @@ import {
 } from "../lib/account-relations.js";
 import { hasCapability } from "../lib/authorization.js";
 import { quotePurgeStatements } from "../lib/customer-purge.js";
+import { deriveQuoteStatuses } from "../lib/estimate-status-batch.js";
+import { isManuallyCorrectableStatus, MANUALLY_CORRECTABLE_STATUSES } from "../lib/estimate-lifecycle.js";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 
@@ -216,8 +219,25 @@ async function getQuoteWithDetails(id: number) {
     property = p || null;
   }
 
+  // The same derived status the list shows, so every screen agrees (Random Edits #4).
+  const [appointmentRows, revisionRows, linkRows, linkedJobRows] = await Promise.all([
+    db.select({ quoteId: estimateAppointmentsTable.quoteId }).from(estimateAppointmentsTable).where(eq(estimateAppointmentsTable.quoteId, id)),
+    db.select({ quoteId: estimateRevisionsTable.quoteId, id: estimateRevisionsTable.id, revisionNumber: estimateRevisionsTable.revisionNumber })
+      .from(estimateRevisionsTable).where(eq(estimateRevisionsTable.quoteId, id)),
+    db.select({
+      quoteId: estimatePublicLinksTable.quoteId, revisionId: estimatePublicLinksTable.revisionId,
+      sentAt: estimatePublicLinksTable.sentAt, firstOpenedAt: estimatePublicLinksTable.firstOpenedAt,
+      decision: estimatePublicLinksTable.decision, expiresAt: estimatePublicLinksTable.expiresAt,
+    }).from(estimatePublicLinksTable).where(eq(estimatePublicLinksTable.quoteId, id)),
+    db.select({ quoteId: jobsTable.quoteId }).from(jobsTable).where(eq(jobsTable.quoteId, id)),
+  ]);
+  const displayStatus = deriveQuoteStatuses({
+    quotes: [quote], appointments: appointmentRows, revisions: revisionRows, links: linkRows, jobs: linkedJobRows,
+  }).get(quote.id);
+
   return {
     ...serializeQuote(quote),
+    displayStatus,
     lineItems: lineItems.map(serializeLineItem),
     customer: customerForQuote,
     lead: leadForQuote,
@@ -415,6 +435,24 @@ router.get("/quotes", async (req, res): Promise<void> => {
       ? await db.select().from(propertiesTable).where(inArray(propertiesTable.id, propertyIds))
       : [];
 
+    // One read each for the things a status is derived from, not one per row.
+    const quoteIds = quotes.map((q) => q.id);
+    const [appointmentRows, revisionRows, linkRows, linkedJobRows] = await Promise.all([
+      db.select({ quoteId: estimateAppointmentsTable.quoteId }).from(estimateAppointmentsTable)
+        .where(inArray(estimateAppointmentsTable.quoteId, quoteIds)),
+      db.select({ quoteId: estimateRevisionsTable.quoteId, id: estimateRevisionsTable.id, revisionNumber: estimateRevisionsTable.revisionNumber })
+        .from(estimateRevisionsTable).where(inArray(estimateRevisionsTable.quoteId, quoteIds)),
+      db.select({
+        quoteId: estimatePublicLinksTable.quoteId, revisionId: estimatePublicLinksTable.revisionId,
+        sentAt: estimatePublicLinksTable.sentAt, firstOpenedAt: estimatePublicLinksTable.firstOpenedAt,
+        decision: estimatePublicLinksTable.decision, expiresAt: estimatePublicLinksTable.expiresAt,
+      }).from(estimatePublicLinksTable).where(inArray(estimatePublicLinksTable.quoteId, quoteIds)),
+      db.select({ quoteId: jobsTable.quoteId }).from(jobsTable).where(inArray(jobsTable.quoteId, quoteIds)),
+    ]);
+    const displayStatuses = deriveQuoteStatuses({
+      quotes, appointments: appointmentRows, revisions: revisionRows, links: linkRows, jobs: linkedJobRows,
+    });
+
     const customerMap = Object.fromEntries(customers.map((c) => [c.id, c]));
     const leadMap     = Object.fromEntries(leadsArr.map((l) => [l.id, l]));
     const propertyMap = Object.fromEntries(properties.map((p) => [p.id, p]));
@@ -428,6 +466,7 @@ router.get("/quotes", async (req, res): Promise<void> => {
         : l ? `${l.firstName} ${l.lastName}`.trim() || "Lead"
         : "Unknown";
       return {
+        displayStatus: displayStatuses.get(q.id) ?? q.status,
         ...serializeQuote(q),
         customerName: name,
         isLead: !q.customerId && !!q.leadId,
@@ -758,6 +797,71 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
 });
 
 // Delete quote + cascade line items
+// Random Edits #4: "Authorized employees may manually correct a status, but
+// that correction should be recorded in activity history." Acceptance is not
+// correctable — it can only come from the customer's own decision.
+router.patch("/quotes/:id/status", async (req, res): Promise<void> => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "Quote id must be a positive integer" });
+      return;
+    }
+    const requested = (req.body as { status?: unknown }).status;
+    if (!isManuallyCorrectableStatus(requested)) {
+      res.status(400).json({
+        error: `Status must be one of ${MANUALLY_CORRECTABLE_STATUSES.join(", ")}. `
+          + "An estimate becomes accepted only through the customer's own decision.",
+        code: "status_not_correctable",
+      });
+      return;
+    }
+    const reason = typeof (req.body as { reason?: unknown }).reason === "string"
+      ? String((req.body as { reason: string }).reason).trim() : "";
+
+    const outcome = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteAdvisoryLockKey(id)})`);
+      const [current] = await tx.select().from(quotesTable).where(eq(quotesTable.id, id)).limit(1);
+      if (!current) return { kind: "notFound" as const };
+      const [acceptedLink] = await tx.select({ id: estimatePublicLinksTable.id })
+        .from(estimatePublicLinksTable)
+        .where(and(eq(estimatePublicLinksTable.quoteId, id), eq(estimatePublicLinksTable.decision, "accepted")))
+        .limit(1);
+      // The customer accepted it; no correction may say otherwise.
+      if (acceptedLink) return { kind: "accepted" as const };
+      const [updated] = await tx.update(quotesTable).set({ status: requested })
+        .where(eq(quotesTable.id, id)).returning();
+      await tx.insert(activityLogsTable).values({
+        entityType: "customer",
+        entityId: current.customerId ?? 0,
+        action: "estimate_status_corrected",
+        fromValue: current.status ?? null,
+        toValue: requested,
+        note: `Estimate ${current.quoteNumber} status corrected from ${current.status ?? "none"} to ${requested}`
+          + (reason ? `: ${reason}` : ""),
+        performedBy: getPerformedBy(req),
+      });
+      return { kind: "corrected" as const, quote: updated, from: current.status ?? null };
+    });
+
+    if (outcome.kind === "notFound") {
+      res.status(404).json({ error: "Quote not found" });
+      return;
+    }
+    if (outcome.kind === "accepted") {
+      res.status(409).json({
+        error: "This estimate was accepted by the customer; its status cannot be corrected.",
+        code: "estimate_accepted",
+      });
+      return;
+    }
+    res.json({ id, status: requested, previousStatus: outcome.from });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to correct the estimate status" });
+  }
+});
+
 router.delete("/quotes/:id", async (req, res): Promise<void> => {
   try {
     const id = parseInt(req.params.id, 10);

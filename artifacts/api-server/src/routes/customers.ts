@@ -17,6 +17,9 @@ import {
   contactChannelPurposesTable,
   accountProfileSettingsTable,
   customFieldValuesTable,
+  estimateAppointmentsTable,
+  estimateRevisionsTable,
+  estimatePublicLinksTable,
 } from "@workspace/db";
 import {
   maskCommunicationDestination,
@@ -60,6 +63,7 @@ import {
   prospectLifecycleTransition,
 } from "../lib/prospect-account.ts";
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
+import { deriveQuoteStatuses } from "../lib/estimate-status-batch.js";
 import {
   customerSinceOnCreate,
   customerSinceOnTransition,
@@ -660,7 +664,8 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
         };
       }
     }
-    return { ...message, body: "[redacted]" };
+
+  return { ...message, body: "[redacted]" };
   });
 
   let effectiveDefaultPropertyId: number | null = null;
@@ -691,12 +696,33 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
     }
   }
 
+  // Estimate statuses are derived, not read from the column, so the profile
+  // agrees with the estimates list and the estimate page (Random Edits #4).
+  const quoteIds = quotes.map((q) => q.id);
+  const [quoteAppointments, quoteRevisions, quoteLinks, quoteJobs] = quoteIds.length
+    ? await Promise.all([
+      db.select({ quoteId: estimateAppointmentsTable.quoteId }).from(estimateAppointmentsTable)
+        .where(inArray(estimateAppointmentsTable.quoteId, quoteIds)),
+      db.select({ quoteId: estimateRevisionsTable.quoteId, id: estimateRevisionsTable.id, revisionNumber: estimateRevisionsTable.revisionNumber })
+        .from(estimateRevisionsTable).where(inArray(estimateRevisionsTable.quoteId, quoteIds)),
+      db.select({
+        quoteId: estimatePublicLinksTable.quoteId, revisionId: estimatePublicLinksTable.revisionId,
+        sentAt: estimatePublicLinksTable.sentAt, firstOpenedAt: estimatePublicLinksTable.firstOpenedAt,
+        decision: estimatePublicLinksTable.decision, expiresAt: estimatePublicLinksTable.expiresAt,
+      }).from(estimatePublicLinksTable).where(inArray(estimatePublicLinksTable.quoteId, quoteIds)),
+      db.select({ quoteId: jobsTable.quoteId }).from(jobsTable).where(inArray(jobsTable.quoteId, quoteIds)),
+    ])
+    : [[], [], [], []];
+  const quoteStatuses = deriveQuoteStatuses({
+    quotes, appointments: quoteAppointments, revisions: quoteRevisions, links: quoteLinks, jobs: quoteJobs,
+  });
+
   res.json({
     ...serialize(customer),
     effectiveDefaultPropertyId,
     defaultPropertySource,
     jobs: jobs.map(j => ({ ...j, createdAt: j.createdAt.toISOString(), updatedAt: j.updatedAt.toISOString() })),
-    quotes: quotes.map(q => ({ ...q, createdAt: q.createdAt.toISOString(), updatedAt: q.updatedAt.toISOString() })),
+    quotes: quotes.map(q => ({ ...q, displayStatus: quoteStatuses.get(q.id) ?? q.status, createdAt: q.createdAt.toISOString(), updatedAt: q.updatedAt.toISOString() })),
     invoices: invoices.map(i => ({ ...i, createdAt: i.createdAt.toISOString(), updatedAt: i.updatedAt.toISOString() })),
     payments: payments.map((payment) => ({
       ...payment,

@@ -10,6 +10,11 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string; dot:
   approved:    { label: "Approved",    bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
   accepted:    { label: "Accepted",    bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
   rejected:    { label: "Rejected",    bg: "bg-red-50",     text: "text-red-700",     dot: "bg-red-500"    },
+  // Estimate statuses (Random Edits #4)
+  viewed:      { label: "Viewed",      bg: "bg-sky-50",     text: "text-sky-700",     dot: "bg-sky-400"    },
+  declined:    { label: "Declined",    bg: "bg-red-50",     text: "text-red-700",     dot: "bg-red-500"    },
+  expired:     { label: "Expired",     bg: "bg-slate-100",  text: "text-slate-500",   dot: "bg-slate-400"  },
+  accepted_scheduled: { label: "Accepted & Scheduled", bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
   // Invoices
   paid:        { label: "Paid",        bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-500" },
   overdue:     { label: "Overdue",     bg: "bg-red-50",     text: "text-red-700",     dot: "bg-red-500"    },

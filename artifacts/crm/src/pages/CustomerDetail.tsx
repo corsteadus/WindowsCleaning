@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@workspace/replit-auth-web";
 import { hasClientCapability } from "@/lib/rbac";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
+import { estimateStatusOf } from "@/lib/estimate-status";
 import { getListCustomersQueryKey, getListProspectsQueryKey } from "@workspace/api-client-react";
 import {
   ArrowLeft, Edit2, Save, X, Phone, Mail, MapPin, Tag,
@@ -2290,7 +2291,7 @@ function QuotesTab({ quotes, customerId, canCreate, onDelete }: { quotes: Quote[
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="font-bold text-slate-900 text-sm">{q.quoteNumber}</p>
-                  <StatusBadge status={q.status} />
+                  <StatusBadge status={estimateStatusOf(q)} />
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Created {new Date(q.createdAt).toLocaleDateString()}
