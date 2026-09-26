@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Layout } from "@/components/Layout";
 import {
-  ArrowLeft, Pencil, Send, XCircle, ArrowRightCircle, Save, Plus,
+  ArrowLeft, Pencil, Send, Save, Plus,
   Trash2, X, User, MapPin, FileText, Sparkles, Printer, CalendarDays,
   Mail, MessageSquare, LockKeyhole, History, Copy, CheckCircle2,
 } from "lucide-react";
@@ -12,7 +12,6 @@ import {
   useGetQuote,
   useUpdateQuote,
   useDeleteQuote,
-  convertQuote,
   getListQuotesQueryKey,
   getGetQuoteQueryKey,
   getListJobsQueryKey,
@@ -38,7 +37,6 @@ import { useAuth } from "@workspace/replit-auth-web";
 import { Link, useLocation, useParams } from "wouter";
 import { useBackNavigation } from "@/hooks/use-back-navigation";
 import { format } from "date-fns";
-import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
 import { protectedFetch } from "@/lib/auth-scope";
 import {
@@ -427,17 +425,6 @@ export default function QuoteDetail() {
     },
   });
 
-  const convertMutation = useMutation({
-    mutationFn: ({ id, key }: { id: number; key: string }) =>
-      convertQuote(id, idempotencyRequest(key)),
-    onSuccess: (job) => {
-      queryClient.invalidateQueries({ queryKey: getGetQuoteQueryKey(quoteId) });
-      queryClient.invalidateQueries({ queryKey: getListQuotesQueryKey() });
-      toast({ title: `Job ${(job as { jobNumber?: string }).jobNumber} created!` });
-      setTimeout(() => navigate(`/jobs/${(job as { id: number }).id}`), 600);
-    },
-    onError: () => toast({ title: "Failed to convert", variant: "destructive" }),
-  });
 
   const startEdit = () => {
     if (!quote) return;
@@ -538,9 +525,6 @@ export default function QuoteDetail() {
   const isSent     = quote.status === "sent";
   const isApproved = quote.status === "approved";
   const acceptedLocked = quote.status === "accepted" || quote.status === "approved";
-  // Conversion and quote-linked job creation are intentionally deferred to the
-  // accepted-estimate scheduling task.
-  const canConvert = false;
 
   return (
     <Layout>
@@ -596,19 +580,6 @@ export default function QuoteDetail() {
       ══════════════════════════════════════════════════ */}
       {!editing && (
         <div className="hidden sm:flex gap-2.5 mb-4 flex-wrap">
-          {canConvert && !acceptedLocked && (
-            <button
-              onClick={() => convertMutation.mutate({ id: quoteId, key: createIdempotencyKey() })}
-              disabled={convertMutation.isPending}
-              className="flex-1 flex items-center justify-center gap-2 h-11 rounded-xl
-                         bg-emerald-500 hover:bg-emerald-600 active:scale-[.98]
-                         text-white text-sm font-bold shadow-sm shadow-emerald-200
-                         transition-all disabled:opacity-60"
-            >
-              <ArrowRightCircle className="w-4 h-4" />
-              {convertMutation.isPending ? "Converting…" : "Approve & Convert to Job"}
-            </button>
-          )}
            {isDraft && !acceptedLocked && (
             <button
               onClick={() => changeStatus("sent")}
@@ -619,18 +590,6 @@ export default function QuoteDetail() {
             >
               <Send className="w-4 h-4" />
               Mark Sent
-            </button>
-          )}
-          {canConvert && (
-            <button
-              onClick={() => changeStatus("rejected")}
-              disabled={updateMutation.isPending}
-              className="flex items-center gap-2 h-11 px-5 rounded-xl
-                         border-2 border-red-200 text-red-600 bg-white hover:bg-red-50 active:scale-[.98]
-                         text-sm font-bold transition-all disabled:opacity-60"
-            >
-              <XCircle className="w-4 h-4" />
-              Reject
             </button>
           )}
           <button
@@ -866,18 +825,6 @@ export default function QuoteDetail() {
           {/* Mobile: primary actions at bottom */}
           {!editing && (
             <div className="sm:hidden space-y-2">
-              {canConvert && (
-                <button
-                  onClick={() => convertMutation.mutate({ id: quoteId, key: createIdempotencyKey() })}
-                  disabled={convertMutation.isPending}
-                  className="w-full flex items-center justify-center gap-2 h-12 rounded-xl
-                             bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-bold
-                             shadow-sm shadow-emerald-200 transition-all disabled:opacity-60"
-                >
-                  <ArrowRightCircle className="w-5 h-5" />
-                  {convertMutation.isPending ? "Converting…" : "Approve & Convert to Job"}
-                </button>
-              )}
               <div className="flex gap-2">
                 {isDraft && (
                   <button onClick={() => changeStatus("sent")} disabled={updateMutation.isPending}
@@ -918,18 +865,6 @@ export default function QuoteDetail() {
             {/* Sidebar quick actions */}
             {!editing && (
               <div className="space-y-2">
-                {canConvert && (
-                  <button
-                    onClick={() => convertMutation.mutate({ id: quoteId, key: createIdempotencyKey() })}
-                    disabled={convertMutation.isPending}
-                    className="w-full flex items-center justify-center gap-2 h-11 rounded-xl
-                               bg-emerald-500 hover:bg-emerald-600 active:scale-[.98]
-                               text-white text-sm font-bold shadow-sm shadow-emerald-200 transition-all disabled:opacity-60"
-                  >
-                    <ArrowRightCircle className="w-4 h-4" />
-                    {convertMutation.isPending ? "Converting…" : "Convert to Job"}
-                  </button>
-                )}
                 {isDraft && (
                   <button
                     onClick={() => changeStatus("sent")}

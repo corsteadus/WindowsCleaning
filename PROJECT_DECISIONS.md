@@ -63,6 +63,192 @@ let the database move stall the feature build.
 **Do not** run `git commit` or `git push` — hand the user the message to paste.
 
 ---
+## Phases 1–7 are deployed and verified on Sandbox 2 — 2026-09-25
+
+`a8c38c0` is pushed and republished. The deployed bundle
+(`/assets/index-Cgd1zUPe.js`) carries every Phase 1–7 marker and no longer carries
+`gateCode` at all. **Sandbox 2 now runs the same code as the working tree** — the
+gap recorded earlier, where it was still on pre-Phase-1 code, is closed.
+
+**The run:** `scratchpad/sandbox2-accept.mjs`, headed, against
+`https://sandbox-2-data-free-corsteadllc.replit.app` — 36 checks across all seven
+phases, scenarios and edge cases, signed in as `team_admin` and as `team_tech`, with
+a guest browser for the customer's own estimate link.
+
+**Result: 36/36.** Five reported as failures on the first pass; all five were faults
+in how the test asked, re-asked correctly in `scratchpad/sbx2-failures2.mjs` and all
+five passed. They are worth writing down because they will trip the next test author:
+
+| What looked broken | What was actually true |
+|---|---|
+| "Account type is not first on the form" | There is **no `/prospects/new` route** — the form is a dialog opened by **New Prospect** on `/prospects`. The test had been reading the nav sidebar. The dialog reads: Account type → Residential/Commercial → Contact information → Salutation → First name |
+| "Customer Since is not set to today" | The field is **`customerDate`**, not `customerSince`, in the API and in the column (`customer_date`). Sending `customerSince: "2001-01-01"` on create stores `2026-09-24`; a later PATCH cannot move it; the profile shows it read-only |
+| "A duplicate dropdown option is not refused" | It is: the second add returns **HTTP 409 `"ZZ Dup Probe" is already an option`** and no second row is written. The test read the page 1.2s later, by which time the toast had gone |
+| "Gate Code and Access Notes are still there" | **No screen asks for them** anywhere on the profile. The `access_notes` and `gate_code` **columns** are still on `properties`, and the API still answers with those keys — dropping them is **Phase 9**, as planned. Not a defect |
+
+**Verified on the deployed build, not localhost:** the five custom-field types and
+their dropdown choices (values survive a reload; a blank date stays blank, not
+"null"); a service typed while quoting joining the company-wide catalogue and
+landing as a priced line; the customer's secure estimate link opening without a
+sign-in and turning the estimate Viewed; Draft → Sent → Viewed, manual correction
+with a reason, Accepted refused (400), unknown status refused (400), missing
+estimate 404, field tech 403; one Communication & Activity tab with the estimate
+email and the profile's own changes, newest first, filters that lose nothing
+(1 email + 0 text + 4 changes = 5); the Overview's General Notes and created-by /
+last-updated-by; and the full delete — 400 without confirmation, a dialog that
+counts "1 job, 1 estimate, 1 invoice", a button that stays disabled until the name
+is typed, nothing left in the database, and an audit row naming who did it.
+
+**The database was returned to exactly what it was:** 1 customer (Lute Atieh),
+1 property, 0 quotes, 0 jobs, 0 invoices, 0 services, 0 custom fields, 0 catalogue
+options. The acceptance script's own cleanup crashed on
+`custom_field_definitions.name` — **the column is `label`** — so the leftovers were
+removed by hand (`scratchpad/sbx2-cleanup2.mjs`, `sbx2-cleanup3.mjs`), including
+dropdown choices orphaned under `profile_catalog_items.catalog_type =
+'custom_field_<id>'` once their definition is gone. **Deleting a custom field does
+not take its choices with it** — worth fixing when Phase 8 touches this area.
+
+**Still true, and Kyle should be told before he tests:** there is no email provider
+on the sandbox, so an estimate is never actually delivered — the estimate page shows
+the secure link with a **Copy secure link** button, and that is how to open the
+customer's view. The service catalogue, dropdown lists and custom fields are empty
+**by design**, because creating them is itself what Kyle asked to be able to do.
+Conversion (estimate → job) is **not built yet** — it is Phase 10 — so his lifecycle
+steps 05–08 will not complete.
+
+---
+
+## Phase 10 — Estimate → job, done in the working tree 2026-09-26
+
+**Most of the conversion already existed.** `POST /quotes/:id/convert-and-schedule`
+and `GET /quotes/:id/conversion-preview` were built and live, with
+`EstimateConversionDialog` wired into the estimate page: acceptance gate,
+prospect → customer, the lead marked won, one job per location, idempotency, crew
+and property locking. A baseline run (`scratchpad/phase10-baseline.mjs`) proved it
+converts. So A#17, A#18 and A#19 were **already satisfied** — the plan row
+overstated the work.
+
+What was genuinely missing was the two things Kyle answered on 2026-09-24.
+
+### #1 Partial acceptance
+
+`src/lib/estimate-acceptance.ts` — `acceptedSnapshotFor(snapshot, ids)` narrows the
+accepted snapshot to the ticked lines, re-totals it, and **drops any location that
+lost all of its services**, because `buildLocationJobPlans` refuses a location with
+nothing to do. `ids` of `null` means the whole estimate, which is what every
+acceptance before this meant. 14 unit tests.
+
+Everything downstream needed no change: the conversion already reads
+`acceptedLink.acceptedSnapshot` first, so the job's services and its total follow
+the customer's choice without knowing a choice was made. Verified: a 3-service,
+$540 estimate accepted as 2 services became a **$390 job for those two only**.
+
+- `POST /public/estimates/:token/decision` takes `acceptedLineItemIds`, rejects an
+  empty list and an id that is not on the estimate (400), and records the accepted
+  and declined ids on the activity row and the `quote.accepted` event.
+- `publicEstimate()` now keeps **offered** and **accepted** apart, so the customer's
+  page can still show what they turned down. The public GET returns
+  `acceptedLineItemIds`.
+- `GET /quotes/:id/conversion-preview` now previews the **accepted** snapshot and
+  adds `declinedLineItems`, so the office cannot schedule a service the customer
+  refused.
+- `PublicEstimate.tsx` — a checkbox to the left of every line, ticked lines tinted
+  with an emerald left bar, a live selected total against the struck-through full
+  price, a button that reads "Accept 2 of 3 services", Accept disabled with an
+  explanation when nothing is ticked, and — after the decision — the lines locked,
+  the declined ones dimmed and marked NOT ACCEPTED.
+
+### #2 Telling the office
+
+`src/lib/estimate-dashboard.ts` maps the derived statuses onto Kyle's six
+groupings, and `GET /dashboard/estimate-status` returns the counts plus the
+office's queue. `EstimateStatusModule.tsx` renders it at the top of the dashboard,
+above the financial reporting and **outside its gate**, so a `sales` role sees the
+queue without seeing invoices or payments.
+
+**The mapping is our reading and is still to be confirmed with Kyle:**
+
+| Grouping | Statuses |
+|---|---|
+| Open | `draft`, `scheduled` — written, not yet with the customer |
+| Pending | `sent`, `viewed` — with the customer, waiting |
+| Accepted | `accepted` — **the office's queue** |
+| Accepted & Scheduled | `accepted_scheduled` |
+| Declined | `declined` |
+| Closed | `expired` |
+
+`src/lib/estimate-accepted-notice.ts` builds the office email: the subject says
+"Q-1042 accepted by Jane Doe — 1 of 2 services, $300.00", the body lists what was
+accepted **and what was not**, and it states plainly that nothing has been
+scheduled and no job created. Names and service descriptions are HTML-escaped. It
+is sent after the decision commits and never awaited, and the attempt is written to
+`estimate_activities` as `office_notified` / `office_notification_failed`.
+
+**New configuration:** `OFFICE_EMAIL_ADDRESS` (falls back to `EMAIL_FROM_ADDRESS`),
+and `PUBLIC_APP_URL` for the link in the email. There is no company settings store
+yet; when Phase 11 builds Settings this moves there. Lute offered
+**`info@corstead.us`** on 2026-09-25 — that is the address this expects.
+
+### Email, corrected
+
+An earlier note in this file said estimate emails cannot send because the deliver
+route never calls the email library. **That was half right and the conclusion was
+wrong.** The route does not call it directly, but it enqueues a `quote.sent`
+communication event, and a full chain exists: event → `communication-dispatcher` →
+`createCampaignWithTransaction` → `scheduler` → `campaign-processor` →
+`lib/email.ts`. What actually stops it is different, and all three parts are
+needed:
+
+1. **No provider** — `detectProvider()` falls through to `mock`, which logs and
+   reports success. Lute's keys fix this.
+2. **No rule and no template** — `automation_rules` 0 rows, `email_templates` 0
+   rows. The dispatcher works off rules, so a `quote.sent` event matches nothing.
+   These are built from the CRM's own Automations and Communications screens.
+3. **The queue is not running** — all 56 `communication_events` sit `pending`.
+
+The office acceptance notice added here does **not** go through that chain; it
+calls `sendEmailTo` directly, so it starts working the moment a provider is
+configured, with no rule or template needed.
+
+### Removed
+
+The three "Approve & Convert to Job" buttons in `QuoteDetail.tsx` and their
+mutation called `POST /quotes/:id/convert`, which has answered 409 since
+conversion was deferred, and were hidden behind `const canConvert = false`. They
+and the dead Reject button beside them are gone, along with five imports that
+nothing used. Conversion happens through `EstimateConversionDialog`, which
+schedules the work at the same time.
+
+### Verified
+
+`scratchpad/phase10-partial.mjs` **17/17** and `scratchpad/phase10-dashboard.mjs`
+**24/24**, both headed, against the local build on the shared Development database,
+signed in as `team_admin` and `team_tech` with a guest browser for the customer.
+Suites after: **CRM 460/460**, **API 581/595** (the same 14 `DATABASE_URL`
+failures as before). Both typechecks clean. The database was returned to its one
+customer.
+
+Three test faults worth knowing, none of them product faults:
+
+- **The dashboard is `/`, not `/dashboard`** — there is no `/dashboard` route in
+  the SPA.
+- **Chrome's `innerText` applies `text-transform`**, so a heading styled
+  `uppercase` reads back as "ACCEPTED & SCHEDULED". Compare case-insensitively.
+- **Playwright leaves the pointer where it last clicked**, so a row's `hover:`
+  background makes an unselected row look selected. Read the selection bar
+  (`borderLeftColor`), not the background.
+
+### Still open from this phase
+
+- Kyle must confirm the six-grouping mapping above — asked 2026-09-25, unanswered.
+- The email cannot actually leave until Lute supplies provider keys.
+- `estimate_activities` rows orphaned by earlier sessions (ids 1–5,
+  `appointment_scheduled`, quotes 2–6) were cleaned up by hand. The purge itself is
+  correct: this phase's own `office_notified` rows were removed with their
+  customers.
+
+---
+
 
 ## Work plan — profiles and the lifecycle, agreed 2026-09-22
 

@@ -1,3 +1,8 @@
+import { acceptedSnapshotFor, EstimateAcceptanceError } from "../lib/estimate-acceptance.ts";
+import { officeAcceptedNotice, officeEmailAddress } from "../lib/estimate-accepted-notice.ts";
+import { sendEmailTo } from "../lib/email.ts";
+import { summariseEstimates } from "../lib/estimate-dashboard.ts";
+import { deriveQuoteStatuses } from "../lib/estimate-status-batch.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
@@ -374,7 +379,10 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
   const source = await conversionSource(db, quoteId);
   if (source.kind === "notFound") return res.status(404).json({ error: "Estimate not found" });
   if (source.kind === "notFinalized") return res.status(409).json({ error: "Finalize the estimate before scheduling work" });
-  const snapshot = source.revision.snapshot as AcceptedEstimateSnapshot;
+  // The office schedules what the customer accepted. Falling back to the
+  // revision covers a verbal acceptance, where there is no customer decision.
+  const offered = source.revision.snapshot as AcceptedEstimateSnapshot;
+  const snapshot = (source.acceptedLink?.acceptedSnapshot ?? offered) as AcceptedEstimateSnapshot;
   const existingJobs = await db.select().from(jobsTable).where(eq(jobsTable.quoteId, quoteId)).orderBy(asc(jobsTable.id));
   const accepted = isAcceptedEstimate(source.quote.status, !!source.acceptedLink);
   res.json({
@@ -391,6 +399,12 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
       lifecycleStatus: null,
     },
     snapshot,
+    // What the customer left behind, so the office can see the choice was partial
+    // rather than wonder where a service went.
+    declinedLineItems: offered.lineItems.filter(
+      (line) => !snapshot.lineItems.some((accepted) => accepted.id === line.id),
+    ),
+    offeredTotal: offered.lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0),
     existingJobs: existingJobs.map(conversionJobResponse),
   });
 });
@@ -760,6 +774,105 @@ router.get("/estimates/follow-up", async (_req, res): Promise<any> => {
   res.json(rows.map((row) => ({ ...row, totalAmount: Number(row.totalAmount) })));
 });
 
+/**
+ * The Estimate Status module (Kyle 2026-09-24 #2): every estimate in its
+ * grouping, and the office's own queue — accepted, nobody has scheduled it —
+ * separately, because that is the part that needs somebody to act.
+ */
+router.get("/dashboard/estimate-status", async (_req, res): Promise<any> => {
+  const [quotes, appointments, revisions, links, linkedJobs] = await Promise.all([
+    db.select({
+      id: quotesTable.id, status: quotesTable.status, quoteNumber: quotesTable.quoteNumber,
+      customerId: quotesTable.customerId, totalAmount: quotesTable.totalAmount,
+    }).from(quotesTable),
+    db.select({ quoteId: estimateAppointmentsTable.quoteId }).from(estimateAppointmentsTable),
+    db.select({
+      quoteId: estimateRevisionsTable.quoteId, id: estimateRevisionsTable.id,
+      revisionNumber: estimateRevisionsTable.revisionNumber,
+    }).from(estimateRevisionsTable),
+    db.select({
+      quoteId: estimatePublicLinksTable.quoteId, revisionId: estimatePublicLinksTable.revisionId,
+      sentAt: estimatePublicLinksTable.sentAt, firstOpenedAt: estimatePublicLinksTable.firstOpenedAt,
+      decision: estimatePublicLinksTable.decision, decisionAt: estimatePublicLinksTable.decisionAt,
+      expiresAt: estimatePublicLinksTable.expiresAt, acceptedSnapshot: estimatePublicLinksTable.acceptedSnapshot,
+    }).from(estimatePublicLinksTable),
+    db.select({ quoteId: jobsTable.quoteId }).from(jobsTable),
+  ]);
+
+  const statuses = deriveQuoteStatuses({ quotes, appointments, revisions, links, jobs: linkedJobs });
+  const summary = summariseEstimates(quotes.map((quote) => ({ id: quote.id, status: statuses.get(quote.id) })));
+
+  // Whoever accepted most recently is the one who has waited least; the office
+  // wants the oldest wait at the top of its queue.
+  const acceptedAt = new Map<number, Date>();
+  const acceptedLines = new Map<number, number>();
+  for (const link of links) {
+    if (link.decision !== "accepted" || !link.decisionAt) continue;
+    const current = acceptedAt.get(link.quoteId);
+    if (!current || link.decisionAt > current) {
+      acceptedAt.set(link.quoteId, link.decisionAt);
+      acceptedLines.set(link.quoteId,
+        ((link.acceptedSnapshot as { lineItems?: unknown[] } | null)?.lineItems ?? []).length);
+    }
+  }
+
+  const waiting = quotes.filter((quote) => statuses.get(quote.id) === "accepted");
+  const customerIds = [...new Set(waiting.map((quote) => quote.customerId).filter((id): id is number => id !== null))];
+  const customers = customerIds.length
+    ? await db.select({
+        id: customersTable.id, firstName: customersTable.firstName, lastName: customersTable.lastName,
+      }).from(customersTable).where(inArray(customersTable.id, customerIds))
+    : [];
+  const nameOf = new Map(customers.map((customer) =>
+    [customer.id, [customer.firstName, customer.lastName].filter(Boolean).join(" ")]));
+
+  res.json({
+    ...summary,
+    needsAction: waiting
+      .map((quote) => ({
+        quoteId: quote.id,
+        quoteNumber: quote.quoteNumber,
+        customerId: quote.customerId,
+        customerName: quote.customerId ? nameOf.get(quote.customerId) ?? `Customer #${quote.customerId}` : null,
+        totalAmount: Number(quote.totalAmount),
+        acceptedAt: acceptedAt.get(quote.id)?.toISOString() ?? null,
+        acceptedLineItemCount: acceptedLines.get(quote.id) ?? null,
+      }))
+      .sort((a, b) => (a.acceptedAt ?? "").localeCompare(b.acceptedAt ?? "")),
+  });
+});
+/**
+ * Tell the office an estimate was accepted (Kyle 2026-09-24 #2). Sent after the
+ * decision is committed and never awaited by the customer: their acceptance is
+ * recorded whatever the mail server does.
+ */
+async function notifyOfficeOfAcceptance(input: {
+  quoteId: number;
+  quoteNumber: string;
+  customerName: string | null;
+  acceptedTotal: number;
+  accepted: Array<{ description: string; totalPrice: number }>;
+  declined: Array<{ description: string; totalPrice: number }>;
+}): Promise<void> {
+  const to = officeEmailAddress(process.env);
+  if (!to) return;                      // nowhere to send it yet; the dashboard still shows it
+  const origin = (process.env.PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  const notice = officeAcceptedNotice({
+    quoteNumber: input.quoteNumber,
+    customerName: input.customerName,
+    acceptedTotal: input.acceptedTotal,
+    accepted: input.accepted,
+    declined: input.declined,
+    estimateUrl: origin ? `${origin}/quotes/${input.quoteId}` : null,
+  });
+  const result = await sendEmailTo({ email: to }, notice.subject, notice.html, notice.text);
+  await db.insert(estimateActivitiesTable).values({
+    quoteId: input.quoteId,
+    activityType: result.success ? "office_notified" : "office_notification_failed",
+    actorType: "system",
+    detail: { to, provider: result.provider, error: result.error ?? null, subject: notice.subject },
+  });
+}
 async function publicEstimate(token: string) {
   if (!isValidPublicEstimateToken(token)) return null;
   const [link] = await db.select().from(estimatePublicLinksTable).where(eq(estimatePublicLinksTable.tokenHash, tokenHash(token))).limit(1);
@@ -768,7 +881,11 @@ async function publicEstimate(token: string) {
   if (!quote) return null;
   const [customer] = quote.customerId
     ? await db.select().from(customersTable).where(eq(customersTable.id, quote.customerId)).limit(1) : [];
-  return { link, quote, customer, snapshot: link.acceptedSnapshot ?? (await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.id, link.revisionId)).limit(1))[0]?.snapshot };
+  // What was offered and what was taken are now different things: a customer may
+  // tick only some services, and the page still has to show the ones they left.
+  const [revision] = await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.id, link.revisionId)).limit(1);
+  const offered = revision?.snapshot;
+  return { link, quote, customer, offered, snapshot: link.acceptedSnapshot ?? offered };
 }
 
 router.use("/public/estimates/:token", (req, res, next) => {
@@ -797,7 +914,11 @@ router.get("/public/estimates/:token", async (req, res): Promise<any> => {
   res.json({
     quoteNumber: found.quote.quoteNumber,
     customerName: found.customer ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ") : null,
-    snapshot: found.snapshot, decision: found.link.decision, decisionAt: found.link.decisionAt,
+    snapshot: found.offered ?? found.snapshot,
+    acceptedLineItemIds: found.link.decision === "accepted"
+      ? ((found.link.acceptedSnapshot as { lineItems?: Array<{ id: number }> } | null)?.lineItems ?? []).map((line) => line.id)
+      : null,
+    decision: found.link.decision, decisionAt: found.link.decisionAt,
     expiresAt: found.link.expiresAt,
   });
 });
@@ -836,6 +957,21 @@ router.post("/public/estimates/:token/decision", async (req, res): Promise<any> 
   if (!decision) return res.status(400).json({ error: "Decision must be accepted or declined" });
   const transition = assertDecisionTransition(found.link.decision, decision);
   if (transition === "idempotent") return res.json({ decision, decisionAt: found.link.decisionAt, idempotent: true });
+  // Kyle 2026-09-24 #1: acceptance is per service line. Narrowing the snapshot
+  // here means the conversion, the job's services and its total all follow the
+  // customer's choice without knowing a choice was made.
+  let acceptance = null as ReturnType<typeof acceptedSnapshotFor> | null;
+  if (decision === "accepted") {
+    try {
+      acceptance = acceptedSnapshotFor(
+        (found.offered ?? found.snapshot) as Parameters<typeof acceptedSnapshotFor>[0],
+        req.body.acceptedLineItemIds ?? null,
+      );
+    } catch (error) {
+      if (error instanceof EstimateAcceptanceError) return res.status(400).json({ error: error.message });
+      throw error;
+    }
+  }
   const now = new Date();
   const outcome = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${found.quote.id})`);
@@ -853,22 +989,59 @@ router.post("/public/estimates/:token/decision", async (req, res): Promise<any> 
       decision, decisionAt: now, lastActivityAt: now,
       declineReason: decision === "declined" ? String(req.body.declineReason ?? "").slice(0, 2000) || null : null,
       followUpRequested: decision === "accepted" || !!req.body.followUpRequested,
-      acceptedSnapshot: decision === "accepted" ? found.snapshot : null,
+      acceptedSnapshot: acceptance ? acceptance.snapshot : null,
     }).where(eq(estimatePublicLinksTable.id, found.link.id));
     await tx.update(quotesTable).set({ status: decision }).where(eq(quotesTable.id, found.quote.id));
     await tx.insert(estimateActivitiesTable).values({
       quoteId: found.quote.id, publicLinkId: found.link.id,
       activityType: decision === "accepted" ? "estimate_accepted" : "estimate_declined",
-      actorType: "customer", detail: decision === "declined" ? { declineReason: String(req.body.declineReason ?? "").slice(0, 2000) || null } : {},
+      actorType: "customer", detail: decision === "declined"
+        ? { declineReason: String(req.body.declineReason ?? "").slice(0, 2000) || null }
+        : {
+            acceptedLineItemIds: acceptance!.acceptedLineItemIds,
+            declinedLineItemIds: acceptance!.declinedLineItemIds,
+            whole: acceptance!.whole,
+            acceptedTotal: acceptance!.acceptedTotal,
+          },
     });
     if (decision === "accepted") await enqueueCommunicationEvent(tx, {
       eventType: "quote.accepted", aggregateType: "quote", aggregateId: found.quote.id,
-      payload: { quoteId: found.quote.id, customerId: found.quote.customerId, status: "accepted" },
+      payload: {
+        quoteId: found.quote.id, customerId: found.quote.customerId, status: "accepted",
+        quoteNumber: found.quote.quoteNumber,
+        acceptedLineItemIds: acceptance!.acceptedLineItemIds,
+        declinedLineItemIds: acceptance!.declinedLineItemIds,
+        acceptedTotal: acceptance!.acceptedTotal,
+        whole: acceptance!.whole,
+      },
       source: "estimate_public_decision", dedupeKey: `estimate-accepted:${found.link.id}`,
     });
     return { idempotent: false, decisionAt: now };
   });
-  res.json({ decision, decisionAt: outcome.decisionAt, idempotent: outcome.idempotent });
+  if (acceptance && !outcome.idempotent) {
+    const offeredLines = ((found.offered as { lineItems?: Array<{ id: number; description: string; totalPrice: number }> } | null)?.lineItems) ?? [];
+    const acceptedIds = new Set(acceptance.acceptedLineItemIds);
+    void notifyOfficeOfAcceptance({
+      quoteId: found.quote.id,
+      quoteNumber: found.quote.quoteNumber,
+      customerName: found.customer
+        ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ")
+        : null,
+      acceptedTotal: acceptance.acceptedTotal,
+      accepted: offeredLines.filter((line) => acceptedIds.has(line.id))
+        .map((line) => ({ description: line.description, totalPrice: Number(line.totalPrice) })),
+      declined: offeredLines.filter((line) => !acceptedIds.has(line.id))
+        .map((line) => ({ description: line.description, totalPrice: Number(line.totalPrice) })),
+    }).catch((error) => {
+      console.error("office acceptance notice failed", error);
+    });
+  }
+  res.json({
+    decision, decisionAt: outcome.decisionAt, idempotent: outcome.idempotent,
+    acceptedLineItemIds: acceptance?.acceptedLineItemIds ?? null,
+    declinedLineItemIds: acceptance?.declinedLineItemIds ?? null,
+    acceptedTotal: acceptance?.acceptedTotal ?? null,
+  });
 });
 
 export default router;

@@ -20,6 +20,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils";
 import { authScopedQueryKey } from "@/lib/auth-scope";
+import { EstimateStatusModule } from "@/components/EstimateStatusModule";
 
 const PERIODS = [
   [DashboardPeriod.today, "Today"],
@@ -138,6 +139,10 @@ export default function Dashboard() {
           </p>
         )}
       </header>
+
+      {/* Above the financial reporting, and outside its gate: a sales role can see
+          the estimate queue without seeing invoices or payments. */}
+      <EstimateStatusModule />
 
       {!canReport ? (
         <div className="flex min-h-[42vh] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white px-6 text-center">
