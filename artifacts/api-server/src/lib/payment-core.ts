@@ -1,16 +1,18 @@
+import { PAYMENT_METHOD_VALUES } from "./payment-methods.ts";
+
 export type PaymentMode = "manual" | "auto";
 
+/**
+ * Every method a person may record, from the one list both packages follow,
+ * plus `manual`, which only the one-click "Mark Paid" action writes and which
+ * is never offered as a choice.
+ */
 export const MANUAL_PAYMENT_METHODS = [
-  "cash",
-  "check",
-  "ach",
-  "bank_transfer",
-  "other",
-  // Used by the existing one-click "Mark Paid" invoice action.
+  ...PAYMENT_METHOD_VALUES,
   "manual",
 ] as const;
 
-export type ManualPaymentMethod = (typeof MANUAL_PAYMENT_METHODS)[number];
+export type ManualPaymentMethod = string;
 
 export type PaymentInvoiceRow = {
   id: number;
@@ -345,7 +347,7 @@ export async function createPaymentCore(
     throw new PaymentValidationError("invalid_payment_date", "Payment date must be a valid YYYY-MM-DD date");
   }
   const method = input.method?.trim() ?? "";
-  if (!MANUAL_PAYMENT_METHODS.includes(method as ManualPaymentMethod)) {
+  if (!(MANUAL_PAYMENT_METHODS as readonly string[]).includes(method)) {
     throw new PaymentValidationError("invalid_method", "Payment method is not supported");
   }
 

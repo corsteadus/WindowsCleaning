@@ -1,3 +1,4 @@
+import { PAYMENT_METHOD_OPTIONS, paymentMethodLabel, paymentReferenceHint } from "@/lib/payment-methods";
 import { useEffect, useRef, useState } from "react";
 import { Layout } from "@/components/Layout";
 import {
@@ -524,7 +525,7 @@ export default function Payments() {
                            <td className="p-4 text-slate-500">
                              <span className="flex items-center gap-1.5">
                                <CreditCard className="w-3.5 h-3.5" />
-                               {payment.method}
+                               {paymentMethodLabel(payment.method)}
                              </span>
                              {payment.reference && <span className="block text-xs text-slate-400 mt-1">{payment.reference}</span>}
                            </td>
@@ -743,8 +744,8 @@ export default function Payments() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label>Amount</Label><Input inputMode="decimal" value={refundForm.amount} onChange={(event) => setRefundForm({ ...refundForm, amount: event.target.value })} placeholder="0.00" /></div>
               <div><Label>Refund date</Label><Input type="date" value={refundForm.refundDate} onChange={(event) => setRefundForm({ ...refundForm, refundDate: event.target.value })} /></div>
-              <div><Label>Method</Label><select className="w-full mt-1 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white" value={refundForm.method} onChange={(event) => setRefundForm({ ...refundForm, method: event.target.value })}><option>check</option><option>cash</option><option>bank_transfer</option><option>card</option><option>other</option></select></div>
-              <div><Label>Reference (optional)</Label><Input value={refundForm.reference} onChange={(event) => setRefundForm({ ...refundForm, reference: event.target.value })} placeholder="Check number or reference" /></div>
+              <div><Label>Method</Label><select className="w-full mt-1 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white" value={refundForm.method} onChange={(event) => setRefundForm({ ...refundForm, method: event.target.value })}>{PAYMENT_METHOD_OPTIONS.map((option) => (<option key={option.value} value={option.value}>{option.label}</option>))}</select></div>
+              <div><Label>Reference (optional)</Label><Input value={refundForm.reference} onChange={(event) => setRefundForm({ ...refundForm, reference: event.target.value })} placeholder={paymentReferenceHint(refundForm.method)} /></div>
             </div>
             <div><Label>Reason</Label><Input value={refundForm.reason} onChange={(event) => setRefundForm({ ...refundForm, reason: event.target.value })} placeholder="Reason for refund" /></div>
             <div><Label>Note (optional)</Label><Input value={refundForm.note} onChange={(event) => setRefundForm({ ...refundForm, note: event.target.value })} placeholder="Internal note" /></div>
@@ -831,10 +832,9 @@ export default function Payments() {
                   value={recordForm.method}
                   onChange={(event) => setRecordForm({ ...recordForm, method: event.target.value })}
                 >
-                  <option value="cash">Cash</option>
-                  <option value="check">Check</option>
-                  <option value="bank_transfer">Bank transfer</option>
-                  <option value="other">Other</option>
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -844,7 +844,7 @@ export default function Payments() {
                 <Input
                   value={recordForm.reference}
                   onChange={(event) => setRecordForm({ ...recordForm, reference: event.target.value })}
-                  placeholder="Check number or non-sensitive reference"
+                  placeholder={paymentReferenceHint(recordForm.method)}
                 />
               </div>
               <div>

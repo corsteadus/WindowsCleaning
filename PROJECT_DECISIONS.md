@@ -118,6 +118,94 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 12a — the payment methods Kyle named, done in the working tree 2026-09-28
+
+Kyle, 2026-09-24 #3: *"Treat Gift Certificate as a normal invoice payment method,
+not as a separate customer-credit system … Payment method options should include
+at least: Cash, Credit Card, Check, and Gift Certificate."*
+
+**The real problem was not the two missing methods.** A payment method was picked
+in four places and **every list was different**:
+
+| Where | What it offered |
+|---|---|
+| `Payments.tsx` record a payment | cash, check, bank_transfer, other |
+| `InvoiceDetail.tsx` record against an invoice — **Kyle's step 08** | check, cash, ach, other |
+| `Payments.tsx` refund | check, cash, bank_transfer, **card**, other |
+| `FinancialReconciliation.tsx` filter | cash, check, **card**, ach |
+| The API (`payment-core.ts`) accepted | cash, check, ach, bank_transfer, other, manual |
+
+So `bank_transfer` could not be recorded from an invoice at all, and the
+reconciliation filter searched for `card`, which nothing ever writes.
+
+**One list now, in `payment-methods.ts` in each package**, because the two share no
+runtime code; `crm/src/lib/payment-methods-agree.test.ts` reads the API's file and
+fails if they drift. Kyle's four come first in his order, then the three already in
+use, which stay so no existing payment becomes unreadable:
+
+    Cash · Credit Card · Check · Gift Certificate · ACH · Bank transfer · Other
+
+All four pickers now render that list, and every screen shows the label rather than
+the stored value — "Gift Certificate", never `gift_certificate`. `manual`, written
+only by the one-click Mark Paid action, is still accepted but never offered, and
+reads as "Marked paid".
+
+**No migration.** `payments.method` is free text and `payments.reference` already
+exists, so a gift certificate needs no new column: its number goes in `reference`.
+The reference field names itself from the method — "Check number", "Certificate
+number", and for a card **"Authorisation or receipt number"**, never anything that
+would invite a card number (Kyle's #6). There is a test asserting exactly that.
+
+### Decisions taken without Kyle, stated so they can be corrected
+
+He was asked on 2026-09-28 and has not answered. Nothing here is hard to change:
+
+1. **Credit Card records that a card was used**; Corstead does not take the payment
+   and holds no card details. No processor is wired in — he has mentioned Square,
+   Stripe is what is installed, and neither has been chosen.
+2. **A gift certificate's number goes in the existing reference field.**
+3. **Nothing is tracked beyond what the certificate paid.** He said it is a payment
+   method, not a customer-credit system, so a certificate worth more than the
+   invoice leaves no balance behind. Verified: no `customer_credit_sources` row is
+   created.
+4. **ACH, Bank transfer and Other stay.** He said "at least" those four.
+
+### Verified
+
+`scratchpad/phase12a-payments.mjs` **17/17**, headed, walking Kyle's step 08: record
+a gift certificate against an invoice, check it is stored with its number, that it
+clears the invoice like any other payment, that an invoice can be part-paid by card
+and part by certificate, and that a method not on the list is refused (400).
+
+Suites after: **CRM 466/466**, **API 590/604** (the same 14 `DATABASE_URL`
+failures). Both typechecks clean. The database was returned to its one customer.
+
+One existing test had to change: `payments-ui.test.ts` asserted the literal
+`<option value="cash">Cash</option>`, which no longer exists now the options are
+rendered from the list. It now asserts the opposite — that no method is written by
+hand in either payment form.
+
+### Traps this phase walked into
+
+- **`npm test` did not run the new tests, and said nothing.** The registration
+  anchor `src/lib/payment-core.test.ts` appears in **two** scripts in
+  `api-server/package.json`, and the replacement landed in `test:customer-hub`
+  rather than `test`. **Check the test count moved** after registering a file:
+  595 → 604 here. Editing the parsed JSON by key is safer than a string replace.
+- An invoice created from a job with no `totalAmount` has a **zero balance**, and
+  `InvoiceDetail` hides the payment form when the balance is zero.
+- The payment form on an invoice is behind a **"Record payment"** toggle, and its
+  controls carry `aria-label="Payment method"` and `"Payment amount"`.
+- Recorded payments are listed under the **Transactions** tab of `/payments`, not
+  on the tab it opens on.
+
+### Still open
+
+Kyle's four answers above, and the choice of Square or Stripe before any real card
+processing. Neither blocks his testing: every method can be recorded today.
+
+---
+
 ## Phase 10 — Estimate → job, done in the working tree 2026-09-26
 
 **Most of the conversion already existed.** `POST /quotes/:id/convert-and-schedule`

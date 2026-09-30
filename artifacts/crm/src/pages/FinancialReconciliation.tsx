@@ -1,3 +1,4 @@
+import { PAYMENT_METHOD_OPTIONS } from "@/lib/payment-methods";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
@@ -219,7 +220,7 @@ export default function FinancialReconciliation() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <label className="text-xs font-semibold text-slate-500">Start date<input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800" /></label>
             <label className="text-xs font-semibold text-slate-500">End date<input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800" /></label>
-            <label className="text-xs font-semibold text-slate-500">Payment method<select value={method} onChange={(e) => setMethod(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800"><option value="">All methods</option><option value="cash">Cash</option><option value="check">Check</option><option value="card">Card</option><option value="ach">ACH</option></select></label>
+            <label className="text-xs font-semibold text-slate-500">Payment method<select value={method} onChange={(e) => setMethod(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800"><option value="">All methods</option>{PAYMENT_METHOD_OPTIONS.map((option) => (<option key={option.value} value={option.value}>{option.label}</option>))}</select></label>
             <label className="text-xs font-semibold text-slate-500">Source origin<select value={source} onChange={(e) => setSource(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800"><option value="">All origins</option><option value="payment">Payment</option><option value="credit_note">Credit note</option></select></label>
             <label className="text-xs font-semibold text-slate-500">Transaction type<select value={kind} onChange={(e) => setKind(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800"><option value="">All activity</option><option value="payment">Payments</option><option value="refund">Recorded refunds</option><option value="invoice_credit">Invoice credits</option><option value="customer_credit_application">Credit applications</option></select></label>
           </div>

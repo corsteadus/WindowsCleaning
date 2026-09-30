@@ -1,10 +1,6 @@
-export const MANUAL_PAYMENT_METHODS = [
-  "cash",
-  "check",
-  "ach",
-  "bank_transfer",
-  "other",
-] as const;
+import { PAYMENT_METHOD_VALUES } from "./payment-methods.ts";
+
+export const MANUAL_PAYMENT_METHODS = PAYMENT_METHOD_VALUES;
 
 export function parsePaymentCents(value: unknown): bigint | null {
   const raw = String(value ?? "").trim();
@@ -23,7 +19,7 @@ export function isValidPaymentDate(value: string): boolean {
 }
 
 export function isValidManualPaymentMethod(value: string): boolean {
-  return MANUAL_PAYMENT_METHODS.includes(value as (typeof MANUAL_PAYMENT_METHODS)[number]);
+  return MANUAL_PAYMENT_METHODS.includes(value);
 }
 
 export function validateInvoicePayment(input: {

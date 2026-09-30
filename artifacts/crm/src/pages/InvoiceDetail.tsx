@@ -1,3 +1,4 @@
+import { PAYMENT_METHOD_OPTIONS, paymentMethodLabel, paymentReferenceHint } from "@/lib/payment-methods";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useBackNavigation } from "@/hooks/use-back-navigation";
@@ -407,10 +408,10 @@ function InvoicePaymentHistory({
             <input type="number" min="0.01" max={balanceDue} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)}
               aria-label="Payment amount" className="h-9 rounded-lg border border-slate-200 px-3 text-sm" />
             <select value={method} onChange={(event) => setMethod(event.target.value)} aria-label="Payment method" className="h-9 rounded-lg border border-slate-200 px-2 text-sm bg-white">
-              <option value="check">Check</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="other">Other</option>
+              {PAYMENT_METHOD_OPTIONS.map((option) => (<option key={option.value} value={option.value}>{option.label}</option>))}
             </select>
           </div>
-          <input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Reference or check number (optional)"
+          <input value={reference} onChange={(event) => setReference(event.target.value)} placeholder={`${paymentReferenceHint(method)} (optional)`}
             className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm" />
           {validationError && <p role="alert" className="text-xs text-amber-700">{validationError}</p>}
           <button onClick={() => !validationError && !record.isPending && record.mutate()} disabled={!canRecord || record.isPending || !!validationError}
@@ -429,7 +430,7 @@ function InvoicePaymentHistory({
         <div className="divide-y divide-slate-100">
           {payments.data.map((payment) => (
             <div key={payment.id} className="py-2.5 flex items-center justify-between gap-3">
-              <div><p className="text-sm font-semibold text-slate-800">{payment.method}</p><p className="text-xs text-slate-400">{fmtDateShort(payment.paymentDate)}{payment.reference ? ` · ${payment.reference}` : ""}</p></div>
+              <div><p className="text-sm font-semibold text-slate-800">{paymentMethodLabel(payment.method)}</p><p className="text-xs text-slate-400">{fmtDateShort(payment.paymentDate)}{payment.reference ? ` · ${payment.reference}` : ""}</p></div>
               <p className="text-sm font-bold text-emerald-700">{formatCurrency(Number(payment.allocations.find((item) => item.invoiceId === invoiceId)?.amount ?? payment.amount))}</p>
             </div>
           ))}
