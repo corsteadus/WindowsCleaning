@@ -125,6 +125,7 @@ async function readChannels(customerId: number) {
       .map((row) => row.purpose);
     return {
       ...channel,
+      sendingPaused: Boolean(channel.sendingPausedAt),
       type: channel.channelType,
       purposes,
       purpose: purposes[0] ?? "general",
@@ -343,6 +344,13 @@ router.post(["/customers/:id/channels", "/prospects/:id/channels"], async (req, 
   }
 });
 
+/** The person's name for an audit field, falling back to their sign-in. */
+function actorName(req: { user?: { firstName?: string | null; lastName?: string | null; email?: string | null } }): string | null {
+  if (!req.user) return null;
+  const name = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ").trim();
+  return name || req.user.email || null;
+}
+
 router.patch("/contact-channels/:id", async (req, res) => {
   try {
     const id = parseId(req.params.id);
@@ -374,6 +382,18 @@ router.patch("/contact-channels/:id", async (req, res) => {
         updateData.contactId = contactId;
       }
       if (body.isPrimary !== undefined) updateData.isPrimary = bool(body.isPrimary);
+      // Kyle A#7: stop writing to a number or address without losing it. This is
+      // not archiving — the value stays on the profile and can be read and dialled.
+      if (body.sendingPaused !== undefined) {
+        const paused = bool(body.sendingPaused);
+        updateData.sendingPausedAt = paused ? (current.sendingPausedAt ?? new Date()) : null;
+        updateData.sendingPausedBy = paused
+          ? (current.sendingPausedBy ?? actorName(req))
+          : null;
+        updateData.sendingPausedReason = paused
+          ? (text(body.sendingPausedReason) ?? current.sendingPausedReason ?? null)
+          : null;
+      }
       const [channel] = await tx.update(contactChannelsTable).set(updateData)
         .where(eq(contactChannelsTable.id, id)).returning();
       let purposes: string[];
@@ -393,7 +413,11 @@ router.patch("/contact-channels/:id", async (req, res) => {
       }
       return { channel, purposes };
     });
-    res.json({ ...updated.channel, type: updated.channel.channelType, purposes: updated.purposes, purpose: updated.purposes[0] });
+    res.json({
+      ...updated.channel, type: updated.channel.channelType,
+      sendingPaused: Boolean(updated.channel.sendingPausedAt),
+      purposes: updated.purposes, purpose: updated.purposes[0],
+    });
   } catch (error) {
     respondError(res, error, "Failed to update contact channel");
   }

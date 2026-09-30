@@ -1,3 +1,4 @@
+import { customersTable } from "./customers.ts";
 import { pgTable, text, serial, timestamp, boolean, integer, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -5,7 +6,7 @@ import { z } from "zod/v4";
 
 export const propertiesTable = pgTable("properties", {
   id: serial("id").primaryKey(),
-  customerId: integer("customer_id").notNull(),
+  customerId: integer("customer_id").notNull().references(() => customersTable.id, { onDelete: "cascade" }),
   name: text("name"),
   address: text("address").notNull(),
   city: text("city").notNull(),

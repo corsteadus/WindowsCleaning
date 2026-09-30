@@ -23,7 +23,7 @@ import {
   Layers, Info, AlertCircle, CheckCircle2, Clock, DollarSign,
   Repeat, Plus, Trash2, Star, CreditCard, Activity, PowerOff, Power, Paperclip, RotateCcw,
   Users,
-  ContactRound,
+  ContactRound, Archive,
 } from "lucide-react";
 import { FilesTab } from "@/components/FilesTab";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
@@ -299,7 +299,9 @@ export default function CustomerDetail() {
   );
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [isEditing, setIsEditing] = useState(false);
-  const [deactivateModal, setDeactivateModal] = useState(false);
+  // Kyle A#21: a profile can be archived, not only deactivated. Both ask for a
+  // reason and both are logged, so they share one dialog.
+  const [statusIntent, setStatusIntent] = useState<null | "inactive" | "archived">(null);
   const [deactivateReason, setDeactivateReason] = useState("");
   const [emailModal, setEmailModal] = useState(false);
   const [emailSubject, setEmailSubject] = useState("");
@@ -378,6 +380,8 @@ export default function CustomerDetail() {
       return res.json();
     },
     onSuccess: (committedCustomer) => {
+      setStatusIntent(null);
+      setDeactivateReason("");
       queryClient.setQueryData<CustomerDetail>(
         authScopedQueryKey(user, ["customer", id]),
         (current) => current ? { ...current, ...committedCustomer } : current,
@@ -388,8 +392,6 @@ export default function CustomerDetail() {
       queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListCustomersQueryKey()) });
       queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListProspectsQueryKey()) });
       toast({ title: "Status updated" });
-      setDeactivateModal(false);
-      setDeactivateReason("");
     },
     onError: () => toast({ title: "Status update failed", variant: "destructive" }),
   });
@@ -571,10 +573,18 @@ export default function CustomerDetail() {
             {/* Status toggle — only in view mode */}
             {!isEditing && canManageCustomer && (customer.lifecycleStatus === "customer" || customer.status === "active") && (
               <button
-                onClick={() => setDeactivateModal(true)}
+                onClick={() => setStatusIntent("inactive")}
                 className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-orange-200 text-orange-600 bg-white text-xs font-semibold hover:bg-orange-50 transition-colors"
               >
                 <PowerOff className="w-3.5 h-3.5" /> Deactivate
+              </button>
+            )}
+            {!isEditing && canManageCustomer && customer.lifecycleStatus !== "archived" && (
+              <button
+                onClick={() => setStatusIntent("archived")}
+                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-300 text-slate-600 bg-white text-xs font-semibold hover:bg-slate-50 transition-colors"
+              >
+                <Archive className="w-3.5 h-3.5" /> Archive
               </button>
             )}
             {!isEditing && canManageCustomer && (customer.lifecycleStatus === "inactive" || customer.lifecycleStatus === "archived" || customer.status === "inactive") && (
@@ -698,15 +708,24 @@ export default function CustomerDetail() {
         )}
 
         {/* ── Deactivation reason modal ───────────────────────────────────── */}
-        {deactivateModal && (
+        {statusIntent && (
           <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full space-y-4">
-              <h2 className="text-lg font-bold text-slate-900">Deactivate Customer</h2>
+              <h2 className="text-lg font-bold text-slate-900">
+                {statusIntent === "archived" ? "Archive this profile" : "Deactivate Customer"}
+              </h2>
               <p className="text-sm text-slate-500">
-                Please provide a reason for deactivating{" "}
+                Please give a reason for {statusIntent === "archived" ? "archiving" : "deactivating"}{" "}
                 <span className="font-semibold text-slate-700">{fullName}</span>.
-                This will be logged in the activity history.
+                It is written to the activity history.
               </p>
+              {statusIntent === "archived" && (
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  Archiving keeps everything. The profile stays searchable, is marked
+                  <span className="font-semibold"> Archived</span>, and can be brought back at any time.
+                  Nothing is deleted.
+                </p>
+              )}
               <textarea
                 value={deactivateReason}
                 onChange={e => setDeactivateReason(e.target.value)}
@@ -716,17 +735,19 @@ export default function CustomerDetail() {
               />
               <div className="flex gap-2 justify-end">
                 <button
-                  onClick={() => { setDeactivateModal(false); setDeactivateReason(""); }}
+                  onClick={() => { setStatusIntent(null); setDeactivateReason(""); }}
                   className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => statusMutation.mutate({ status: "inactive", reason: deactivateReason })}
+                  onClick={() => statusMutation.mutate({ status: statusIntent, reason: deactivateReason })}
                   disabled={statusMutation.isPending || !deactivateReason.trim()}
-                  className="px-4 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold hover:bg-orange-600 transition-colors disabled:opacity-50"
+                  className={`px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-50 ${
+                    statusIntent === "archived" ? "bg-slate-700 hover:bg-slate-800" : "bg-orange-500 hover:bg-orange-600"
+                  }`}
                 >
-                  {statusMutation.isPending ? "Saving…" : "Confirm Deactivation"}
+                  {statusMutation.isPending ? "Saving…" : statusIntent === "archived" ? "Archive profile" : "Confirm Deactivation"}
                 </button>
               </div>
             </div>
@@ -1575,7 +1596,7 @@ function OverviewTab({ customer, isEditing, form }: {
                 <option value="customer">Customer</option>
                 <option value="prospect">Prospect</option>
                 <option value="inactive" disabled>Inactive — use Deactivate</option>
-                <option value="archived" disabled>Archived — use Deactivate</option>
+                <option value="archived" disabled>Archived — use the Archive button</option>
               </select>
             ) : (
               <p className="mt-0.5"><StatusBadge status={customerLifecycleDisplayStatus(customer)} /></p>

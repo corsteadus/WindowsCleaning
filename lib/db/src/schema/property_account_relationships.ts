@@ -1,10 +1,12 @@
+import { propertiesTable } from "./properties.ts";
+import { customersTable } from "./customers.ts";
 import { pgTable, serial, integer, text, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const propertyAccountRelationshipsTable = pgTable("property_account_relationships", {
   id: serial("id").primaryKey(),
-  propertyId: integer("property_id").notNull(),
-  customerId: integer("customer_id").notNull(),
+  propertyId: integer("property_id").notNull().references(() => propertiesTable.id, { onDelete: "cascade" }),
+  customerId: integer("customer_id").notNull().references(() => customersTable.id, { onDelete: "cascade" }),
   relationshipType: text("relationship_type").notNull().default("owner"),
   isPrimary: boolean("is_primary").notNull().default(true),
   startDate: text("start_date"),

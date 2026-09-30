@@ -118,6 +118,111 @@ steps 05–08 will not complete.
 
 ---
 
+## Phases 8 and 9 — in progress, 2026-09-30
+
+Two of the four pieces are built and verified. The rest is listed at the end with
+why it is not done yet.
+
+### The baseline corrected two things we both believed
+
+1. **A#21 already works in the API.** Archiving a whole profile returns 200, the
+   profile **stays searchable**, is **marked** `archived`, and **un-archives**.
+   The 409 *"Promote another contact before archiving the only active primary"*
+   fires only when archiving **one contact**, never a profile. An earlier reading
+   of this file said archiving was blocked by that warning; it is not.
+   *(My first baseline reported "not searchable while archived" — that was my own
+   script reading the wrong key: the list responds under `customers`, not `data`.)*
+   **What is actually missing is the button.** `CustomerDetail` offers only
+   *Deactivate* (which sets `inactive`), and the status dropdown carries
+   `<option value="archived" disabled>Archived — use Deactivate</option>`.
+
+2. **Contact channels are not read by the sending path at all.** Only
+   `routes/customers.ts` touches `contact_channels` outside their own routes;
+   email goes out against `customers.email`. So A#7 and A#9 are really one job,
+   and A#7's switch is recorded and shown today, with nothing yet consulting it.
+
+### Built — Kyle A#7, a channel switched off for sending
+
+`contact_channels` gains `sending_paused_at`, `sending_paused_by` and
+`sending_paused_reason` (additive). `PATCH /contact-channels/:id` takes
+`sendingPaused`, and the profile shows a **No sending** box on each channel row.
+
+This is deliberately **not** archiving: the number stays on the profile to read and
+to ring; Corstead simply stops writing to it. Pausing an already-paused channel
+keeps the original time and reason; turning it back on clears all three.
+
+`scratchpad/phase8-a7.mjs` **13/13**, headed.
+
+A real UI fault was found and fixed on the way: the box was controlled but never
+updated its own draft, so a click did not move it until the server answered.
+
+### Built — Kyle A#21, archiving a whole profile
+
+The API already did the work; the screen had no way to ask for it. `CustomerDetail`
+now offers **Archive** beside Deactivate, sharing one dialog because both ask for a
+reason and both are logged. The archive wording says what it means: the profile
+stays searchable, is marked **Archived**, comes back at any time, and nothing is
+deleted. Archive is hidden once a profile is archived, and **Reactivate** brings it
+back. The status dropdown's disabled option now points at the button rather than at
+Deactivate.
+
+`prospectLifecycleTransition` also stopped calling both things the same: archiving
+logs `archived`, deactivating logs `deactivated`. Nothing read the old literal.
+
+`scratchpad/phase8-a21.mjs` **14/14**, headed.
+
+### Built — Phase 9, the foreign keys
+
+**Twelve foreign keys on eight tables that had none.** This is what has been
+letting every orphan class we have swept up all session exist:
+
+| | ON DELETE |
+|---|---|
+| `properties.customer_id`, `contacts.customer_id`, `contact_channels.customer_id`, `custom_field_values.customer_id`, `account_profile_settings.customer_id`, `property_account_relationships.customer_id` → `customers` | CASCADE |
+| `property_account_relationships.property_id` → `properties` | CASCADE |
+| `contact_channel_purposes.channel_id` → `contact_channels` | CASCADE |
+| `custom_field_values.definition_id` → `custom_field_definitions` | CASCADE |
+| `invoice_jobs.invoice_id` → `invoices`, `invoice_jobs.job_id` → `jobs` | CASCADE |
+| `contact_channels.contact_id` → `contacts` | **SET NULL** — a channel may belong to the account rather than a person, and may outlive one |
+
+**Nine orphaned `property_account_relationships` rows** (customers 10–20,
+properties 2–10 — residue of the 2026-09-21 lifecycle test) had to be cleared
+first, because the constraint refuses them.
+
+All twelve are now **declared in the Drizzle schema** as well as on the database.
+That matters: `drizzle-kit push` syncs the database to the schema, so an
+undeclared constraint would be proposed for dropping on the next push.
+
+`scratchpad/fk-proof.mjs` **6/6**, run inside a transaction and rolled back: a raw
+`DELETE FROM customers` now leaves **nothing** behind, a row cannot be attached to
+an owner that does not exist, and deleting a contact leaves its channel on the
+account with no owner rather than destroying it.
+
+### Correction — the "custom field" bug was mine, not the product's
+
+This file recorded, after the Sandbox 2 verification, that *"deleting a custom
+field leaves its dropdown choices behind"*. **That was my cleanup script, not
+Corstead.** `DELETE /custom-fields/definitions/:id` **soft-deletes**
+(`isActive: false`) and keeps the choices on purpose, so profiles already using the
+field keep their values. My cleanup ran a raw
+`DELETE FROM custom_field_definitions WHERE label LIKE 'ZZ%'`, which is what
+orphaned them. No product path does that. The new `definition_id` foreign key now
+makes even a raw delete tidy up after itself.
+
+### Not done yet
+
+| | Why |
+|---|---|
+| **A#9 — address a message to the contact that owns the channel** | The larger half. It means making the sending path resolve recipients from contact channels, which is also what would make A#7's pause bite. Worth doing **with** Phase 12b, when there is a provider that can actually deliver |
+| **Dropping `properties.gate_code` and `access_notes`** | **Must wait for a republish.** The API deployed on Sandbox 2 still has both columns in its schema; dropping them first would break every property query it makes. Remove them from the code, deploy, *then* drop |
+
+### Verified
+
+API suite **619/633** (the same 14 `DATABASE_URL` failures), CRM **477/477**, all typechecks clean,
+the database back to its one customer and untouched by the foreign-key proof.
+
+---
+
 ## Phase 11 — the scheduling-notification prompt, done in the working tree 2026-09-30
 
 This finishes the work parked on 2026-09-04 (see the PARKED section below, kept for

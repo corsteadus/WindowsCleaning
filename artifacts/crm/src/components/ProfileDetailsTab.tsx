@@ -36,7 +36,7 @@ function errorMessage(body: string): string {
 }
 
 type ChannelPurpose = "general" | "billing" | "estimates";
-type Channel = { id: number; type: "email" | "phone"; label?: string | null; value: string; purposes?: ChannelPurpose[]; purpose?: ChannelPurpose | null; contactId?: number | null };
+type Channel = { id: number; type: "email" | "phone"; label?: string | null; value: string; purposes?: ChannelPurpose[]; purpose?: ChannelPurpose | null; contactId?: number | null; sendingPaused?: boolean };
 type FieldValue = { id?: number; fieldId?: number; label?: string; name?: string; value: string; position?: number; fieldType?: string; choices?: string[] };
 // Kyle (2026-09-23, #6): the types a user may choose when creating a field.
 const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["date", "Date"], ["dropdown", "Dropdown"], ["boolean", "Checkbox"]] as const;
@@ -298,7 +298,71 @@ function Field({ label, children, onManage }: { label: string; children: React.R
 }
 function SelectField({ label, value, options, onChange, onManage }: { label: string; value: string; options: string[]; onChange: (value: string) => void; onManage?: () => void }) { return <Field label={label} onManage={onManage}><select value={value} onChange={e => onChange(e.target.value)} className="input-lite"><option value="">Not set</option>{value && !options.includes(value) && <option value={value}>{value}</option>}{options.map(option => <option key={option} value={option}>{option}</option>)}</select></Field>; }
 function PurposePicker({ value, onChange }: { value: ChannelPurpose[]; onChange: (value: ChannelPurpose[]) => void }) { return <fieldset className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1" aria-label="Channel purposes">{(["general", "billing", "estimates"] as const).map(purpose => <label key={purpose} className="flex items-center gap-1 text-[10px] font-semibold capitalize text-slate-600"><input type="checkbox" checked={value.includes(purpose)} onChange={event => { const next = event.target.checked ? [...value, purpose] : value.filter(item => item !== purpose); if (next.length) onChange(next); }} className="accent-primary" />{purpose}</label>)}</fieldset>; }
-function ChannelRow({ channel, contacts, onSave, onDelete }: { channel: Channel; contacts: ContactOption[]; onSave: (channel: Channel) => void; onDelete: () => void }) { const normalized = { ...channel, purposes: channel.purposes?.length ? channel.purposes : [channel.purpose ?? "general"] as ChannelPurpose[] }; const [draft, setDraft] = useState(normalized); useEffect(() => setDraft({ ...channel, purposes: channel.purposes?.length ? channel.purposes : [channel.purpose ?? "general"] }), [channel]); return <div className="grid gap-2 rounded-xl border border-slate-200 p-3 md:grid-cols-[90px_1fr_1fr_1.4fr_150px_auto]"><span className="flex items-center gap-1 text-xs font-semibold text-slate-600">{draft.type === "email" ? <Mail className="w-3.5 h-3.5" /> : <Phone className="w-3.5 h-3.5" />}{draft.type}</span><input value={draft.label ?? ""} onChange={e => setDraft({ ...draft, label: e.target.value })} aria-label="Channel label" className="input-lite" /><input value={draft.value} onChange={e => setDraft({ ...draft, value: e.target.value })} aria-label="Channel value" className="input-lite" /><PurposePicker value={draft.purposes} onChange={purposes => setDraft({ ...draft, purposes })} /><select value={draft.contactId ?? ""} onChange={e => setDraft({ ...draft, contactId: e.target.value ? Number(e.target.value) : null })} aria-label="Named contact" className="input-lite"><option value="">Account</option>{contacts.map(contact => <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>)}</select><div className="flex gap-1"><button onClick={() => onSave(draft)} className="rounded-lg px-2 text-xs font-semibold text-primary hover:bg-primary/5">Save</button><button onClick={onDelete} className="rounded-lg px-2 text-red-500 hover:bg-red-50" aria-label="Delete channel"><Trash2 className="h-3.5 w-3.5" /></button></div></div>; }
+/**
+ * One phone number or email address on the profile.
+ *
+ * Kyle A#7: a channel can be switched off for sending while staying on the
+ * profile. That is deliberately not the same as deleting it — the number is
+ * still there to read and to ring; Corstead simply stops writing to it.
+ */
+function ChannelRow({ channel, contacts, onSave, onDelete }: {
+  channel: Channel; contacts: ContactOption[]; onSave: (channel: Channel) => void; onDelete: () => void;
+}) {
+  const normalized = {
+    ...channel,
+    purposes: channel.purposes?.length ? channel.purposes : ([channel.purpose ?? "general"] as ChannelPurpose[]),
+  };
+  const [draft, setDraft] = useState(normalized);
+  useEffect(() => setDraft({
+    ...channel,
+    purposes: channel.purposes?.length ? channel.purposes : [channel.purpose ?? "general"],
+  }), [channel]);
+  const paused = Boolean(draft.sendingPaused);
+
+  return (
+    <div className={`grid gap-2 rounded-xl border p-3 md:grid-cols-[90px_1fr_1fr_1.4fr_150px_auto] ${
+      paused ? "border-amber-200 bg-amber-50/50" : "border-slate-200"
+    }`}>
+      <span className="flex items-center gap-1 text-xs font-semibold text-slate-600">
+        {draft.type === "email" ? <Mail className="w-3.5 h-3.5" /> : <Phone className="w-3.5 h-3.5" />}
+        {draft.type}
+      </span>
+      <input value={draft.label ?? ""} onChange={e => setDraft({ ...draft, label: e.target.value })}
+        aria-label="Channel label" className="input-lite" />
+      <input value={draft.value} onChange={e => setDraft({ ...draft, value: e.target.value })}
+        aria-label="Channel value" className="input-lite" />
+      <PurposePicker value={draft.purposes} onChange={purposes => setDraft({ ...draft, purposes })} />
+      <select value={draft.contactId ?? ""} onChange={e => setDraft({ ...draft, contactId: e.target.value ? Number(e.target.value) : null })}
+        aria-label="Named contact" className="input-lite">
+        <option value="">Account</option>
+        {contacts.map(contact => <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>)}
+      </select>
+      <div className="flex items-center gap-1">
+        <label className="flex items-center gap-1 pr-1 text-[11px] font-semibold text-slate-500" title="Keep this on the profile but stop sending to it">
+          <input type="checkbox" className="h-3.5 w-3.5 accent-amber-600"
+            aria-label={`Pause sending to ${draft.value}`}
+            checked={paused}
+            onChange={e => {
+              // A controlled box has to move at once; the save follows it.
+              const next = { ...draft, sendingPaused: e.target.checked };
+              setDraft(next);
+              onSave(next);
+            }} />
+          No sending
+        </label>
+        <button onClick={() => onSave(draft)} className="rounded-lg px-2 text-xs font-semibold text-primary hover:bg-primary/5">Save</button>
+        <button onClick={onDelete} className="rounded-lg px-2 text-red-500 hover:bg-red-50" aria-label="Delete channel">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {paused && (
+        <p className="md:col-span-6 text-[11px] text-amber-800">
+          Kept on the profile, but Corstead will not email or text this one.
+        </p>
+      )}
+    </div>
+  );
+}
 /**
  * Add and remove the options of one profile dropdown (Profile Notes #14). A new
  * option is available on every prospect and customer at once; removing one only

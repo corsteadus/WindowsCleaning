@@ -1,3 +1,5 @@
+import { customersTable } from "./customers.ts";
+import { contactsTable } from "./contacts.ts";
 import {
   boolean,
   index,
@@ -35,7 +37,7 @@ export const profileCatalogItemsTable = pgTable("profile_catalog_items", {
 ]);
 
 export const accountProfileSettingsTable = pgTable("account_profile_settings", {
-  customerId: integer("customer_id").primaryKey(),
+  customerId: integer("customer_id").primaryKey().references(() => customersTable.id, { onDelete: "cascade" }),
   profileTypeId: integer("profile_type_id"),
   profileGroupId: integer("profile_group_id"),
   paymentTermsId: integer("payment_terms_id"),
@@ -49,13 +51,18 @@ export const accountProfileSettingsTable = pgTable("account_profile_settings", {
 
 export const contactChannelsTable = pgTable("contact_channels", {
   id: serial("id").primaryKey(),
-  customerId: integer("customer_id").notNull(),
-  contactId: integer("contact_id"),
+  customerId: integer("customer_id").notNull().references(() => customersTable.id, { onDelete: "cascade" }),
+  contactId: integer("contact_id").references(() => contactsTable.id, { onDelete: "set null" }),
   channelType: text("channel_type").notNull(),
   label: text("label").notNull(),
   value: text("value").notNull(),
   isPrimary: boolean("is_primary").notNull().default(false),
   notes: text("notes"),
+  // Kyle A#7: a number or address can be switched off for sending while staying
+  // on the profile. Archiving removes it; this only stops Corstead writing to it.
+  sendingPausedAt: timestamp("sending_paused_at", { withTimezone: true }),
+  sendingPausedBy: text("sending_paused_by"),
+  sendingPausedReason: text("sending_paused_reason"),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   archivedBy: text("archived_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -66,7 +73,7 @@ export const contactChannelsTable = pgTable("contact_channels", {
 ]);
 
 export const contactChannelPurposesTable = pgTable("contact_channel_purposes", {
-  channelId: integer("channel_id").notNull(),
+  channelId: integer("channel_id").notNull().references(() => contactChannelsTable.id, { onDelete: "cascade" }),
   purpose: text("purpose").notNull(),
 }, (table) => [
   primaryKey({ name: "contact_channel_purposes_pk", columns: [table.channelId, table.purpose] }),
@@ -91,8 +98,8 @@ export const customFieldDefinitionsTable = pgTable("custom_field_definitions", {
 ]);
 
 export const customFieldValuesTable = pgTable("custom_field_values", {
-  customerId: integer("customer_id").notNull(),
-  definitionId: integer("definition_id").notNull(),
+  customerId: integer("customer_id").notNull().references(() => customersTable.id, { onDelete: "cascade" }),
+  definitionId: integer("definition_id").notNull().references(() => customFieldDefinitionsTable.id, { onDelete: "cascade" }),
   value: text("value"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [

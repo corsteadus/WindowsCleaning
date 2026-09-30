@@ -1046,12 +1046,10 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
 });
 
 // ─── Delete customer ──────────────────────────────────────────────────────────
-// Neither `properties.customer_id` nor `contacts.customer_id` carries a foreign
-// key, so deleting a customer used to leave their properties and contacts
-// pointing at a row that no longer exists — and took their jobs, quotes and
-// invoices out of reach at the same time, without saying so. Work the profile
-// is meant to carry now blocks the delete; the rows that only describe the
-// customer go with them.
+// Both `properties.customer_id` and `contacts.customer_id` now carry a foreign
+// key with ON DELETE CASCADE (Phase 9), so the database cleans up after itself.
+// The explicit purge below stays: it is ordered, audited, and reports what it
+// erased, which a cascade cannot do.
 // Kyle (2026-09-23, #3): deleting a profile erases it and everything that
 // belongs to it - jobs, estimates, invoices, payments, notes and history.
 // Deletion, not archiving. The order lives in lib/customer-purge.ts, and the

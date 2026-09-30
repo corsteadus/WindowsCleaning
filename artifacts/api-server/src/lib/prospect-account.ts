@@ -21,8 +21,9 @@ export function prospectLifecycleTransition(
   if (isProspectRoute && fromLifecycle === "prospect" && toLifecycle === "customer") {
     return { customerDate: conversionDate, action: "prospect_converted" };
   }
-  if (toLifecycle === "inactive" || toLifecycle === "archived") {
-    return { action: "deactivated" };
-  }
+  // Kyle A#21: archiving and deactivating are different acts, and the history
+  // has to say which one happened.
+  if (toLifecycle === "archived") return { action: "archived" };
+  if (toLifecycle === "inactive") return { action: "deactivated" };
   return { action: "reactivated" };
 }
