@@ -1,4 +1,4 @@
-import { check, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -55,3 +55,27 @@ export const communicationQuietHoursTable = pgTable("communication_quiet_hours",
 export const insertCommunicationQuietHoursSchema = createInsertSchema(communicationQuietHoursTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCommunicationQuietHours = z.infer<typeof insertCommunicationQuietHoursSchema>;
 export type CommunicationQuietHours = typeof communicationQuietHoursTable.$inferSelect;
+/**
+ * Whether the business wants its customers told when work is scheduled or moved.
+ *
+ * Kyle, 2026-09-24 #4: *"This feature must be optional. The business should be
+ * able to turn scheduling notifications on or off in Settings."* Both channels
+ * default to off, so nothing can leave the system until somebody deliberately
+ * turns it on. A singleton per organization, like the quiet hours beside it.
+ */
+export const communicationNotificationSettingsTable = pgTable("communication_notification_settings", {
+  id: serial("id").primaryKey(),
+  organizationKey: text("organization_key").notNull().default("default"),
+  scheduleEmailEnabled: boolean("schedule_email_enabled").notNull().default(false),
+  scheduleSmsEnabled: boolean("schedule_sms_enabled").notNull().default(false),
+  updatedBy: text("updated_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  uniqueIndex("communication_notification_settings_org_idx").on(table.organizationKey),
+]);
+
+export const insertCommunicationNotificationSettingsSchema =
+  createInsertSchema(communicationNotificationSettingsTable).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertCommunicationNotificationSettings = z.infer<typeof insertCommunicationNotificationSettingsSchema>;
+export type CommunicationNotificationSettings = typeof communicationNotificationSettingsTable.$inferSelect;

@@ -1,3 +1,7 @@
+import {
+  decideSchedulePrompt, enabledChannels, promptSummary, scheduleEventFor,
+} from "../lib/appointment-notification-core.ts";
+import { communicationNotificationSettingsTable } from "@workspace/db";
 import { Router, type IRouter, type Request } from "express";
 import { eq, and, inArray, isNull, gte, lte, isNotNull, desc, sql } from "drizzle-orm";
 import {
@@ -102,23 +106,11 @@ async function enqueueAppointmentScheduledEvent(
   source: string,
   actorId: string | null,
 ): Promise<void> {
-  if (!job.scheduledDate) return;
-  await enqueueCommunicationEvent(tx, {
-    eventType: "appointment.scheduled",
-    aggregateType: "job",
-    aggregateId: job.id,
-    payload: {
-      customerId: job.customerId,
-      jobId: job.id,
-      scheduledDate: job.scheduledDate,
-      changeKind: "scheduled",
-    },
-    source,
-    actorId,
-    dedupeKey: `appointment.scheduled:${job.id}:${
-      typeof job.updatedAt === "string" ? job.updatedAt : job.updatedAt.toISOString()
-    }`,
-  });
+  // Kyle 2026-09-24 #4: a customer is never told about a schedule because the
+  // system decided to. The office is asked, and only an answer of yes reaches
+  // POST /jobs/:id/schedule-notification, which is the one place that enqueues.
+  void tx; void job; void source; void actorId;
+  return;
 }
 
 // ── DrizzleTxJobAdapter ───────────────────────────────────────────────────────
@@ -818,6 +810,78 @@ router.get("/jobs/:id", async (req, res): Promise<void> => {
 });
 
 // Update job — auto-handles completedAt
+/**
+ * The answer to the schedule-notification prompt (Kyle 2026-09-24 #4).
+ *
+ * This is the only place a job schedule notification is ever queued. Saying no
+ * is recorded too, so the history shows the office chose not to tell them rather
+ * than simply looking as though nothing happened.
+ */
+router.post("/jobs/:id/schedule-notification", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Job id must be a positive integer" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof body.send !== "boolean") {
+    res.status(400).json({ error: "send must be true or false" });
+    return;
+  }
+  const kind = body.kind;
+  if (kind !== "scheduled" && kind !== "rescheduled" && kind !== "unscheduled") {
+    res.status(400).json({ error: "kind must be scheduled, rescheduled or unscheduled" });
+    return;
+  }
+
+  const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, id)).limit(1);
+  if (!job) {
+    res.status(404).json({ error: "Job not found" });
+    return;
+  }
+  const [settings] = await db.select().from(communicationNotificationSettingsTable)
+    .where(eq(communicationNotificationSettingsTable.organizationKey, "default")).limit(1);
+  const channels = enabledChannels(settings
+    ? { emailEnabled: settings.scheduleEmailEnabled, smsEnabled: settings.scheduleSmsEnabled }
+    : null);
+
+  // A business that turned the feature off after the prompt appeared must not
+  // have a message go out behind its back.
+  if (body.send && !channels.length) {
+    res.status(409).json({
+      error: "Schedule notifications are switched off in Settings",
+      code: "notifications_disabled",
+    });
+    return;
+  }
+
+  const actor = getPerformedBy(req);
+  const event = scheduleEventFor(kind);
+  await db.transaction(async (tx) => {
+    if (body.send && event) {
+      await enqueueCommunicationEvent(tx, {
+        eventType: event, aggregateType: "job", aggregateId: job.id,
+        payload: {
+          customerId: job.customerId, jobId: job.id, scheduledDate: job.scheduledDate,
+          changeKind: kind, channels,
+        },
+        source: "jobs.schedule_notification_confirmed", actorId: actor,
+        dedupeKey: `appointment:${event}:${job.id}:${job.updatedAt.toISOString()}`,
+      });
+    }
+    await tx.insert(activityLogsTable).values({
+      entityType: "customer", entityId: job.customerId,
+      action: body.send ? "schedule_notification_sent" : "schedule_notification_declined",
+      fromValue: null, toValue: body.send ? channels.join(",") : null,
+      note: body.send
+        ? `Customer told about job ${job.jobNumber} (${kind}) by ${channels.join(" and ")}`
+        : `Chose not to tell the customer about job ${job.jobNumber} (${kind})`,
+      performedBy: actor,
+    });
+  });
+
+  res.json({ sent: body.send, kind, channels: body.send ? channels : [] });
+});
 router.patch("/jobs/:id", async (req, res): Promise<void> => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -1032,21 +1096,21 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
           dedupeKey: `job.completed:${job.id}:${job.completedAt ?? job.updatedAt.toISOString()}`,
         });
       }
-      if (dateChanged) {
-        const scheduledEvent = current.scheduledDate ? "appointment.changed" : "appointment.scheduled";
-        await enqueueCommunicationEvent(tx, {
-          eventType: scheduledEvent, aggregateType: "job", aggregateId: job.id,
-          payload: {
-            customerId: job.customerId, jobId: job.id, scheduledDate: job.scheduledDate,
-            changeKind: current.scheduledDate
-              ? (job.scheduledDate ? "rescheduled" : "unscheduled")
-              : "scheduled",
-          },
-          source: "jobs.patch", actorId: getPerformedBy(req),
-          dedupeKey: `appointment:${scheduledEvent}:${job.id}:${job.updatedAt.toISOString()}`,
-        });
-      }
-      return { kind: "updated" as const, job };
+      // Nothing is sent here. The office is asked, and the answer — if it is
+      // yes — comes back through POST /jobs/:id/schedule-notification.
+      const [notificationSettings] = await tx.select().from(communicationNotificationSettingsTable)
+        .where(eq(communicationNotificationSettingsTable.organizationKey, "default")).limit(1);
+      const decision = decideSchedulePrompt({
+        before: current,
+        after: job,
+        settings: notificationSettings
+          ? {
+              emailEnabled: notificationSettings.scheduleEmailEnabled,
+              smsEnabled: notificationSettings.scheduleSmsEnabled,
+            }
+          : null,
+      });
+      return { kind: "updated" as const, job, decision };
     });
     if (result.kind === "notFound") { res.status(404).json({ error: "Job not found" }); return; }
     if (result.kind === "unassigned") {
@@ -1105,7 +1169,13 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
     const full = fieldTechRepository.getDetails
       ? await fieldTechRepository.getDetails(id)
       : await getJobWithDetails(id);
-    res.json(full);
+    res.json({
+      ...(full as Record<string, unknown>),
+      // The prompt Kyle asked for. A null here means say nothing at all.
+      scheduleNotification: result.decision
+        ? { ...result.decision, summary: promptSummary(result.decision.kind, result.job) }
+        : null,
+    });
   } catch (err) {
     if (err instanceof AccountRelationError) {
       res.status(err.status).json({ error: err.message });

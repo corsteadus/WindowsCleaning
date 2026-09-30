@@ -1,3 +1,4 @@
+import { ScheduleNotificationSettings } from "@/components/ScheduleNotificationSettings";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -192,6 +193,11 @@ export default function Settings() {
       </section>
 
       <CommunicationSafetySettings
+        canManage={canManageCommunicationSettings}
+        capabilitiesLoading={capabilitiesQuery.isLoading}
+      />
+
+      <ScheduleNotificationSettings
         canManage={canManageCommunicationSettings}
         capabilitiesLoading={capabilitiesQuery.isLoading}
       />

@@ -1,3 +1,4 @@
+import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -346,9 +347,14 @@ export function MonthCalendar({
     },
   });
 
+  // Undo is a second forward move, not a rollback, so it must not ask again:
+  // the net effect of move-then-undo is that nothing changed.
   const moveJob = useCallback(
-    (jobId: number, to: string) =>
-      moveMutation.mutate({ id: jobId, data: { scheduledDate: to } }),
+    (jobId: number, to: string, ask = true) =>
+      moveMutation
+        .mutateAsync({ id: jobId, data: { scheduledDate: to } })
+        .then((updated) => { if (ask) askAboutSchedule(updated as unknown as JobUpdateResult); })
+        .catch(() => { /* the mutation's own onError has already explained it */ }),
     [moveMutation],
   );
 
@@ -360,7 +366,7 @@ export function MonthCalendar({
         description: `${from} → ${to}`,
         duration: UNDO_WINDOW_MS,
         action: (
-          <ToastAction altText="Undo the move" onClick={() => moveJob(occurrence.id, from)}>
+          <ToastAction altText="Undo the move" onClick={() => moveJob(occurrence.id, from, false)}>
             Undo
           </ToastAction>
         ),

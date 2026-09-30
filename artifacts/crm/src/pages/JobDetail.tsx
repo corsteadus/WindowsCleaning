@@ -1,3 +1,4 @@
+import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useRef, useState } from "react";
 import { Layout } from "@/components/Layout";
 import {
@@ -234,6 +235,8 @@ export default function JobDetail() {
         }
         queryClient.invalidateQueries({ queryKey: detailQueryKey });
         queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListJobsQueryKey()) });
+        // Kyle 2026-09-24 #4: ask only once the move is actually committed.
+        askAboutSchedule(committedJob as unknown as JobUpdateResult);
         // Keep the customer detail view consistent when navigating back
         if (job?.customerId) {
           queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getGetCustomerQueryKey(job.customerId)) });

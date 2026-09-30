@@ -1,3 +1,4 @@
+import { ScheduleNotificationPromptHost } from "@/components/ScheduleNotificationPrompt";
 import { ReactNode, useState, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import APP_VERSION from "@/version";
@@ -417,6 +418,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </footer>
       </div>
 
+      <ScheduleNotificationPromptHost />
     </div>
   );
 }

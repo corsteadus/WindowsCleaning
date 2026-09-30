@@ -92,20 +92,22 @@ export async function runRecurringPlanEngine(): Promise<{ generated: number; ski
           isRecurring:         true,
           recurringFrequency:  plan.frequencyType,
         }).returning();
-        await enqueueCommunicationEvent(tx, {
-          eventType: "appointment.scheduled",
-          aggregateType: "job",
-          aggregateId: created.id,
-          payload: {
-            customerId: created.customerId,
-            jobId: created.id,
-            scheduledDate: created.scheduledDate,
-            changeKind: "scheduled",
-          },
-          source: "recurring_plan_engine",
-          actorId: "scheduler",
-          dedupeKey: `appointment.scheduled:${created.id}:${created.updatedAt.toISOString()}`,
-        });
+// Kyle 2026-09-24 #4: never automatic. This path has no prompt yet, so it
+// tells nobody — the safe direction until one is built.
+//         await enqueueCommunicationEvent(tx, {
+//           eventType: "appointment.scheduled",
+//           aggregateType: "job",
+//           aggregateId: created.id,
+//           payload: {
+//             customerId: created.customerId,
+//             jobId: created.id,
+//             scheduledDate: created.scheduledDate,
+//             changeKind: "scheduled",
+//           },
+//           source: "recurring_plan_engine",
+//           actorId: "scheduler",
+//           dedupeKey: `appointment.scheduled:${created.id}:${created.updatedAt.toISOString()}`,
+//         });
         return [created] as const;
       });
 

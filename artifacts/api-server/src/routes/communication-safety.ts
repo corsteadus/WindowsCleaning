@@ -4,6 +4,7 @@ import {
   communicationQuietHoursTable,
   communicationSuppressionsTable,
   db,
+  communicationNotificationSettingsTable,
 } from "@workspace/db";
 import {
   claimIdempotencyKey,
@@ -452,6 +453,68 @@ router.get(
     res.json(await readQuietHours(db));
   },
 );
+
+/**
+ * Whether customers are told when work is scheduled or moved (Kyle 2026-09-24
+ * #4). Both channels are off until somebody turns them on, and a business that
+ * has never opened this screen has no row at all — which reads as off.
+ */
+const NOTIFICATION_SETTINGS_KEY = "default";
+
+async function readNotificationSettings() {
+  const [row] = await db.select().from(communicationNotificationSettingsTable)
+    .where(eq(communicationNotificationSettingsTable.organizationKey, NOTIFICATION_SETTINGS_KEY))
+    .limit(1);
+  return {
+    scheduleEmailEnabled: row?.scheduleEmailEnabled ?? false,
+    scheduleSmsEnabled: row?.scheduleSmsEnabled ?? false,
+    updatedBy: row?.updatedBy ?? null,
+    updatedAt: row?.updatedAt?.toISOString() ?? null,
+    // There is no SMS provider in the platform yet, so the screen must not
+    // promise a text will arrive.
+    smsDeliverable: false,
+  };
+}
+
+router.get(
+  "/communication-safety/notification-settings",
+  manageCommunicationSettings,
+  async (_req, res): Promise<void> => {
+    res.json(await readNotificationSettings());
+  },
+);
+
+router.put(
+  "/communication-safety/notification-settings",
+  manageCommunicationSettings,
+  async (req, res): Promise<void> => {
+    const body = bodyObject(req.body);
+    for (const field of ["scheduleEmailEnabled", "scheduleSmsEnabled"]) {
+      if (typeof body[field] !== "boolean") {
+        res.status(400).json({ error: `${field} must be true or false` });
+        return;
+      }
+    }
+    const actor = req.user
+      ? [req.user.firstName, req.user.lastName].filter(Boolean).join(" ").trim() || req.user.email || null
+      : null;
+    await db.insert(communicationNotificationSettingsTable).values({
+      organizationKey: NOTIFICATION_SETTINGS_KEY,
+      scheduleEmailEnabled: body.scheduleEmailEnabled as boolean,
+      scheduleSmsEnabled: body.scheduleSmsEnabled as boolean,
+      updatedBy: actor,
+    }).onConflictDoUpdate({
+      target: communicationNotificationSettingsTable.organizationKey,
+      set: {
+        scheduleEmailEnabled: body.scheduleEmailEnabled as boolean,
+        scheduleSmsEnabled: body.scheduleSmsEnabled as boolean,
+        updatedBy: actor,
+        updatedAt: new Date(),
+      },
+    });
+    res.json(await readNotificationSettings());
+  },
+);
 
 router.patch(
   "/communication-safety/suppressions/:id",

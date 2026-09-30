@@ -1,3 +1,4 @@
+import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useState, useMemo } from "react";
 import { Layout } from "@/components/Layout";
 import {
@@ -117,11 +118,12 @@ function RescheduleModal({ job, onClose }: { job: JobLike | null; onClose: () =>
 
   const updateMutation = useUpdateJob({
     mutation: {
-      onSuccess: () => {
+      onSuccess: (updated) => {
         queryClient.invalidateQueries({ queryKey: getListJobsQueryKey() });
         queryClient.invalidateQueries({ queryKey: getListUnscheduledJobsQueryKey() });
         toast({ title: "Job rescheduled!" });
         onClose();
+        askAboutSchedule(updated as unknown as JobUpdateResult);
       },
       // A refusal to move finished or billed work is a rule, not a fault, and
       // it carries the way forward ("reopen the job first"). Showing only

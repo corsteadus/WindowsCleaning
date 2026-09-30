@@ -118,6 +118,109 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 11 — the scheduling-notification prompt, done in the working tree 2026-09-30
+
+This finishes the work parked on 2026-09-04 (see the PARKED section below, kept for
+the investigation behind it). **Kyle's #4 of 2026-09-24 is now built**, which was
+the last of his six answers still outstanding.
+
+### What it does
+
+- **Settings → Scheduling notifications**, a channel each for email and text,
+  **both off** until somebody turns them on.
+- With one on, moving a job **asks**: *"Tell the customer?"*, saying what changed
+  and which channel it would use, and stating plainly that nothing has been sent.
+- **Nothing is ever sent by the system.** The only path that queues a job schedule
+  notification is `POST /jobs/:id/schedule-notification` with `send: true`.
+- Saying **no is recorded too**, as `schedule_notification_declined`, so the
+  history shows a decision was made rather than looking as though nothing happened.
+- A change that leaves the schedule alone — crew, technician, status, notes —
+  **asks nothing**, which is Kyle's crew-only rule.
+
+### The pieces
+
+| | |
+|---|---|
+| `lib/appointment-notification-core.ts` | Pure: `scheduleChangeKind`, `decideSchedulePrompt`, `promptSummary`, `scheduleEventFor`. 20 unit tests |
+| `communication_notification_settings` | **New table**, additive, created by hand (75 → 76 tables). A singleton on `organization_key`, modelled on `communication_quiet_hours` beside it |
+| `GET`/`PUT /communication-safety/notification-settings` | Behind the existing `communication.settings` capability — no new capability string |
+| `POST /jobs/:id/schedule-notification` | The one confirmed path. Given `schedule.manage` **explicitly**, because the generic `/jobs` rule would have handed it to a field tech's `jobs.manage` |
+| `ScheduleNotificationSettings.tsx` | The switch, in Settings |
+| `ScheduleNotificationPrompt.tsx` | `askAboutSchedule()` plus a host mounted **once** in `Layout` |
+
+### Three decisions worth knowing
+
+1. **Time-only changes now ask.** The old trigger was `dateChanged` alone, so
+   moving a 9am job to 2pm told nobody and asked nobody. It is a change to the
+   time, which Kyle named explicitly.
+2. **A date with no time still asks.** Kyle wrote "first scheduled with a date and
+   time", but the system allows a date with no time (the dashboard shows "Time not
+   set"). Waiting for a time would mean an office that never sets them is never
+   asked at all.
+3. **Taking a job off the calendar asks too.** It is a change to the date, and a
+   customer expecting a visit that is no longer booked is the worse failure. The
+   office can always say no.
+
+### The prompt is mounted once, on purpose
+
+Two traps recorded in the parked plan, both real:
+
+- **Undo is a forward PATCH**, not a rollback (`MonthCalendar.tsx`), so a prompt
+  hung off `useUpdateJob.onSuccess` fires again when the move is undone. `moveJob`
+  now takes `ask`, and the undo action passes `false`.
+- **`TOAST_LIMIT` is 1** and the undo toast holds that slot, so the prompt has to
+  be a dialog.
+
+A third found while building: the reschedule dialog on the Schedule page calls
+`onClose()` the moment it saves, so a prompt owned by that component would unmount
+before it could be answered. Hence one host near the root and a plain
+`askAboutSchedule()` that any screen can call.
+
+### What still does not ask
+
+Four sites used to enqueue an appointment event with nobody looking. **All four
+have stopped.** Two now ask; two simply never notify, which is the safe direction
+until a prompt makes sense for them:
+
+| Site | Now |
+|---|---|
+| `PATCH /jobs/:id` | Asks |
+| `POST /jobs` (the create-path helper) | Silent; the job page asks on the next move |
+| `POST /customers/with-initial-job` | Silent, no prompt yet |
+| `POST /recurring-plans/:id/generate-job` | Silent, no prompt yet |
+| `recurring-plan-engine` (overnight cron) | Silent — **there is no user to ask**, which is the question still open with the client from 2026-09-04 |
+
+`POST /quotes/:id/convert-and-schedule` was never in scope: its appointment events
+are for going to *give* an estimate, not for job scheduling.
+
+### Still true about delivery
+
+**There is no SMS provider anywhere in the platform.** The setting offers the
+channel because Kyle asked for it, and the screen says outright that a text will be
+recorded but will not arrive. Email waits on Lute's provider keys. Until then the
+prompt, the decision and the audit trail all work; only the delivery does not.
+
+### Verified
+
+`scratchpad/phase11-api.mjs` **27/27** and `scratchpad/phase11-ui.mjs` **17/17**,
+the second headed, both against the local build on the shared Development database.
+Suites after: **CRM 477/477**, **API 619/633** (the same 14 `DATABASE_URL`
+failures). All three typechecks clean. The database was returned to its one
+customer, and **104 + 15 orphaned `communication_events`** left by earlier test
+runs were cleaned out with it.
+
+Two traps for the next session:
+
+- **`lib/db` is a composite project.** Adding a table to `src/schema` is not
+  enough: consumers read `dist/*.d.ts`, so `npx tsc -p lib/db/tsconfig.json` must
+  run or the API will not see the new export.
+- **A guard of the form `if (s.includes("SomeName")) return` in a patch script
+  matches the name inside a comment or a hook you just inserted**, and silently
+  skips the edit. Two imports went missing that way. Guard on the exact
+  declaration, and check the outcome rather than the script's own message.
+
+---
+
 ## Phase 12a — the payment methods Kyle named, done in the working tree 2026-09-28
 
 Kyle, 2026-09-24 #3: *"Treat Gift Certificate as a normal invoice payment method,
@@ -1294,9 +1397,11 @@ wiring the monthly summary.
 
 ---
 
-## PARKED — Notify the customer before sending on a schedule change
+## DONE (was PARKED) — Notify the customer before sending on a schedule change
 
-**Status: investigated and planned, not implemented. Parked by the user on 2026-09-04.**
+**Status: BUILT on 2026-09-30 — see "Phase 11" above.** The investigation below is
+kept because it is what the build rests on; where the two differ, Phase 11 is what
+shipped. The overnight-cron question is the one part still open with the client.
 
 ### The problem
 

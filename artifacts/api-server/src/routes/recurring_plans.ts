@@ -310,20 +310,22 @@ router.post("/recurring-plans/:id/generate-job", async (req, res) => {
         isRecurring:        true,
         recurringFrequency: plan.frequencyType,
       }).returning();
-      await enqueueCommunicationEvent(tx, {
-        eventType: "appointment.scheduled",
-        aggregateType: "job",
-        aggregateId: job.id,
-        payload: {
-          customerId: job.customerId,
-          jobId: job.id,
-          scheduledDate: job.scheduledDate,
-          changeKind: "scheduled",
-        },
-        source: "recurring_plans.generate_job",
-        actorId: getPerformedBy(req),
-        dedupeKey: `appointment.scheduled:${job.id}:${job.updatedAt.toISOString()}`,
-      });
+// Kyle 2026-09-24 #4: never automatic. This path has no prompt yet, so it
+// tells nobody — the safe direction until one is built.
+//       await enqueueCommunicationEvent(tx, {
+//         eventType: "appointment.scheduled",
+//         aggregateType: "job",
+//         aggregateId: job.id,
+//         payload: {
+//           customerId: job.customerId,
+//           jobId: job.id,
+//           scheduledDate: job.scheduledDate,
+//           changeKind: "scheduled",
+//         },
+//         source: "recurring_plans.generate_job",
+//         actorId: getPerformedBy(req),
+//         dedupeKey: `appointment.scheduled:${job.id}:${job.updatedAt.toISOString()}`,
+//       });
       return { kind: "created" as const, job };
     });
 

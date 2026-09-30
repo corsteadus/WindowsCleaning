@@ -160,16 +160,18 @@ export function customerInitialJobDbDependencies(input: {
         });
       },
       enqueueAppointment: async (customerId, job, initialJob) => {
-        await enqueueCommunicationEvent(tx, {
-          eventType: "appointment.scheduled",
-          aggregateType: "job",
-          aggregateId: job.id,
-          payload: { customerId, jobId: job.id, scheduledDate: initialJob.scheduledDate, changeKind: "scheduled" },
-          source: "customers.create_with_initial_job",
-          actorId: input.actorId,
-          idempotencyKey: input.idempotency.clientKey,
-          dedupeKey: `appointment.scheduled:${job.id}:${job.updatedAt.toISOString()}`,
-        });
+// Kyle 2026-09-24 #4: never automatic. This path has no prompt yet, so it
+// tells nobody — the safe direction until one is built.
+//         await enqueueCommunicationEvent(tx, {
+//           eventType: "appointment.scheduled",
+//           aggregateType: "job",
+//           aggregateId: job.id,
+//           payload: { customerId, jobId: job.id, scheduledDate: initialJob.scheduledDate, changeKind: "scheduled" },
+//           source: "customers.create_with_initial_job",
+//           actorId: input.actorId,
+//           idempotencyKey: input.idempotency.clientKey,
+//           dedupeKey: `appointment.scheduled:${job.id}:${job.updatedAt.toISOString()}`,
+//         });
       },
     })),
   };

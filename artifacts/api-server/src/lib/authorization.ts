@@ -227,6 +227,12 @@ export function requiredCapabilityForJobMutation(
   body: unknown,
 ): AppCapability | null {
   if (isMethod(method, "POST") && path === "/jobs") return "schedule.manage";
+  // Answering the schedule-notification prompt sends a message to a customer, so
+  // it takes the authority that moving the job took — not a field tech's
+  // jobs.manage, which the generic /jobs rule below would otherwise allow.
+  if (isMethod(method, "POST") && /^\/jobs\/[^/]+\/schedule-notification$/.test(path)) {
+    return "schedule.manage";
+  }
   if (isMethod(method, "DELETE") && /^\/jobs\/[^/]+$/.test(path)) return "jobs.manage";
   if (isMethod(method, "POST") && /^\/jobs\/[^/]+\/generate-invoice$/.test(path)) {
     return "invoices.manage";
