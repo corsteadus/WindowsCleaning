@@ -118,6 +118,106 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 16 — the profile screens, done in the working tree 2026-10-03
+
+Kyle's Testing Edits of 2026-10-01, items #1, #2, #3 (the part left over), #4, #5
+and #6. Built and checked one at a time, in a browser, as asked.
+
+| | What changed | Checks |
+|---|---|---|
+| **#1** | **Company / Business Name shows only on a Commercial account.** Switching back to Residential also clears it, so a name typed and then abandoned is not saved from behind a hidden field | 7/7 |
+| **#2** | **Phone numbers punctuate themselves** on all five fields. `8165551234` becomes `(816) 555-1234` as it is typed — bracket at three digits, dash at seven. A leading 1 is kept as a country code. Anything with letters, a `+`, or more than ten digits is left exactly as written, because an extension or an international number is the person telling us something | 10/10 |
+| **#4** | **The Lifecycle selector is gone** from both the create form and the profile editor. A record made from Prospects is a prospect, one made from Customers is a customer, and the way across stays the conversion after acceptance. The profile still *shows* what it is | 6/6 |
+| **#5** | **"Notes" is "General Notes"** on the create form and the profile tab, as it already was on the Overview | 10/10 |
+| **#6** | **The delete confirmation lost the typed name.** One plain question, the warning about what else goes, and two buttons. This reverses Phase 5, at Kyle's request | (same run) |
+| **#3** | **Window & Property Details is gone** from both screens. Custom Fields, which the business defines, replace it. **The four columns stay on `customers`** so nothing already typed is lost — dropping them is its own announced change | 8/8 |
+
+**41/41 across the six runs.** CRM suite **478/478**, typechecks clean. The
+database was left with its two client-owned profiles and nothing of ours.
+
+### Two things found along the way
+
+- **Every field on the create form was nameless.** The `F` wrapper rendered a
+  `<label>` as a *sibling* of the control, with no `htmlFor` — so screen readers
+  had no name for any field, clicking a label focused nothing, and
+  `getByLabel` could never find one. The control now sits inside its label.
+  **This made a test falsely pass before it was fixed**: "0 fields found" is true
+  whether or not the field is there.
+- **The local dev server served stale code** from a previous session's process.
+  The edit was correct, the file on disk was correct, and the browser showed the
+  old behaviour. `curl http://localhost:5174/src/pages/<file>` shows what the
+  server is really serving; kill the port and restart if it disagrees.
+
+### Still open from Kyle's #1
+
+He asked for "any other fields that are specifically relevant to a commercial
+account". Only Company / Business Name was obvious, so only that moved. The form
+also carries **Birthday**, **Salutation**, **Alt. Contact Name**, **County** and
+**Subdivision** — ask him which, if any, belong to one account type.
+
+---
+
+## The plan from 2026-10-03 — Kyle's testing edits first, our own work after
+
+Kyle tested on **2026-10-01** and sent `Requirements PDFs/Testing Edits 10.1.26.docx`
+— 14 numbered items. **Agreed with the user: build Kyle's items first, then pick our
+own parked work back up.**
+
+**He tested the 2026-09-26 build.** Three commits were pushed but never republished,
+so he has not seen them: `97695f9` payments, `3494c3e` the schedule prompt,
+`bb42bc9` archive / channel pause / foreign keys — 41 files between them. Some of
+his points may already be answered; re-read his list against the new build once it
+is republished.
+
+### Ours, parked until Kyle's items are done
+
+| | Where it stands |
+|---|---|
+| **Republish** | **Does not wait for anything.** Three rounds are pushed and unseen, and Kyle keeps testing a stale build until it happens |
+| **Drop `properties.gate_code` and `access_notes`** | Code removal not started; only `seed-demo.ts` and the schema still carry them. The `DROP` must follow a republish or the deployed API breaks |
+| **A#9 — address a message to the contact that owns the channel** | Deliberately held for Phase 12b: it means making the sending path resolve recipients from contact channels, which is also what makes A#7's pause bite |
+| **Phase 13 — sub-customers** | Not started |
+| **Phase 14 — calendar** | Not started. The largest remaining piece |
+| **Phase 15 — go-live** | Not started |
+| **Phase 12b — email delivery** | Blocked on Lute: provider keys, plus an automation rule, a template, and the queue running |
+
+### Kyle's 14 items, as phases
+
+| Phase | Items | Size |
+|---|---|---|
+| **16 Profile screens** | #1 the form changes with Residential/Commercial · #2 phone numbers format themselves · #4 the Lifecycle selector goes · #5 "Notes" becomes "General Notes" everywhere, not only the Overview · #6 the delete confirmation loses the typed name · the rest of #3 — the old "Window & Property Details" section is still on two screens | M |
+| **17 Quote statuses** | #10 Open · Pending – Sent Only · Pending – Sent and Viewed · Accepted · Declined · Closed, and the dashboard module with them | M |
+| **18 Service catalogue and quote lines** | #8 no price, pricing type or unit in the catalogue; categories managed in place · #7 services only, no custom line item · #9 the service name is locked, with a description for that quote alone | **L** |
+| **19 Quote settings** | #11 validity in days as a company setting · #13 terms and conditions the company writes, with no Corstead default | M |
+| **20 Time** | #14 fifteen-minute increments and AM/PM everywhere | M |
+| **21 Custom field search** | #3's new part — find prospects and customers by what is in their custom fields | M |
+
+**Order: 16 → 17 → 18 → 19 → 20 → 21.** Sixteen is small, visible and low risk;
+seventeen answers the grouping question we had open with him; eighteen is the
+largest and changes how every quote and job is priced.
+
+### Two of his items reverse or change what we built
+
+- **#6 reverses Phase 5.** The typed-name confirmation was deliberate. He wants a
+  plain "are you sure?" with Delete and Cancel, keeping the warning about what else
+  goes.
+- **#10 changes Phase 6 and the Phase 10 dashboard.** Draft → Open, Sent → Pending –
+  Sent Only, Viewed → Pending – Sent and Viewed, Expired → Closed, and
+  **"Accepted & Scheduled" is not on his list at all**.
+
+### Already true, checked against the code on 2026-10-03
+
+- **#12** — an expired link already dies: `publicEstimate()` returns null once
+  `expiresAt` has passed, so the customer gets a 404 while the quote stays on the
+  profile.
+- **#5** — "General Notes" is on the Overview from Phase 7, but the Notes **tab**
+  and the new-profile form still say "Notes".
+- **#3** — custom fields exist from Phase 4, but `CustomerDetail.tsx:1573` and
+  `Customers.tsx:582` still render the old "Window & Property Details" section
+  beside them.
+
+---
+
 ## Phases 8 and 9 — in progress, 2026-09-30
 
 Two of the four pieces are built and verified. The rest is listed at the end with

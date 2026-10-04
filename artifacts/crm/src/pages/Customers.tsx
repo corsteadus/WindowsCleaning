@@ -21,7 +21,8 @@ import { hasClientCapability } from "@/lib/rbac";
 import { getCustomersEmptyStateDescription } from "@/lib/schedule-empty-state";
 import { customerListSearchLocation } from "@/lib/customer-list-url";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
-import { useForm } from "react-hook-form";
+import { useForm, type UseFormRegisterReturn } from "react-hook-form";
+import { formatPhoneAsTyped } from "@/lib/phone-format";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { Layout } from "@/components/Layout";
@@ -224,12 +225,40 @@ const SELECT_CLS = "w-full text-sm px-3 py-2 rounded-lg border border-slate-200 
 function F({ label, error, children, required }: { label: string; error?: string; children: React.ReactNode; required?: boolean }) {
   return (
     <div>
-      <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      {/* The control sits inside its label, so the two are actually associated:
+          clicking the text focuses the field, and a screen reader reads a name
+          for it. They were siblings before, which left every field nameless. */}
+      <label className="block">
+        <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+          {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+        </span>
+        {children}
       </label>
-      {children}
       {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * A phone field that punctuates itself as it is typed (Kyle, Testing Edits
+ * 2026-10-01, #2). The person types digits; the brackets and dash appear on
+ * their own. Anything that is not a plain US number is left as they wrote it.
+ */
+function PhoneInput({ registration, placeholder }: {
+  registration: UseFormRegisterReturn; placeholder?: string;
+}) {
+  return (
+    <input
+      {...registration}
+      type="tel"
+      inputMode="tel"
+      placeholder={placeholder ?? "(555) 000-0000"}
+      className={INPUT_CLS}
+      onChange={(event) => {
+        event.target.value = formatPhoneAsTyped(event.target.value);
+        void registration.onChange(event);
+      }}
+    />
   );
 }
 
@@ -289,7 +318,7 @@ function NewCustomerForm({
   const crews = (crewsData ?? []) as Array<{ id: number; name: string; isActive?: boolean; members?: string | null }>;
   const activeTeamUsers = activeTeamUsersData ?? [];
 
-  const { register, handleSubmit, watch, formState: { errors }, reset } = useForm<CustomerFormValues>({
+  const { register, handleSubmit, watch, setValue, formState: { errors }, reset } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
     defaultValues: {
       lifecycleStatus: isProspect ? "prospect" : "customer",
@@ -302,6 +331,11 @@ function NewCustomerForm({
     "firstName", "lastName", "email", "homePhone", "workPhone", "cellPhone", "altPhone",
   ]);
   const accountType = watch("accountType");
+  // Switching to Residential hides the business name; it must not be saved from
+  // behind the hidden field either.
+  useEffect(() => {
+    if (accountType === "residential") setValue("companyName", "");
+  }, [accountType, setValue]);
   const handleDuplicateSuccess = (result: { candidates?: any[]; candidateCount: number }) => {
     setDuplicateCandidates(result.candidates ?? []);
     setDuplicateDecision(null);
@@ -507,31 +541,35 @@ function NewCustomerForm({
             <input {...register("lastName")} placeholder="Doe" className={INPUT_CLS} />
           </F>
         </div>
-        <F label="Company / Business Name">
-          <input {...register("companyName")} placeholder="Optional company or business name" className={INPUT_CLS} />
-        </F>
+        {/* Kyle (Testing Edits, 2026-10-01, #1): a home has no business name, so
+            the field is not shown on a residential account at all. */}
+        {accountType === "commercial" && (
+          <F label="Company / Business Name">
+            <input {...register("companyName")} placeholder="Company or business name" className={INPUT_CLS} />
+          </F>
+        )}
         <F label="Email" error={errors.email?.message}>
           <input type="email" {...register("email")} placeholder="john@example.com" className={INPUT_CLS} />
         </F>
         <div className="grid grid-cols-2 gap-3">
           <F label="Home Phone">
-            <input {...register("homePhone")} placeholder="(555) 000-0000" className={INPUT_CLS} />
+            <PhoneInput registration={register("homePhone")} />
           </F>
           <F label="Work Phone">
-            <input {...register("workPhone")} placeholder="(555) 000-0000" className={INPUT_CLS} />
+            <PhoneInput registration={register("workPhone")} />
           </F>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <F label="Cell Phone">
-            <input {...register("cellPhone")} placeholder="(555) 000-0000" className={INPUT_CLS} />
+            <PhoneInput registration={register("cellPhone")} />
           </F>
           <F label="Alt. Phone">
-            <input {...register("altPhone")} placeholder="(555) 000-0000" className={INPUT_CLS} />
+            <PhoneInput registration={register("altPhone")} />
           </F>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <F label="Fax">
-            <input {...register("fax")} placeholder="(555) 000-0000" className={INPUT_CLS} />
+            <PhoneInput registration={register("fax")} />
           </F>
           <F label="Alt. Phone Type">
             <input {...register("altPhoneType")} placeholder="e.g. Second Cell, Office" className={INPUT_CLS} />
@@ -579,43 +617,16 @@ function NewCustomerForm({
         </div>
       </FormSection>
 
-      {/* ── Window & Property Details ────────────────────────────────────── */}
-      <FormSection icon={Layers} title="Window & Property Details">
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Window Count">
-            <input type="number" {...register("windowCount")} placeholder="e.g. 24" className={INPUT_CLS} />
-          </F>
-          <F label="Window Type">
-            <input {...register("windowType")} placeholder="e.g. Double-hung" className={INPUT_CLS} />
-          </F>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="House Size">
-            <input {...register("houseSize")} placeholder="e.g. 2800 sq ft" className={INPUT_CLS} />
-          </F>
-          <F label="Ladders Needed">
-            <input {...register("laddersNeeded")} placeholder="e.g. 24 ft extension" className={INPUT_CLS} />
-          </F>
-        </div>
-      </FormSection>
+      {/* Window & Property Details was removed at Kyle's request (Testing Edits,
+          2026-10-01, #3): the business defines its own Custom Fields instead. */}
 
       {/* ── Account Settings ─────────────────────────────────────────────── */}
       <FormSection icon={Info} title="Account Settings">
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Lifecycle">
-            {isProspect ? (
-              <>
-                <input type="hidden" {...register("lifecycleStatus")} />
-                <div className={`${SELECT_CLS} text-violet-700 font-semibold`}>Prospect</div>
-              </>
-            ) : (
-              <select {...register("lifecycleStatus")} className={SELECT_CLS}>
-                <option value="customer">Customer</option>
-                <option value="prospect">Prospect</option>
-              </select>
-            )}
-          </F>
-        </div>
+        {/* Kyle (Testing Edits, 2026-10-01, #4): nobody chooses this. A record
+            made from Prospects is a prospect and one made from Customers is a
+            customer; the way across is the conversion after an estimate is
+            accepted, never a dropdown. The value still travels with the form. */}
+        <input type="hidden" {...register("lifecycleStatus")} />
         {/* Customer Since is set by the server on creation or conversion (#4).
             Preferred Contact (#5) and Sending Preferences (#6) were removed at
             Kyle's request; the communication-safety rules behind them are unchanged. */}
@@ -642,8 +653,8 @@ function NewCustomerForm({
       </FormSection>
 
       {/* ── Notes ───────────────────────────────────────────────────────── */}
-      <FormSection icon={StickyNote} title="Notes">
-        <F label="Notes">
+      <FormSection icon={StickyNote} title="General Notes">
+        <F label="General Notes">
           <textarea
             {...register("notes")}
             rows={3}

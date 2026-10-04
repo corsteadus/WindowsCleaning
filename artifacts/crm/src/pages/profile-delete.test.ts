@@ -12,10 +12,23 @@ test("the profile carries a Delete button, for people who may manage customers",
   assert.match(source, /\{!isEditing && canManageCustomer && \([\s\S]{0,400}Delete/);
 });
 
-test("deleting asks for the profile name to be typed, because it cannot be undone", () => {
-  assert.match(source, /Type <span className="font-mono text-slate-900">\{accountName\}<\/span> to confirm/);
-  assert.match(source, /disabled=\{deleteConfirmation\.trim\(\) !== accountName \|\| deleteProfile\.isPending\}/);
+// Kyle (Testing Edits, 2026-10-01, #6) asked for the typed name to go: one plain
+// question and two buttons, keeping the warning about what else is erased.
+test("deleting asks once, plainly, and does not make you type the name", () => {
+  assert.match(source, /Are you sure you want to permanently delete this profile\?/);
   assert.match(source, /It cannot be undone\./);
+  assert.doesNotMatch(source, /deleteConfirmation/,
+    "the typed-name confirmation was removed at the client's request");
+  assert.match(source, /disabled=\{deleteProfile\.isPending\}/,
+    "the only thing that disables Delete now is the request being in flight");
+});
+
+test("the dialog offers exactly two ways out", () => {
+  const dialog = source.slice(source.indexOf("Delete {accountName}?"), source.indexOf("</Dialog>", source.indexOf("Delete {accountName}?")));
+  const buttons = [...dialog.matchAll(/<button\b/g)].length;
+  assert.equal(buttons, 2, `the dialog should offer Cancel and Delete only, found ${buttons} buttons`);
+  assert.match(dialog, /Cancel/);
+  assert.match(dialog, /Delete permanently/);
 });
 
 test("the dialog says what will be erased", () => {

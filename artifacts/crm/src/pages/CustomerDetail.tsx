@@ -259,7 +259,7 @@ const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: st
   { id: "payments",       label: "Payments",        icon: CreditCard },
 
   { id: "callbacks",      label: "Callbacks",       icon: PhoneCall },
-  { id: "notes",          label: "Notes",           icon: StickyNote },
+  { id: "notes",          label: "General Notes",   icon: StickyNote },
   { id: "files",          label: "Files",           icon: Paperclip },
   { id: "activity",       label: "Communication & Activity", icon: Activity },
 ];
@@ -279,7 +279,6 @@ export default function CustomerDetail() {
   const canManageCustomer = hasClientCapability(user, "customers.manage");
   // Kyle (2026-09-23, #3): a profile deletes permanently, with everything on it.
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const canManageProperties = hasClientCapability(user, "properties.manage");
   const canManageContacts = hasClientCapability(user, "contacts.manage");
@@ -555,7 +554,7 @@ export default function CustomerDetail() {
             )}
             {!isEditing && canManageCustomer && (
               <button
-                onClick={() => { setDeleteConfirmation(""); setDeleteError(null); setDeleteOpen(true); }}
+                onClick={() => { setDeleteError(null); setDeleteOpen(true); }}
                 className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-red-200 text-red-600 bg-white text-xs font-semibold hover:bg-red-50 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Delete
@@ -903,7 +902,9 @@ export default function CustomerDetail() {
           )}
         </div>
 
-      {/* Permanent, so it asks for the name to be typed out (Kyle 2026-09-23 #3). */}
+      {/* Permanent, so it asks first — but only once, and plainly. Kyle (Testing
+          Edits, 2026-10-01, #6) asked for the typed name to go: a confirmation
+          and two buttons, with the warning about what else is erased kept. */}
       <Dialog open={deleteOpen} onOpenChange={(open) => { if (!open && !deleteProfile.isPending) setDeleteOpen(false); }}>
         <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader><DialogTitle className="text-base">Delete {accountName}?</DialogTitle></DialogHeader>
@@ -917,23 +918,16 @@ export default function CustomerDetail() {
             <li>{(customer.invoices ?? []).length} invoice{(customer.invoices ?? []).length === 1 ? "" : "s"}</li>
             <li>{activeProperties.length} propert{activeProperties.length === 1 ? "y" : "ies"}</li>
           </ul>
-          <label className="block text-xs font-semibold text-slate-600">
-            Type <span className="font-mono text-slate-900">{accountName}</span> to confirm
-            <input
-              aria-label="Type the name to confirm"
-              value={deleteConfirmation}
-              onChange={(e) => setDeleteConfirmation(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal"
-              disabled={deleteProfile.isPending}
-            />
-          </label>
+          <p className="text-sm font-semibold text-slate-800">
+            Are you sure you want to permanently delete this profile?
+          </p>
           {deleteError && <p className="text-xs text-red-600" role="alert">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setDeleteOpen(false)} disabled={deleteProfile.isPending} className="h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-600">Cancel</button>
             <button
               type="button"
               onClick={() => deleteProfile.mutate()}
-              disabled={deleteConfirmation.trim() !== accountName || deleteProfile.isPending}
+              disabled={deleteProfile.isPending}
               className="h-9 rounded-xl bg-red-600 px-3 text-sm font-semibold text-white disabled:opacity-50"
             >
               {deleteProfile.isPending ? "Deleting…" : "Delete permanently"}
@@ -1569,17 +1563,8 @@ function OverviewTab({ customer, isEditing, form }: {
         );
       })()}
 
-      {/* Window Details */}
-      <Section title="Window & Property Details" icon={Layers}>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Window Count" value={customer.windowCount ?? undefined} editing={isEditing} name="windowCount" form={form} type="number" />
-          <FieldRow label="Window Type"  value={customer.windowType}  editing={isEditing} name="windowType"  form={form} placeholder="e.g. Double-hung" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="House Size"     value={customer.houseSize}     editing={isEditing} name="houseSize"     form={form} placeholder="e.g. 2800 sq ft" />
-          <FieldRow label="Ladders Needed" value={customer.laddersNeeded} editing={isEditing} name="laddersNeeded" form={form} placeholder="e.g. 24 ft extension" />
-        </div>
-      </Section>
+      {/* Window & Property Details was removed at Kyle's request (Testing Edits,
+          2026-10-01, #3): the business defines its own Custom Fields instead. */}
 
       {/* Account Flags */}
       <Section title="Account Settings" icon={Info}>
@@ -1591,16 +1576,11 @@ function OverviewTab({ customer, isEditing, form }: {
         <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-4">
           <div>
             <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Lifecycle</label>
-            {isEditing ? (
-              <select {...form.register("lifecycleStatus")} className="mt-1 w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white">
-                <option value="customer">Customer</option>
-                <option value="prospect">Prospect</option>
-                <option value="inactive" disabled>Inactive — use Deactivate</option>
-                <option value="archived" disabled>Archived — use the Archive button</option>
-              </select>
-            ) : (
-              <p className="mt-0.5"><StatusBadge status={customerLifecycleDisplayStatus(customer)} /></p>
-            )}
+            {/* Kyle (Testing Edits, 2026-10-01, #4): this is shown, never chosen.
+                A prospect becomes a customer through the conversion after an
+                estimate is accepted; Deactivate and Archive have their own
+                buttons. So it reads the same whether or not the form is open. */}
+            <p className="mt-0.5"><StatusBadge status={customerLifecycleDisplayStatus(customer)} /></p>
           </div>
           <div>
             <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Account Type</label>
