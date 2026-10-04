@@ -20,16 +20,23 @@
  */
 import type { EstimateDisplayStatus } from "./estimate-lifecycle.ts";
 
+/**
+ * Kyle (Testing Edits, 2026-10-01, #10) replaced the single Pending with two,
+ * "so the office can immediately tell whether the customer has opened the
+ * quote", and dropped the separate Accepted & Scheduled. An accepted estimate
+ * that has become a job is still Accepted here; `needsScheduling` below is what
+ * says how many of them still want the office's attention.
+ */
 export const ESTIMATE_GROUPS = [
-  "open", "pending", "accepted", "accepted_scheduled", "declined", "closed",
+  "open", "pending_sent", "pending_viewed", "accepted", "declined", "closed",
 ] as const;
 export type EstimateGroup = typeof ESTIMATE_GROUPS[number];
 
 export const ESTIMATE_GROUP_LABELS: Record<EstimateGroup, string> = {
   open: "Open",
-  pending: "Pending",
+  pending_sent: "Pending – Sent Only",
+  pending_viewed: "Pending – Sent and Viewed",
   accepted: "Accepted",
-  accepted_scheduled: "Accepted & Scheduled",
   declined: "Declined",
   closed: "Closed",
 };
@@ -37,10 +44,10 @@ export const ESTIMATE_GROUP_LABELS: Record<EstimateGroup, string> = {
 const OF_STATUS: Record<EstimateDisplayStatus, EstimateGroup> = {
   draft: "open",
   scheduled: "open",
-  sent: "pending",
-  viewed: "pending",
+  sent: "pending_sent",
+  viewed: "pending_viewed",
   accepted: "accepted",
-  accepted_scheduled: "accepted_scheduled",
+  accepted_scheduled: "accepted",
   declined: "declined",
   expired: "closed",
 };
@@ -66,7 +73,9 @@ export function summariseEstimates(rows: readonly EstimateSummaryRow[]): Estimat
     const group = groupOfStatus(row.status);
     counts.set(group, (counts.get(group) ?? 0) + 1);
   }
-  const needsScheduling = counts.get("accepted") ?? 0;
+  // Not the Accepted grouping: that now holds estimates already turned into a
+  // job as well. Only an acceptance with no job behind it wants the office.
+  const needsScheduling = rows.filter((row) => row.status === "accepted").length;
   return {
     groups: ESTIMATE_GROUPS.map((group) => ({
       group, label: ESTIMATE_GROUP_LABELS[group], count: counts.get(group) ?? 0,

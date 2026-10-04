@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { estimateStatusOf } from "@/lib/estimate-status";
+import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
 import {
   FileText, Plus, Search, ArrowRightCircle, Trash2,
   CheckCircle2, XCircle, Send, Clock, Eye,
@@ -22,8 +22,15 @@ import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 
 const FILTERS = ["all", "draft", "sent", "viewed", "accepted", "declined", "expired"] as const;
 type Filter = typeof FILTERS[number];
+// Kyle (Testing Edits, 2026-10-01, #10): the words the office reads.
 const FILTER_LABELS: Record<Filter, string> = {
-  all: "All", draft: "Draft", sent: "Sent", viewed: "Viewed", accepted: "Accepted", declined: "Declined", expired: "Expired",
+  all: "All",
+  draft: "Open",
+  sent: "Pending – Sent Only",
+  viewed: "Pending – Sent and Viewed",
+  accepted: "Accepted",
+  declined: "Declined",
+  expired: "Closed",
 };
 
 function fmtDate(d?: string | null) {
@@ -102,7 +109,7 @@ function QuoteCard({
 
           {/* Right */}
           <div className="flex flex-col items-end gap-2 shrink-0">
-            <StatusBadge status={estimateStatusOf(quote)} />
+            <StatusBadge status={estimateStatusOf(quote)} label={estimateStatusLabel(estimateStatusOf(quote))} />
             <span className="text-xl font-bold text-slate-900 tabular-nums">
               {formatCurrency(quote.totalAmount)}
             </span>
@@ -225,12 +232,12 @@ export default function Quotes() {
       {(quotes?.length ?? 0) > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
           {[
-            { key: "accepted" as Filter, label: "Accepted", icon: CheckCircle2, bg: "bg-emerald-50", text: "text-emerald-700" },
-            { key: "viewed"   as Filter, label: "Viewed",   icon: Eye,           bg: "bg-sky-50",     text: "text-sky-700"     },
-            { key: "sent"     as Filter, label: "Sent",     icon: Send,          bg: "bg-blue-50",    text: "text-blue-700"    },
-            { key: "draft"    as Filter, label: "Draft",    icon: FileText,      bg: "bg-slate-50",   text: "text-slate-600"   },
-            { key: "declined" as Filter, label: "Declined", icon: XCircle,       bg: "bg-red-50",     text: "text-red-700"     },
-            { key: "expired"  as Filter, label: "Expired",  icon: Clock,         bg: "bg-slate-50",   text: "text-slate-500"   },
+            { key: "accepted" as Filter, label: FILTER_LABELS.accepted, icon: CheckCircle2, bg: "bg-emerald-50", text: "text-emerald-700" },
+            { key: "viewed"   as Filter, label: FILTER_LABELS.viewed,   icon: Eye,          bg: "bg-sky-50",     text: "text-sky-700"     },
+            { key: "sent"     as Filter, label: FILTER_LABELS.sent,     icon: Send,         bg: "bg-blue-50",    text: "text-blue-700"    },
+            { key: "draft"    as Filter, label: FILTER_LABELS.draft,    icon: FileText,     bg: "bg-slate-50",   text: "text-slate-600"   },
+            { key: "declined" as Filter, label: FILTER_LABELS.declined, icon: XCircle,      bg: "bg-red-50",     text: "text-red-700"     },
+            { key: "expired"  as Filter, label: FILTER_LABELS.expired,  icon: Clock,        bg: "bg-slate-50",   text: "text-slate-500"   },
           ].map(({ key, label, icon: Icon, bg, text }) => (
             <button
               key={key}

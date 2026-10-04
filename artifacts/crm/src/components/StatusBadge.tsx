@@ -41,9 +41,15 @@ interface StatusBadgeProps {
   size?: "sm" | "md";
   showDot?: boolean;
   className?: string;
+  /**
+   * Overrides the word while keeping the colour. An estimate's `draft` reads
+   * "Open" (Kyle, Testing Edits 2026-10-01, #10) but an invoice's draft is still
+   * a draft, so the renaming belongs to the estimate screens, not to this map.
+   */
+  label?: string;
 }
 
-export function StatusBadge({ status, size = "sm", showDot = true, className = "" }: StatusBadgeProps) {
+export function StatusBadge({ status, size = "sm", showDot = true, className = "", label }: StatusBadgeProps) {
   const cfg = STATUS_MAP[status] ?? {
     label: status?.trim() ? status.replace(/_/g, " ") : "Unknown",
     bg: "bg-slate-100",
@@ -59,7 +65,7 @@ export function StatusBadge({ status, size = "sm", showDot = true, className = "
         ${padding} ${cfg.bg} ${cfg.text} ${className}`}
     >
       {showDot && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />}
-      {cfg.label}
+      {label ?? cfg.label}
     </span>
   );
 }

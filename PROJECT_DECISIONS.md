@@ -118,6 +118,62 @@ steps 05–08 will not complete.
 
 ---
 
+﻿
+## Phase 17 — the quote statuses, done in the working tree 2026-10-04
+
+Kyle (Testing Edits, 2026-10-01, #10) named six, and asked that the two kinds of
+Pending stay apart "so the office can immediately tell whether the customer has
+opened the quote".
+
+| Reads as | Derived from |
+|---|---|
+| **Open** | `draft`, `scheduled` |
+| **Pending – Sent Only** | `sent` |
+| **Pending – Sent and Viewed** | `viewed` |
+| **Accepted** | `accepted`, and `accepted_scheduled` once it is a job |
+| **Declined** | `declined` |
+| **Closed** | `expired` |
+
+**Only the wording moved.** The derivation behind it — sent, opened, decided,
+expired — is untouched, so nothing about how a status is reached has changed.
+
+His 2026-09-24 list had a separate **Accepted & Scheduled**; the 2026-10-01 list
+does not, so an estimate already turned into a job now reads **Accepted** like any
+other. The dashboard's own queue ("N estimates need to be scheduled") is what
+still separates them, and it had to stop counting by grouping: `needsScheduling`
+now counts the `accepted` status directly, or a scheduled one would have been
+counted as still waiting.
+
+Changed in: `crm/src/lib/estimate-status.ts`, `Quotes.tsx` (filters and chips),
+`api-server/src/lib/estimate-dashboard.ts`.
+
+### StatusBadge learned an override
+
+The list and the profile's Quotes tab render `StatusBadge`, which carries **its
+own** label map shared with jobs, invoices, leads and customers. An invoice's
+`draft` is still a draft, so renaming it there would have been wrong. It now takes
+an optional `label`, and the estimate screens pass their own wording while keeping
+the colours.
+
+### Verified
+
+`scratchpad/p17-statuses.mjs` **18/18**, headed: four estimates taken to Open,
+Pending – Sent Only, Pending – Sent and Viewed and Declined, then read on the
+estimate page, in the list filters, in the correction dialog and on the dashboard.
+CRM **480/480**, API **621/635** (the same 14 `DATABASE_URL` failures), typechecks
+clean.
+
+### Two traps worth keeping
+
+- **The SPA leaves the previous page in the DOM for a moment.** Waiting on a
+  heading every estimate page shares ("Estimate lifecycle") reads the *old* page
+  and the old status. Wait for something unique to the record first.
+- **The client has estimates of their own in this database** (Kyle's and Lute's
+  test profiles). Absolute counts on the dashboard are therefore not ours to
+  assert; judge the records the run created, by id.
+
+---
+
 ## Phase 16 — the profile screens, done in the working tree 2026-10-03
 
 Kyle's Testing Edits of 2026-10-01, items #1, #2, #3 (the part left over), #4, #5

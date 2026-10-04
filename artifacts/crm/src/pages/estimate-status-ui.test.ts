@@ -27,9 +27,30 @@ test("every status Kyle listed has a label and a badge", () => {
 });
 
 test("the list, the profile and the estimate page all read the derived status", () => {
-  assert.match(quotes, /<StatusBadge status=\{estimateStatusOf\(quote\)\} \/>/);
-  assert.match(customerDetail, /<StatusBadge status=\{estimateStatusOf\(q\)\} \/>/);
+  assert.match(quotes, /<StatusBadge status=\{estimateStatusOf\(quote\)\}/);
+  assert.match(customerDetail, /<StatusBadge status=\{estimateStatusOf\(q\)\}/);
   assert.match(quoteDetail, /estimateStatusLabel\(status\)/);
+});
+
+// Kyle (Testing Edits, 2026-10-01, #10): the badge is shared with jobs and
+// invoices, whose "draft" is still a draft — so the estimate screens pass their
+// own wording rather than renaming it for everyone.
+test("the estimate badges carry the estimate wording", () => {
+  assert.match(quotes, /label=\{estimateStatusLabel\(estimateStatusOf\(quote\)\)\}/);
+  assert.match(customerDetail, /label=\{estimateStatusLabel\(estimateStatusOf\(q\)\)\}/);
+  assert.match(badge, /label\?: string;/, "StatusBadge has to accept an override");
+  assert.match(badge, /\{label \?\? cfg\.label\}/);
+});
+
+test("the six words are the ones Kyle named", () => {
+  assert.equal(ESTIMATE_STATUS_LABELS.draft, "Open");
+  assert.equal(ESTIMATE_STATUS_LABELS.sent, "Pending – Sent Only");
+  assert.equal(ESTIMATE_STATUS_LABELS.viewed, "Pending – Sent and Viewed");
+  assert.equal(ESTIMATE_STATUS_LABELS.accepted, "Accepted");
+  assert.equal(ESTIMATE_STATUS_LABELS.declined, "Declined");
+  assert.equal(ESTIMATE_STATUS_LABELS.expired, "Closed");
+  // an estimate already turned into a job still reads Accepted to the office
+  assert.equal(ESTIMATE_STATUS_LABELS.accepted_scheduled, "Accepted");
 });
 
 test("the list filters are Kyle's statuses, not the old column's words", () => {

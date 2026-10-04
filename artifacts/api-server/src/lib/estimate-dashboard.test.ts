@@ -12,15 +12,20 @@ describe("groupOfStatus", () => {
     }
   });
 
-  it("reads Kyle's six groupings the way the module documents", () => {
+  it("reads Kyle's six, with the two kinds of Pending kept apart", () => {
     assert.equal(groupOfStatus("draft"), "open");
     assert.equal(groupOfStatus("scheduled"), "open");
-    assert.equal(groupOfStatus("sent"), "pending");
-    assert.equal(groupOfStatus("viewed"), "pending");
+    assert.equal(groupOfStatus("sent"), "pending_sent");
+    assert.equal(groupOfStatus("viewed"), "pending_viewed");
     assert.equal(groupOfStatus("accepted"), "accepted");
-    assert.equal(groupOfStatus("accepted_scheduled"), "accepted_scheduled");
     assert.equal(groupOfStatus("declined"), "declined");
     assert.equal(groupOfStatus("expired"), "closed");
+  });
+
+  it("keeps an accepted estimate under Accepted once it becomes a job", () => {
+    // Kyle's 2026-10-01 list has no separate Accepted & Scheduled; the queue
+    // below is what says which accepted ones still need the office.
+    assert.equal(groupOfStatus("accepted_scheduled"), "accepted");
   });
 
   it("treats an unknown or missing status as Open rather than dropping it", () => {
@@ -30,7 +35,8 @@ describe("groupOfStatus", () => {
   });
 
   it("names the groupings as Kyle wrote them", () => {
-    assert.equal(ESTIMATE_GROUP_LABELS.accepted_scheduled, "Accepted & Scheduled");
+    assert.deepEqual(ESTIMATE_GROUPS.map((group) => ESTIMATE_GROUP_LABELS[group]),
+      ["Open", "Pending – Sent Only", "Pending – Sent and Viewed", "Accepted", "Declined", "Closed"]);
   });
 });
 
@@ -41,8 +47,18 @@ describe("summariseEstimates", () => {
       { id: 4, status: "accepted" }, { id: 5, status: "accepted_scheduled" }, { id: 6, status: "declined" },
     ]);
     assert.equal(summary.groups.length, 6, "an empty grouping still has to show, or the module moves about");
-    assert.deepEqual(summary.groups.map((g) => g.count), [1, 2, 1, 1, 1, 0]);
+    // open 1, sent 1, viewed 1, accepted 2 (one of them scheduled), declined 1, closed 0
+    assert.deepEqual(summary.groups.map((g) => g.count), [1, 1, 1, 2, 1, 0]);
     assert.equal(summary.total, 6);
+  });
+
+  it("separates an estimate that was only sent from one that was opened", () => {
+    const summary = summariseEstimates([
+      { id: 1, status: "sent" }, { id: 2, status: "sent" }, { id: 3, status: "viewed" },
+    ]);
+    const count = (group: string) => summary.groups.find((g) => g.group === group)?.count;
+    assert.equal(count("pending_sent"), 2);
+    assert.equal(count("pending_viewed"), 1);
   });
 
   it("counts what the office has to act on", () => {
@@ -75,6 +91,6 @@ describe("summariseEstimates", () => {
   it("keeps the groupings in the order Kyle listed them", () => {
     const summary = summariseEstimates([]);
     assert.deepEqual(summary.groups.map((g) => g.label),
-      ["Open", "Pending", "Accepted", "Accepted & Scheduled", "Declined", "Closed"]);
+      ["Open", "Pending – Sent Only", "Pending – Sent and Viewed", "Accepted", "Declined", "Closed"]);
   });
 });
