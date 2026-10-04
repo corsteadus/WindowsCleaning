@@ -10,6 +10,8 @@ export interface QuoteLineItemInput {
   /** @nullable */
   serviceId?: number | null;
   description: string;
+  /** @nullable */
+  serviceNotes?: string | null;
   quantity: number;
   unitPrice: number;
 }

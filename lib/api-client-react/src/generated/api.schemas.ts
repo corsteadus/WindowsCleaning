@@ -1458,8 +1458,10 @@ export interface Service {
   /** @nullable */
   description?: string | null;
   category: string;
-  pricingType: string;
-  basePrice: number;
+  /** @nullable */
+  pricingType?: string | null;
+  /** @nullable */
+  basePrice?: number | null;
   /** @nullable */
   unit?: string | null;
   /** @nullable */
@@ -1469,20 +1471,12 @@ export interface Service {
   updatedAt: string;
 }
 
-export type ServiceInputCategory =
-  (typeof ServiceInputCategory)[keyof typeof ServiceInputCategory];
-
-export const ServiceInputCategory = {
-  window_cleaning: "window_cleaning",
-  gutter_cleaning: "gutter_cleaning",
-  pressure_washing: "pressure_washing",
-  solar_panel_cleaning: "solar_panel_cleaning",
-  screen_cleaning: "screen_cleaning",
-  add_on: "add_on",
-} as const;
-
+/**
+ * @nullable
+ */
 export type ServiceInputPricingType =
-  (typeof ServiceInputPricingType)[keyof typeof ServiceInputPricingType];
+  | (typeof ServiceInputPricingType)[keyof typeof ServiceInputPricingType]
+  | null;
 
 export const ServiceInputPricingType = {
   flat: "flat",
@@ -1509,10 +1503,14 @@ export interface ServiceInput {
   name: string;
   /** @nullable */
   description?: string | null;
-  category: ServiceInputCategory;
-  pricingType: ServiceInputPricingType;
-  /** @minimum 0 */
-  basePrice: number;
+  category: string;
+  /** @nullable */
+  pricingType?: ServiceInputPricingType;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  basePrice?: number | null;
   /** @nullable */
   unit?: ServiceInputUnit;
   /**
@@ -1523,20 +1521,12 @@ export interface ServiceInput {
   isActive?: boolean;
 }
 
-export type ServiceUpdateCategory =
-  (typeof ServiceUpdateCategory)[keyof typeof ServiceUpdateCategory];
-
-export const ServiceUpdateCategory = {
-  window_cleaning: "window_cleaning",
-  gutter_cleaning: "gutter_cleaning",
-  pressure_washing: "pressure_washing",
-  solar_panel_cleaning: "solar_panel_cleaning",
-  screen_cleaning: "screen_cleaning",
-  add_on: "add_on",
-} as const;
-
+/**
+ * @nullable
+ */
 export type ServiceUpdatePricingType =
-  (typeof ServiceUpdatePricingType)[keyof typeof ServiceUpdatePricingType];
+  | (typeof ServiceUpdatePricingType)[keyof typeof ServiceUpdatePricingType]
+  | null;
 
 export const ServiceUpdatePricingType = {
   flat: "flat",
@@ -1563,10 +1553,14 @@ export interface ServiceUpdate {
   name?: string;
   /** @nullable */
   description?: string | null;
-  category?: ServiceUpdateCategory;
+  category?: string;
+  /** @nullable */
   pricingType?: ServiceUpdatePricingType;
-  /** @minimum 0 */
-  basePrice?: number;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  basePrice?: number | null;
   /** @nullable */
   unit?: ServiceUpdateUnit;
   /**
@@ -1595,6 +1589,8 @@ export interface QuoteLineItemInput {
   /** @nullable */
   serviceId?: number | null;
   description: string;
+  /** @nullable */
+  serviceNotes?: string | null;
   quantity: number;
   unitPrice: number;
 }

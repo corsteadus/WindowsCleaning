@@ -12,8 +12,10 @@ export interface Service {
   /** @nullable */
   description?: string | null;
   category: string;
-  pricingType: string;
-  basePrice: number;
+  /** @nullable */
+  pricingType?: string | null;
+  /** @nullable */
+  basePrice?: number | null;
   /** @nullable */
   unit?: string | null;
   /** @nullable */

@@ -19,10 +19,10 @@ import { useToast } from "@/hooks/use-toast";
 import { hasClientCapability } from "@/lib/rbac";
 import { formatCurrency } from "@/lib/utils";
 import {
-  canSubmitService, emptyServiceDraft, isServiceCategory, isServicePricingType,
-  newServiceIdempotencyKey as newIdempotencyKey, serviceDraftToBody,
-  serviceIdempotencyHeaders, SERVICE_CATEGORIES, SERVICE_PRICING, type ServiceDraft,
+  canSubmitService, emptyServiceDraft, newServiceIdempotencyKey as newIdempotencyKey,
+  serviceDraftToBody, serviceIdempotencyHeaders, type ServiceDraft,
 } from "@/lib/service-form";
+import { ServiceCategoryPicker } from "@/components/ServiceCategoryPicker";
 
 export default function Services() {
   const { data: services, isLoading } = useListServices();
@@ -99,10 +99,10 @@ export default function Services() {
           {services?.map((service) => <Card key={service.id} className="border-none shadow-sm hover:shadow-md transition-shadow bg-white rounded-2xl overflow-hidden">
             <CardHeader className="border-b border-slate-100 pb-4"><div className="flex justify-between items-start">
               <Badge variant={service.isActive ? "default" : "secondary"} className="capitalize">{service.category}</Badge>
-              <span className="font-display font-bold text-lg text-primary">{formatCurrency(service.basePrice)}{service.unit && <span className="text-sm font-normal text-muted-foreground">/{service.unit}</span>}</span>
+              {service.basePrice !== null && service.basePrice !== undefined && <span className="font-display text-sm text-slate-400" title="A price this service was given before; the quote decides what is charged">{formatCurrency(service.basePrice)}</span>}
             </div><CardTitle className="text-xl mt-3 text-slate-900">{service.name}</CardTitle></CardHeader>
             <CardContent className="pt-4"><p className="text-sm text-slate-600 line-clamp-2 min-h-[40px]">{service.description || "No description provided."}</p>
-              <div className="mt-4 flex items-center justify-between text-sm"><span className="text-slate-500 bg-slate-100 px-2 py-1 rounded-md capitalize">{service.pricingType.replace("_", " ")}</span>
+              <div className="mt-4 flex items-center justify-between text-sm"><span />
                 {service.estimatedDuration !== null && <span className="text-slate-500 flex items-center"><Wrench className="w-3.5 h-3.5 mr-1" />{service.estimatedDuration} mins</span>}
               </div></CardContent>
           </Card>)}
@@ -117,10 +117,20 @@ export default function Services() {
             <label className="block text-sm font-medium">Service name<Input autoFocus value={draft.name} onChange={(e) => update("name", e.target.value)} disabled={create.isPending} data-testid="input-service-name" /></label>
             <label className="block text-sm font-medium">Description<Textarea value={draft.description} onChange={(e) => update("description", e.target.value)} disabled={create.isPending} /></label>
             <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm font-medium">Category<select className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.category} onChange={(e) => { if (isServiceCategory(e.target.value)) update("category", e.target.value); }} disabled={create.isPending}>{SERVICE_CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              <label className="text-sm font-medium">Pricing type<select className="mt-1 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.pricingType} onChange={(e) => { if (isServicePricingType(e.target.value)) update("pricingType", e.target.value); }} disabled={create.isPending}>{SERVICE_PRICING.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label className="text-sm font-medium sm:col-span-2">Category
+                <ServiceCategoryPicker
+                  value={draft.category}
+                  onChange={(code) => update("category", code)}
+                  disabled={create.isPending}
+                  onError={setError}
+                />
+              </label>
+
             </div>
-            <div className="grid grid-cols-2 gap-3"><label className="text-sm font-medium">Price<Input type="number" min="0" step="0.01" value={draft.basePrice} onChange={(e) => update("basePrice", e.target.value)} disabled={create.isPending} data-testid="input-service-price" /></label><label className="text-sm font-medium">Duration (minutes)<Input type="number" min="0" step="1" value={draft.estimatedDuration} onChange={(e) => update("estimatedDuration", e.target.value)} disabled={create.isPending} /></label></div>
+            {/* Kyle (Testing Edits, 2026-10-01, #8): no price here. It belongs to the
+                quote or job that uses the service. */}
+            <label className="block text-sm font-medium">Duration (minutes)<Input type="number" min="0" step="1" value={draft.estimatedDuration} onChange={(e) => update("estimatedDuration", e.target.value)} disabled={create.isPending} /></label>
+            <p className="text-xs text-slate-400">The price is entered when this service is put on a quote or a job.</p>
             <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={draft.isActive} onChange={(e) => update("isActive", e.target.checked)} disabled={create.isPending} /> Active in catalog</label>
             {error && <p role="alert" className="text-sm text-destructive" data-testid="text-service-form-error">{error}</p>}
             <DialogFooter><Button type="button" variant="outline" onClick={close} disabled={create.isPending}>Cancel</Button><Button type="submit" disabled={create.isPending} data-testid="button-save-service">{create.isPending ? "Adding…" : "Add Service"}</Button></DialogFooter>

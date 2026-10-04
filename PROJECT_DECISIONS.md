@@ -32,6 +32,13 @@ Worth a look before touching those areas.
 
 ## Where things stand right now — read this first
 
+**As of 2026-10-04.** Kyle's Testing Edits of 2026-10-01 are being worked through as
+phases 16–21. **16, 17 and 18 are done in the working tree and browser-verified**;
+**19, 20 and 21 remain.** Nothing since Phase 15 is on Sandbox 2 — the bundle there is
+still `index-043EjDyX.js`, so a **republish is owed** before Kyle tests any of it, and
+before the parked `properties.gate_code` / `access_notes` drop can run. The calendar
+note below is older and still true as a description of the spec work.
+
 **As of 2026-09-11.** Everything below this section is detail; this is the state of play.
 
 **The work:** building the calendar described in the Corstead spec (v1.0, 31 Aug 2026). Of its
@@ -119,6 +126,86 @@ steps 05–08 will not complete.
 ---
 
 ﻿
+﻿
+## Phase 18 — the service catalogue and quote lines, done in the working tree 2026-10-04
+
+Kyle's Testing Edits of 2026-10-01, #7, #8 and #9 — the largest of his items,
+because it changes how every quote is priced.
+
+### What made it safe
+
+Two things found before any code was written:
+
+- **A quote line already stores its own price** (`unit_price`, `total_price`), so
+  the catalogue price was only ever a default. Removing it disturbs no existing
+  quote or job.
+- **A per-line, per-quote note already existed** —
+  `estimate_line_metadata.service_notes` — written at finalize and already shown
+  on the customer's estimate. #9 needed plumbing, not a new structure.
+
+And a survey of the data: **2 services**, both priced, and **no quote line
+without a service**, so dropping the custom line item orphaned nothing.
+
+### #8 — the catalogue keeps a name and a category
+
+Price, pricing type and unit are no longer asked for anywhere. **The columns were
+not dropped**: `base_price` and `pricing_type` are now nullable, so the two
+services that carry $150 keep it, shown quietly on the card with a note that the
+quote decides what is charged. The unit is derived from the pricing type rather
+than being a separate question.
+
+**Categories left the code.** Six were hard-coded in `service-validation.ts`;
+they are now ordinary `profile_catalog_items` rows under `service-categories`,
+seeded from the fixed list plus anything in use. `ServiceCategoryPicker` adds and
+removes them in place, on both the Service Catalog page and the quick-add used
+from quotes and jobs — one component, because both needed the same thing.
+
+### #7 — services only
+
+The custom line item is gone: both its buttons, the empty-line default, and the
+blank-row filtering that existed to tidy up after it. A new quote starts with no
+lines and points at the Service Catalog, where an existing service is picked or a
+new one created.
+
+### #9 — a locked title, and a description for this quote
+
+The line shows the catalogue service's name as **text, not a field**. Under it is
+a Description box that belongs to that service on that quote alone: it does not
+touch the catalogue entry, and the same service added to another quote starts
+empty — both checked.
+
+`quotes.ts` now carries it through create, rewrite and single-line-add via one
+`saveLineServiceNotes` helper, and returns it when a quote is read. Writing an
+empty box removes the row rather than storing a blank note.
+
+### The contract had to move first
+
+`basePrice` was `required` in `openapi.yaml`, so the spec was edited and `orval`
+re-run before anything would compile. That rippled into four call sites — which
+were exactly the ones that needed changing.
+
+**Two latent faults were caught by it:** `String(null)` would have written the
+word `"null"` into `base_price`, and `Number(null)` would have given a service
+with no price a price of **0**.
+
+### Verified
+
+`scratchpad/p18a-catalog.mjs` **13/13** and `scratchpad/p18bc-quote-lines.mjs`
+**15/15**, both headed. CRM **487/487**, API **634/648** (the same 14
+`DATABASE_URL` failures). All typechecks clean. The database keeps its 2 services,
+6 categories and the client's own profiles.
+
+### Worth keeping
+
+- **A patch-script guard of the form `if (!s.includes("Name"))` matches the name
+  inside code the same script just inserted**, and silently skips the import.
+  This bit twice more here. Guard on the exact declaration and check the result.
+- **The quote builder preselects a customer from `?customerId=`**, which is far
+  steadier in a test than driving the picker, and the save button carries
+  `data-testid="save-quote-top"`.
+
+---
+
 ## Phase 17 — the quote statuses, done in the working tree 2026-10-04
 
 Kyle (Testing Edits, 2026-10-01, #10) named six, and asked that the two kinds of
@@ -251,6 +338,9 @@ is republished.
 **Order: 16 → 17 → 18 → 19 → 20 → 21.** Sixteen is small, visible and low risk;
 seventeen answers the grouping question we had open with him; eighteen is the
 largest and changes how every quote and job is priced.
+
+**Progress, 2026-10-04: 16, 17 and 18 are done** — each has its own section above,
+each browser-verified, none republished yet. **19, 20 and 21 are next**, in that order.
 
 ### Two of his items reverse or change what we built
 

@@ -6,8 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * @nullable
+ */
 export type ServiceUpdatePricingType =
-  (typeof ServiceUpdatePricingType)[keyof typeof ServiceUpdatePricingType];
+  | (typeof ServiceUpdatePricingType)[keyof typeof ServiceUpdatePricingType]
+  | null;
 
 export const ServiceUpdatePricingType = {
   flat: "flat",

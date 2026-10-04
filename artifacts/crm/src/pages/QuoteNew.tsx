@@ -76,13 +76,12 @@ function customerDisplayName(c: CustomerOption): string {
 interface LineItemDraft {
   key: string;
   serviceId?: number;
+  /** The catalogue service's title. Shown, never typed (Kyle #9). */
   description: string;
+  /** Free text for this service on this quote alone (Kyle #9). */
+  serviceNotes: string;
   quantity: string;
   unitPrice: string;
-}
-
-function newLineItem(): LineItemDraft {
-  return { key: crypto.randomUUID(), description: "", quantity: "1", unitPrice: "" };
 }
 
 // ─── LineItemCard ─────────────────────────────────────────────────────────────
@@ -103,7 +102,7 @@ function LineItemCard({
   const qty   = parseFloat(item.quantity)  || 0;
   const price = parseFloat(item.unitPrice) || 0;
   const total = qty * price;
-  const descRef = useRef<HTMLInputElement>(null);
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
@@ -123,20 +122,29 @@ function LineItemCard({
         )}
       </div>
 
-      {/* Description */}
+      {/* The service's own title, from the catalogue. Kyle (#9): not editable
+          here — to quote something else, pick or create another service. */}
       <div className="space-y-1">
-        <label className="text-xs font-semibold text-slate-500">Description</label>
-        <input
+        <p className="text-sm font-bold text-slate-900">{item.description}</p>
+        <p className="text-[10px] text-primary font-medium">From service catalog</p>
+      </div>
+
+      {/* Kyle (#9): this belongs to this service on this quote. It does not
+          change the catalogue, and does not follow the service elsewhere. */}
+      <div className="space-y-1">
+        <label className="text-xs font-semibold text-slate-500" htmlFor={`line-note-${item.key}`}>
+          Description
+        </label>
+        <textarea
+          id={`line-note-${item.key}`}
           ref={index === 0 ? undefined : descRef}
-          value={item.description}
-          onChange={(e) => onUpdate(item.key, "description", e.target.value)}
-          placeholder={item.serviceId ? item.description : "What are you quoting?"}
-          className="w-full h-10 px-3 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
+          value={item.serviceNotes}
+          onChange={(e) => onUpdate(item.key, "serviceNotes", e.target.value)}
+          placeholder="Anything specific to this job — access, finish, what is included"
+          rows={2}
+          className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
                      placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
         />
-        {item.serviceId && (
-          <p className="text-[10px] text-primary font-medium ml-0.5">From service catalog</p>
-        )}
       </div>
 
       {/* Qty + Price + Total */}
@@ -189,8 +197,8 @@ function ServicePickerDialog({
   onClose,
   navigate,
 }: {
-  services: Array<{ id: number; name: string; description?: string | null; basePrice: number | string; category?: string | null; unit?: string | null; isActive: boolean }>;
-  onAdd: (s: { id: number; name: string; basePrice: number | string }) => void;
+  services: Array<{ id: number; name: string; description?: string | null; basePrice?: number | string | null; category?: string | null; unit?: string | null; isActive: boolean }>;
+  onAdd: (s: { id: number; name: string; basePrice?: number | string | null }) => void;
   onClose: () => void;
   navigate: (to: string) => void;
 }) {
@@ -252,7 +260,7 @@ function ServicePickerDialog({
                   )}
                 </div>
                 <div className="ml-4 shrink-0 text-right">
-                  <p className="font-bold text-slate-900 text-sm">{formatCurrency(Number(service.basePrice))}</p>
+                  <p className="font-bold text-slate-900 text-sm">{service.basePrice === null || service.basePrice === undefined ? "" : formatCurrency(Number(service.basePrice))}</p>
                   {service.unit && <p className="text-[10px] text-slate-400">per {service.unit}</p>}
                 </div>
               </button>
@@ -330,7 +338,7 @@ export default function QuoteNew() {
   const [notes,      setNotes]      = useState("");
   const [terms,      setTerms]      = useState("");
   const [validUntil, setValidUntil] = useState("");
-  const [lineItems,  setLineItems]  = useState<LineItemDraft[]>([newLineItem()]);
+  const [lineItems,  setLineItems]  = useState<LineItemDraft[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [appointmentDate, setAppointmentDate] = useState("");
   const [appointmentTime, setAppointmentTime] = useState("");
@@ -438,19 +446,17 @@ export default function QuoteNew() {
   const removeItem = (key: string) => {
     setLineItems((prev) => prev.filter((li) => li.key !== key));
   };
-  const addServiceItem = (service: { id: number; name: string; basePrice: number | string }) => {
+  const addServiceItem = (service: { id: number; name: string; basePrice?: number | string | null }) => {
     const li: LineItemDraft = {
       key: crypto.randomUUID(),
       serviceId: service.id,
       description: service.name,
+      serviceNotes: "",
       quantity: "1",
-      unitPrice: String(service.basePrice),
+      unitPrice: service.basePrice === null || service.basePrice === undefined ? "" : String(service.basePrice),
     };
-    setLineItems((prev) => [...prev.filter((l) => l.description !== ""), li]);
+    setLineItems((prev) => [...prev, li]);
     setShowPicker(false);
-  };
-  const addCustomItem = () => {
-    setLineItems((prev) => [...prev, newLineItem()]);
   };
 
   // Live totals
@@ -518,6 +524,8 @@ export default function QuoteNew() {
       lineItems: validItems.map((li) => ({
         serviceId: li.serviceId ?? undefined,
         description: li.description,
+        // Kyle #9: the description written for this service on this quote.
+        serviceNotes: li.serviceNotes.trim() || null,
         quantity: parseFloat(li.quantity) || 1,
         unitPrice: parseFloat(li.unitPrice) || 0,
       })),
@@ -679,15 +687,6 @@ export default function QuoteNew() {
                   <Sparkles className="w-3.5 h-3.5" />
                   Add Service
                 </button>
-                <button
-                  type="button"
-                  onClick={addCustomItem}
-                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-200
-                             text-slate-600 text-xs font-semibold hover:bg-slate-50 active:scale-[.97] transition-all"
-                >
-                  <PenLine className="w-3.5 h-3.5" />
-                  Custom
-                </button>
               </div>
             </div>
 
@@ -696,7 +695,7 @@ export default function QuoteNew() {
               <div className="py-12 flex flex-col items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
                 <FileText className="w-10 h-10 text-slate-200 mb-3" />
                 <p className="text-slate-500 font-semibold mb-1">No services added yet</p>
-                <p className="text-slate-400 text-xs mb-4">Add from your catalog or create a custom line item</p>
+                <p className="text-slate-400 text-xs mb-4">Add one from your Service Catalog — you can create a new service there too</p>
                 <button
                   type="button"
                   onClick={() => setShowPicker(true)}
@@ -729,16 +728,6 @@ export default function QuoteNew() {
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     Add Service
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addCustomItem}
-                    className="flex-1 flex items-center justify-center gap-2 h-10 rounded-xl border-2 border-dashed border-slate-200
-                               text-slate-500 text-xs font-semibold hover:border-slate-300 hover:bg-slate-50
-                               transition-all"
-                  >
-                    <PenLine className="w-3.5 h-3.5" />
-                    Custom Line
                   </button>
                 </div>
               </div>

@@ -3941,8 +3941,8 @@ export const ListServicesResponseItem = zod.object({
   name: zod.string(),
   description: zod.string().nullish(),
   category: zod.string(),
-  pricingType: zod.string(),
-  basePrice: zod.number(),
+  pricingType: zod.string().nullish(),
+  basePrice: zod.number().nullish(),
   unit: zod.string().nullish(),
   estimatedDuration: zod.number().nullish(),
   isActive: zod.boolean(),
@@ -3967,16 +3967,17 @@ export const createServiceBodyEstimatedDurationMin = 0;
 export const CreateServiceBody = zod.object({
   name: zod.string(),
   description: zod.string().nullish(),
-  category: zod.enum([
-    "window_cleaning",
-    "gutter_cleaning",
-    "pressure_washing",
-    "solar_panel_cleaning",
-    "screen_cleaning",
-    "add_on",
-  ]),
-  pricingType: zod.enum(["flat", "per_window", "per_hour", "per_sqft"]),
-  basePrice: zod.number().min(createServiceBodyBasePriceMin),
+  category: zod.string(),
+  pricingType: zod
+    .union([
+      zod.literal("flat"),
+      zod.literal("per_window"),
+      zod.literal("per_hour"),
+      zod.literal("per_sqft"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  basePrice: zod.number().min(createServiceBodyBasePriceMin).nullish(),
   unit: zod
     .union([
       zod.literal("service"),
@@ -4007,20 +4008,17 @@ export const updateServiceBodyEstimatedDurationMin = 0;
 export const UpdateServiceBody = zod.object({
   name: zod.string().optional(),
   description: zod.string().nullish(),
-  category: zod
-    .enum([
-      "window_cleaning",
-      "gutter_cleaning",
-      "pressure_washing",
-      "solar_panel_cleaning",
-      "screen_cleaning",
-      "add_on",
-    ])
-    .optional(),
+  category: zod.string().optional(),
   pricingType: zod
-    .enum(["flat", "per_window", "per_hour", "per_sqft"])
-    .optional(),
-  basePrice: zod.number().min(updateServiceBodyBasePriceMin).optional(),
+    .union([
+      zod.literal("flat"),
+      zod.literal("per_window"),
+      zod.literal("per_hour"),
+      zod.literal("per_sqft"),
+      zod.literal(null),
+    ])
+    .nullish(),
+  basePrice: zod.number().min(updateServiceBodyBasePriceMin).nullish(),
   unit: zod
     .union([
       zod.literal("service"),
@@ -4042,8 +4040,8 @@ export const UpdateServiceResponse = zod.object({
   name: zod.string(),
   description: zod.string().nullish(),
   category: zod.string(),
-  pricingType: zod.string(),
-  basePrice: zod.number(),
+  pricingType: zod.string().nullish(),
+  basePrice: zod.number().nullish(),
   unit: zod.string().nullish(),
   estimatedDuration: zod.number().nullish(),
   isActive: zod.boolean(),
@@ -4138,6 +4136,7 @@ export const CreateQuoteBody = zod.object({
       zod.object({
         serviceId: zod.number().nullish(),
         description: zod.string(),
+        serviceNotes: zod.string().nullish(),
         quantity: zod.number(),
         unitPrice: zod.number(),
       }),
@@ -4172,6 +4171,7 @@ export const CreateQuoteWithAppointmentBody = zod.object({
         zod.object({
           serviceId: zod.number().nullish(),
           description: zod.string(),
+          serviceNotes: zod.string().nullish(),
           quantity: zod.number(),
           unitPrice: zod.number(),
         }),
@@ -4281,6 +4281,7 @@ export const UpdateQuoteBody = zod.object({
       zod.object({
         serviceId: zod.number().nullish(),
         description: zod.string(),
+        serviceNotes: zod.string().nullish(),
         quantity: zod.number(),
         unitPrice: zod.number(),
       }),

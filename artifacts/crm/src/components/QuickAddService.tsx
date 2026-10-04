@@ -6,16 +6,21 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { hasClientCapability } from "@/lib/rbac";
+import { ServiceCategoryPicker } from "@/components/ServiceCategoryPicker";
 import {
-  canSubmitService, emptyServiceDraft, isServiceCategory, isServicePricingType,
+  canSubmitService, emptyServiceDraft,
   newServiceIdempotencyKey, serviceDraftToBody, serviceIdempotencyHeaders,
-  SERVICE_CATEGORIES, SERVICE_PRICING, type ServiceDraft,
+  type ServiceDraft,
 } from "@/lib/service-form";
 
 /**
  * Adds a service to the company-wide Service Catalog from wherever a service is
  * being picked — a quote, a job — so it never has to be recreated per customer
  * (Kyle, Prospect Profile Notes #22).
+ *
+ * Kyle (Testing Edits, 2026-10-01, #8): the catalogue keeps a name and a
+ * category, nothing else. No price is asked for here; it is entered on the quote
+ * or job that uses the service.
  *
  * Deliberately not a <form>: it is rendered inside the job form, and forms
  * cannot nest. Enter in any field submits it.
@@ -64,9 +69,6 @@ export function QuickAddService({
     );
   }
 
-  const update = (field: keyof ServiceDraft, value: string | boolean) =>
-    setDraft((current) => ({ ...current, [field]: value }));
-
   const submit = () => {
     if (!canSubmitService(create.isPending)) return;
     const prepared = serviceDraftToBody(draft);
@@ -79,69 +81,38 @@ export function QuickAddService({
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      submit();
-    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    submit();
   };
-
-  const SELECT = "mt-1 flex h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
 
   return (
     <div className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3" onKeyDown={onKeyDown}>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">New catalog service</p>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <label className="text-xs font-medium text-slate-600 sm:col-span-2">
-          Name
-          <Input
-            aria-label="Service name"
-            value={draft.name}
-            onChange={(e) => update("name", e.target.value)}
-            placeholder="e.g. Exterior window cleaning"
-            className="mt-1 h-9"
-            disabled={create.isPending}
-            autoFocus
-          />
-        </label>
-        <label className="text-xs font-medium text-slate-600">
-          Category
-          <select
-            aria-label="Service category"
-            className={SELECT}
-            value={draft.category}
-            onChange={(e) => { if (isServiceCategory(e.target.value)) update("category", e.target.value); }}
-            disabled={create.isPending}
-          >
-            {SERVICE_CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-slate-600">
-          Pricing
-          <select
-            aria-label="Service pricing"
-            className={SELECT}
-            value={draft.pricingType}
-            onChange={(e) => { if (isServicePricingType(e.target.value)) update("pricingType", e.target.value); }}
-            disabled={create.isPending}
-          >
-            {SERVICE_PRICING.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label className="text-xs font-medium text-slate-600">
-          Price ($)
-          <Input
-            aria-label="Service price"
-            type="number"
-            min={0}
-            step="0.01"
-            value={draft.basePrice}
-            onChange={(e) => update("basePrice", e.target.value)}
-            placeholder="0.00"
-            className="mt-1 h-9"
-            disabled={create.isPending}
-          />
-        </label>
+
+      <label className="block text-xs font-medium text-slate-600">
+        Name
+        <Input
+          aria-label="Service name"
+          value={draft.name}
+          onChange={(e) => setDraft((current) => ({ ...current, name: e.target.value }))}
+          placeholder="e.g. Exterior window cleaning"
+          className="mt-1 h-9"
+          disabled={create.isPending}
+          autoFocus
+        />
+      </label>
+
+      <div className="text-xs font-medium text-slate-600">
+        Category
+        <ServiceCategoryPicker
+          value={draft.category}
+          onChange={(code) => setDraft((current) => ({ ...current, category: code }))}
+          disabled={create.isPending}
+          onError={setError}
+        />
       </div>
+
       {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
       <div className="flex gap-2">
         <Button type="button" size="sm" onClick={submit} disabled={create.isPending}>
@@ -154,7 +125,9 @@ export function QuickAddService({
           </Button>
         )}
       </div>
-      <p className="text-[11px] text-slate-400">Saved to the Service Catalog and available on every profile.</p>
+      <p className="text-[11px] text-slate-400">
+        Saved to the Service Catalog and available on every profile. The price is set on the quote or job that uses it.
+      </p>
     </div>
   );
 }

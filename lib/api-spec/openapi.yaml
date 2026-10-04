@@ -5456,9 +5456,9 @@ components:
         category:
           type: string
         pricingType:
-          type: string
+          type: ["string", "null"]
         basePrice:
-          type: number
+          type: ["number", "null"]
         unit:
           type: ["string", "null"]
         estimatedDuration:
@@ -5473,8 +5473,6 @@ components:
         - id
         - name
         - category
-        - pricingType
-        - basePrice
         - isActive
         - createdAt
         - updatedAt
@@ -5487,13 +5485,13 @@ components:
         description:
           type: ["string", "null"]
         category:
+          # The business defines its own categories, so this is not a fixed list.
           type: string
-          enum: [window_cleaning, gutter_cleaning, pressure_washing, solar_panel_cleaning, screen_cleaning, add_on]
         pricingType:
-          type: string
-          enum: [flat, per_window, per_hour, per_sqft]
+          type: ["string", "null"]
+          enum: [flat, per_window, per_hour, per_sqft, null]
         basePrice:
-          type: number
+          type: ["number", "null"]
           minimum: 0
         unit:
           type: ["string", "null"]
@@ -5506,8 +5504,6 @@ components:
       required:
         - name
         - category
-        - pricingType
-        - basePrice
 
     ServiceUpdate:
       type: object
@@ -5517,13 +5513,13 @@ components:
         description:
           type: ["string", "null"]
         category:
+          # The business defines its own categories, so this is not a fixed list.
           type: string
-          enum: [window_cleaning, gutter_cleaning, pressure_washing, solar_panel_cleaning, screen_cleaning, add_on]
         pricingType:
-          type: string
-          enum: [flat, per_window, per_hour, per_sqft]
+          type: ["string", "null"]
+          enum: [flat, per_window, per_hour, per_sqft, null]
         basePrice:
-          type: number
+          type: ["number", "null"]
           minimum: 0
         unit:
           type: ["string", "null"]
@@ -5575,6 +5571,11 @@ components:
           type: ["integer", "null"]
         description:
           type: string
+        # Kyle (Testing Edits, 2026-10-01, #9): free text for this service on
+        # this quote alone. It never changes the Service Catalog entry and does
+        # not follow the service onto another quote.
+        serviceNotes:
+          type: ["string", "null"]
         quantity:
           type: number
         unitPrice:

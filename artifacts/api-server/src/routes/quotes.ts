@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request } from "express";
 import { eq, inArray, asc, isNotNull, ilike, or, desc, and, sql } from "drizzle-orm";
 import {
   db, quotesTable, quoteLineItemsTable, jobsTable, customersTable, propertiesTable, leadsTable,
+  estimateLineMetadataTable,
   activityLogsTable, estimateAppointmentsTable, estimateLocationsTable, estimateActivitiesTable, usersTable,
   estimateRevisionsTable, estimatePublicLinksTable,
 } from "@workspace/db";
@@ -166,6 +167,23 @@ function serializeQuote(q: typeof quotesTable.$inferSelect) {
   };
 }
 
+/**
+ * Keeps the per-quote description beside its line. Writing null removes the
+ * row rather than storing an empty note, so a cleared box really is cleared.
+ */
+async function saveLineServiceNotes(
+  tx: { insert: typeof db.insert; delete: typeof db.delete },
+  entries: ReadonlyArray<{ lineItemId: number; serviceNotes: string | null }>,
+): Promise<void> {
+  for (const entry of entries) {
+    await tx.delete(estimateLineMetadataTable)
+      .where(eq(estimateLineMetadataTable.lineItemId, entry.lineItemId));
+    if (!entry.serviceNotes) continue;
+    await tx.insert(estimateLineMetadataTable)
+      .values({ lineItemId: entry.lineItemId, serviceNotes: entry.serviceNotes });
+  }
+}
+
 function serializeLineItem(li: typeof quoteLineItemsTable.$inferSelect) {
   return {
     ...li,
@@ -186,6 +204,14 @@ async function getQuoteWithDetails(id: number) {
     .from(quoteLineItemsTable)
     .where(eq(quoteLineItemsTable.quoteId, id))
     .orderBy(asc(quoteLineItemsTable.sortOrder));
+
+  // Kyle 2026-10-01 #9: each line's own description comes back with it, so the
+  // builder shows what was written for this quote rather than losing it.
+  const lineNotes = lineItems.length
+    ? await db.select().from(estimateLineMetadataTable)
+      .where(inArray(estimateLineMetadataTable.lineItemId, lineItems.map((line) => line.id)))
+    : [];
+  const notesByLine = new Map(lineNotes.map((row) => [row.lineItemId, row.serviceNotes ?? null]));
 
   // Fetch customer or lead info
   let displayName = null;
@@ -238,7 +264,10 @@ async function getQuoteWithDetails(id: number) {
   return {
     ...serializeQuote(quote),
     displayStatus,
-    lineItems: lineItems.map(serializeLineItem),
+    lineItems: lineItems.map((line) => ({
+      ...serializeLineItem(line),
+      serviceNotes: notesByLine.get(line.id) ?? null,
+    })),
     customer: customerForQuote,
     lead: leadForQuote,
     property: property ? {
@@ -326,7 +355,7 @@ async function createQuoteTx(
   }).returning();
 
   if (lineItemsInput.length > 0) {
-    await tx.insert(quoteLineItemsTable).values(
+    const inserted = await tx.insert(quoteLineItemsTable).values(
       lineItemsInput.map((li, i) => ({
         quoteId: created.id,
         serviceId: li.serviceId ? Number(li.serviceId) : null,
@@ -336,7 +365,11 @@ async function createQuoteTx(
         totalPrice: String(li.quantity * li.unitPrice),
         sortOrder: i,
       })),
-    );
+    ).returning();
+    await saveLineServiceNotes(tx, inserted.map((row, i) => ({
+      lineItemId: row.id,
+      serviceNotes: (lineItemsInput[i] as { serviceNotes?: string | null }).serviceNotes?.trim() || null,
+    })));
   }
   await logQuoteActivityTx(
     tx,
@@ -736,10 +769,13 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
       if (body.validUntil !== undefined) updateData.validUntil = body.validUntil;
 
       if (body.lineItems !== undefined) {
-        const lineItemsInput: Array<{ serviceId?: number; description: string; quantity: number; unitPrice: number }> = body.lineItems;
+        const lineItemsInput: Array<{
+          serviceId?: number; description: string; quantity: number; unitPrice: number;
+          serviceNotes?: string | null;
+        }> = body.lineItems;
         await tx.delete(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
         if (lineItemsInput.length > 0) {
-          await tx.insert(quoteLineItemsTable).values(lineItemsInput.map((li, i) => ({
+          const rewritten = await tx.insert(quoteLineItemsTable).values(lineItemsInput.map((li, i) => ({
             quoteId: id,
             serviceId: li.serviceId ? Number(li.serviceId) : null,
             description: li.description,
@@ -747,6 +783,10 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
             unitPrice: String(li.unitPrice),
             totalPrice: String(Number(li.quantity) * Number(li.unitPrice)),
             sortOrder: i,
+          }))).returning();
+          await saveLineServiceNotes(tx, rewritten.map((row, i) => ({
+            lineItemId: row.id,
+            serviceNotes: lineItemsInput[i].serviceNotes?.trim() || null,
           })));
         }
         const items = await tx.select().from(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
@@ -1034,6 +1074,10 @@ router.post("/quotes/:id/line-items", async (req, res): Promise<void> => {
         quoteId, serviceId: body.serviceId ? Number(body.serviceId) : null, description: body.description,
         quantity: String(qty), unitPrice: String(price), totalPrice: String(qty * price), sortOrder: body.sortOrder ?? 0,
       }).returning();
+      await saveLineServiceNotes(tx, [{
+        lineItemId: created.id,
+        serviceNotes: typeof body.serviceNotes === "string" ? body.serviceNotes.trim() || null : null,
+      }]);
       await recalcQuoteTotalsTx(tx, quoteId);
       return created;
     });

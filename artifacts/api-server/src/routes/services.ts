@@ -36,6 +36,9 @@ router.post("/services", async (req, res): Promise<void> => {
   const body = normalizeServiceInput({
     ...parsed.data,
     description: parsed.data.description ?? null,
+    // Kyle 2026-10-01 #8: a service may be created with no price at all.
+    pricingType: parsed.data.pricingType ?? null,
+    basePrice: parsed.data.basePrice ?? null,
     unit: parsed.data.unit ?? null,
     estimatedDuration: parsed.data.estimatedDuration ?? null,
     isActive: parsed.data.isActive ?? true,
@@ -74,7 +77,7 @@ router.post("/services", async (req, res): Promise<void> => {
       description: body.description,
       category: body.category,
       pricingType: body.pricingType,
-      basePrice: String(body.basePrice),
+      basePrice: body.basePrice === null ? null : String(body.basePrice),
       unit: body.unit,
       estimatedDuration: body.estimatedDuration,
       isActive: body.isActive,
@@ -113,7 +116,7 @@ router.patch("/services/:id", async (req, res): Promise<void> => {
   }
   const canonicalExisting: CanonicalServiceInput = {
     name: existing.name, description: existing.description, category: existing.category,
-    pricingType: existing.pricingType, basePrice: Number(existing.basePrice), unit: existing.unit,
+    pricingType: existing.pricingType, basePrice: existing.basePrice === null ? null : Number(existing.basePrice), unit: existing.unit,
     estimatedDuration: existing.estimatedDuration, isActive: existing.isActive,
   };
   const merged = mergeServiceUpdate(canonicalExisting, parsed.data);
@@ -124,7 +127,7 @@ router.patch("/services/:id", async (req, res): Promise<void> => {
   }
   const [service] = await db.update(servicesTable).set({
     ...merged,
-    basePrice: String(merged.basePrice),
+    basePrice: merged.basePrice === null ? null : String(merged.basePrice),
   }).where(eq(servicesTable.id, id)).returning();
   res.json(serialize(service));
 });
@@ -142,7 +145,7 @@ router.delete("/services/:id", async (req, res): Promise<void> => {
 function serialize(s: typeof servicesTable.$inferSelect) {
   return {
     ...s,
-    basePrice: Number(s.basePrice),
+    basePrice: s.basePrice === null ? null : Number(s.basePrice),
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
   };

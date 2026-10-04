@@ -31,6 +31,9 @@ const CATALOG_TYPES: Record<string, string> = {
   "marketing-sources": "marketing_source",
   "service-types": "service_type",
   "job-types": "job_type",
+  // Kyle (Testing Edits, 2026-10-01, #8): the categories a service may belong to
+  // used to be a fixed list in the code. They are the business's own now.
+  "service-categories": "service_category",
 };
 
 function parseId(value: unknown, name = "id"): number {

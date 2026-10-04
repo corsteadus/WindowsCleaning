@@ -7,8 +7,11 @@ export const servicesTable = pgTable("services", {
   name: text("name").notNull(),
   description: text("description"),
   category: text("category").notNull().default("window_cleaning"),
-  pricingType: text("pricing_type").notNull().default("flat"),
-  basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+  // Kyle (Testing Edits, 2026-10-01, #8): the catalogue holds a name and a
+  // category. Price, pricing type and unit are no longer asked for — kept so a
+  // service that already carries one does not lose it.
+  pricingType: text("pricing_type"),
+  basePrice: numeric("base_price", { precision: 10, scale: 2 }),
   unit: text("unit"),
   estimatedDuration: integer("estimated_duration"),
   isActive: boolean("is_active").notNull().default(true),

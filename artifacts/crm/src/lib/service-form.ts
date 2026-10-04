@@ -1,35 +1,33 @@
-import type {
-  ServiceInput,
-  ServiceInputCategory,
-  ServiceInputPricingType,
-  ServiceInputUnit,
-} from "@workspace/api-client-react";
+import type { ServiceInput } from "@workspace/api-client-react";
 
-export const SERVICE_CATEGORIES = [
-  ["window_cleaning", "Window cleaning"], ["gutter_cleaning", "Gutter cleaning"],
-  ["pressure_washing", "Pressure washing"], ["solar_panel_cleaning", "Solar panel cleaning"],
-  ["screen_cleaning", "Screen cleaning"], ["add_on", "Add-on"],
-] as const satisfies readonly (readonly [ServiceInputCategory, string])[];
-
-export const SERVICE_PRICING = [
-  ["flat", "Flat rate", "service"], ["per_window", "Per window", "window"],
-  ["per_hour", "Per hour", "hour"], ["per_sqft", "Per sq. ft.", "sq_ft"],
-] as const satisfies readonly (readonly [ServiceInputPricingType, string, Exclude<ServiceInputUnit, null | undefined>])[];
+/**
+ * What the Service Catalog asks for.
+ *
+ * Kyle (Testing Edits, 2026-10-01, #8): *"Keep Service Name / Title and Category
+ * as the core catalog information. Do not require or store a default price when
+ * a service is created in the Service Catalog … The actual price should be
+ * entered when the service is used on a specific quote or job."*
+ *
+ * So there is no price, pricing type or unit here at all. Categories are the
+ * business's own list, fetched like any other dropdown, which is why this is a
+ * plain string rather than a fixed set.
+ */
 
 export type ServiceDraft = {
-  name: string; description: string; category: ServiceInputCategory; pricingType: ServiceInputPricingType;
-  basePrice: string; estimatedDuration: string; isActive: boolean;
+  name: string;
+  description: string;
+  category: string;
+  estimatedDuration: string;
+  isActive: boolean;
 };
 
-export const emptyServiceDraft = (): ServiceDraft => ({
-  name: "", description: "", category: "window_cleaning", pricingType: "flat",
-  basePrice: "", estimatedDuration: "", isActive: true,
+export const emptyServiceDraft = (category = ""): ServiceDraft => ({
+  name: "", description: "", category, estimatedDuration: "", isActive: true,
 });
 
 export function validateServiceDraft(draft: ServiceDraft): string | null {
   if (!draft.name.trim()) return "Service name is required.";
-  const price = Number(draft.basePrice);
-  if (!draft.basePrice.trim() || !Number.isFinite(price) || price < 0) return "Price must be a finite nonnegative number.";
+  if (!draft.category.trim()) return "Choose a category.";
   if (draft.estimatedDuration.trim()) {
     const duration = Number(draft.estimatedDuration);
     if (!Number.isInteger(duration) || duration < 0) return "Duration must be a nonnegative whole number of minutes.";
@@ -37,12 +35,6 @@ export function validateServiceDraft(draft: ServiceDraft): string | null {
   return null;
 }
 
-export function isServiceCategory(value: string): value is ServiceInputCategory {
-  return SERVICE_CATEGORIES.some(([category]) => category === value);
-}
-export function isServicePricingType(value: string): value is ServiceInputPricingType {
-  return SERVICE_PRICING.some(([pricingType]) => pricingType === value);
-}
 export function canSubmitService(isPending: boolean): boolean {
   return !isPending;
 }
@@ -65,17 +57,16 @@ export function serviceDraftToBody(
 ): { ok: true; body: ServiceInput } | { ok: false; error: string } {
   const validation = validateServiceDraft(draft);
   if (validation) return { ok: false, error: validation };
-  const pricing = SERVICE_PRICING.find(([value]) => value === draft.pricingType);
-  if (!pricing) return { ok: false, error: "Select a valid pricing type." };
   return {
     ok: true,
     body: {
       name: draft.name.trim(),
       description: draft.description.trim() || null,
-      category: draft.category,
-      pricingType: draft.pricingType,
-      basePrice: Number(draft.basePrice),
-      unit: pricing[2],
+      category: draft.category.trim(),
+      // No price is set here. It is entered on the quote or job that uses it.
+      pricingType: null,
+      basePrice: null,
+      unit: null,
       estimatedDuration: draft.estimatedDuration.trim() ? Number(draft.estimatedDuration) : null,
       isActive: draft.isActive,
     },

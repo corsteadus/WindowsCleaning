@@ -6,8 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * @nullable
+ */
 export type ServiceInputPricingType =
-  (typeof ServiceInputPricingType)[keyof typeof ServiceInputPricingType];
+  | (typeof ServiceInputPricingType)[keyof typeof ServiceInputPricingType]
+  | null;
 
 export const ServiceInputPricingType = {
   flat: "flat",

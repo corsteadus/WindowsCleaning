@@ -5,7 +5,6 @@
  * Window Cleaning CRM API
  * OpenAPI spec version: 0.1.0
  */
-import type { ServiceInputCategory } from "./serviceInputCategory";
 import type { ServiceInputPricingType } from "./serviceInputPricingType";
 import type { ServiceInputUnit } from "./serviceInputUnit";
 
@@ -13,10 +12,14 @@ export interface ServiceInput {
   name: string;
   /** @nullable */
   description?: string | null;
-  category: ServiceInputCategory;
-  pricingType: ServiceInputPricingType;
-  /** @minimum 0 */
-  basePrice: number;
+  category: string;
+  /** @nullable */
+  pricingType?: ServiceInputPricingType;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  basePrice?: number | null;
   /** @nullable */
   unit?: ServiceInputUnit;
   /**
