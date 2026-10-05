@@ -32,6 +32,9 @@ import {
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { CORRECTABLE_ESTIMATE_STATUSES, ESTIMATE_STATUS_LABELS, estimateStatusLabel } from "@/lib/estimate-status";
+import { formatDateOnly } from "@/lib/quote-settings-form";
+import { ServicePickerDialog } from "@/components/ServicePickerDialog";
+import { getListServicesQueryKey, useListServices } from "@workspace/api-client-react";
 import { hasClientCapability } from "@/lib/rbac";
 import { useAuth } from "@workspace/replit-auth-web";
 import { Link, useLocation, useParams } from "wouter";
@@ -46,6 +49,8 @@ import {
   isoToChicagoDateTimeLocal,
 } from "@/lib/chicago-time";
 import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
+import { TimeSelect } from "@/components/TimeSelect";
+import { formatTimeOfDay } from "@/lib/time-of-day";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 async function estimateApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -228,9 +233,9 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="rounded-xl border p-4">
           <h3 className="flex items-center gap-2 text-sm font-bold"><CalendarDays className="h-4 w-4 text-primary" /> Appointment</h3>
-          {appointment && <p className="mt-2 text-sm text-slate-600">{isoToChicagoDateTimeLocal(appointment.startsAt).replace("T", " ")} Chicago · {appointment.durationMinutes} min</p>}
+          {appointment && <p className="mt-2 text-sm text-slate-600">{isoToChicagoDateTimeLocal(appointment.startsAt).slice(0, 10)} at {formatTimeOfDay(isoToChicagoDateTimeLocal(appointment.startsAt).slice(11, 16))} Chicago · {appointment.durationMinutes} min</p>}
           {!locked && <div className="mt-3 space-y-2">
-            <div className="grid grid-cols-2 gap-2"><Input aria-label="Appointment date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /><Input aria-label="Appointment start time" type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+            <div className="grid grid-cols-2 gap-2"><Input aria-label="Appointment date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /><TimeSelect aria-label="Appointment start time" value={time} onChange={setTime} /></div>
             <Select value={duration} onValueChange={setDuration}><SelectTrigger aria-label="Appointment duration"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30">30 minutes</SelectItem><SelectItem value="60">1 hour</SelectItem><SelectItem value="90">90 minutes</SelectItem><SelectItem value="120">2 hours</SelectItem></SelectContent></Select>
             <Select value={assignedUserId} onValueChange={setAssignedUserId}><SelectTrigger aria-label="Assigned employee"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unassigned">Unassigned</SelectItem>{selectableEstimateEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.displayName}</SelectItem>)}</SelectContent></Select>
             {customerProperties.map((property) => <label key={property.id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={propertyIds.includes(property.id)} onChange={(event) => setPropertyIds((current) => event.target.checked ? [...new Set([...current, property.id])] : current.filter((id) => id !== property.id))} /><span>{property.name || property.address || `Property #${property.id}`}</span></label>)}
@@ -247,15 +252,18 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
         </div>
         <div className="rounded-xl border p-4">
           <h3 className="flex items-center gap-2 text-sm font-bold"><Mail className="h-4 w-4 text-primary" /> Customer delivery</h3>
-          <Select value={deliveryMethod} onValueChange={setDeliveryMethod}><SelectTrigger className="mt-3"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="sms">SMS</SelectItem><SelectItem value="both">Email + SMS</SelectItem></SelectContent></Select>
-          {(deliveryMethod === "email" || deliveryMethod === "both") && <Input className="mt-2" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email recipient" />}
-          {(deliveryMethod === "sms" || deliveryMethod === "both") && <Input className="mt-2" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="SMS recipient" />}
+          <Select value={deliveryMethod} onValueChange={setDeliveryMethod}><SelectTrigger className="mt-3" aria-label="How to send it"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="sms">SMS</SelectItem><SelectItem value="both">Email + SMS</SelectItem></SelectContent></Select>
+          {(deliveryMethod === "email" || deliveryMethod === "both") && <Input className="mt-2" aria-label="Email recipient" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email recipient" />}
+          {(deliveryMethod === "sms" || deliveryMethod === "both") && <Input className="mt-2" aria-label="Text message recipient" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="SMS recipient" />}
           <Button className="mt-3 w-full" disabled={!data?.revision || action.isPending} onClick={deliver}><MessageSquare className="mr-2 h-4 w-4" /> Queue delivery</Button>
+          {!data?.revision && (
+            <p className="mt-2 text-xs text-slate-500">Finalize the estimate first — delivery sends the finalized snapshot.</p>
+          )}
         </div>
       </div>
-      {secureUrl && <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><Input readOnly value={secureUrl} /><Button size="icon" variant="outline" aria-label="Copy secure link" onClick={() => { navigator.clipboard.writeText(secureUrl); toast({ title: "Secure link copied" }); }}><Copy className="h-4 w-4" /></Button></div>}
+      {secureUrl && <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><Input readOnly aria-label="The customer's secure link" value={secureUrl} /><Button size="icon" variant="outline" aria-label="Copy secure link" onClick={() => { navigator.clipboard.writeText(secureUrl); toast({ title: "Secure link copied" }); }}><Copy className="h-4 w-4" /></Button></div>}
       {(data?.deliveries?.length > 0 || data?.activities?.length > 0) && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><Mail className="h-3.5 w-3.5" /> Delivery state</h3><div className="mt-2 space-y-2">{data.deliveries.map((item: any) => <div key={item.id} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs"><span>{item.channel.toUpperCase()} · {item.recipient}</span><strong className="capitalize">{item.status.replace("_", " ")}</strong></div>)}</div></div>
+        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><Mail className="h-3.5 w-3.5" /> Delivery state</h3><div className="mt-2 space-y-2">{data.deliveries.map((item: any) => <div key={item.id} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs"><span>{item.channel.toUpperCase()} · {item.recipient}</span><strong className="capitalize">{item.status.replaceAll("_", " ")}</strong></div>)}</div></div>
         <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><History className="h-3.5 w-3.5" /> Activity</h3><div className="mt-2 space-y-2 max-h-44 overflow-auto">{data.activities.map((item: any) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><strong>{item.activityType.replaceAll("_", " ")}</strong><span className="ml-2 text-slate-400">{new Date(item.occurredAt).toLocaleString()}</span></div>)}</div></div>
       </div>}
     </section>
@@ -287,7 +295,10 @@ interface LineItemEdit {
   key: string;
   id?: number;
   serviceId?: number | null;
+  /** The catalogue service's title. Shown, never typed (Kyle #9). */
   description: string;
+  /** Free text for this service on this quote alone (Kyle #9). */
+  serviceNotes: string;
   quantity: string;
   unitPrice: string;
 }
@@ -332,20 +343,33 @@ function LineItemEditCard({
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
+      {/* Kyle #9: the catalogue service's title, shown rather than typed. To
+          quote something else, add a different service. */}
       <div className="space-y-1">
-        <label className="text-xs font-semibold text-slate-500">Description</label>
-        <input
-          value={item.description}
-          onChange={(e) => onUpdate(item.key, "description", e.target.value)}
-          placeholder="Service or item description…"
-          className="w-full h-10 px-3 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
+        <p className="text-sm font-bold text-slate-900">{item.description}</p>
+        <p className="text-[10px] text-primary font-medium">From service catalog</p>
+      </div>
+
+      {/* Kyle #9: this belongs to this service on this quote alone. */}
+      <div className="space-y-1">
+        <label className="text-xs font-semibold text-slate-500" htmlFor={`edit-line-note-${item.key}`}>
+          Description
+        </label>
+        <textarea
+          id={`edit-line-note-${item.key}`}
+          value={item.serviceNotes}
+          onChange={(e) => onUpdate(item.key, "serviceNotes", e.target.value)}
+          placeholder="Anything specific to this job — access, finish, what is included"
+          rows={2}
+          className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
                      placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
         />
       </div>
       <div className="grid grid-cols-3 gap-3 items-end">
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-slate-500">Qty</label>
+          <label className="text-xs font-semibold text-slate-500" htmlFor={`edit-line-qty-${item.key}`}>Qty</label>
           <input
+            id={`edit-line-qty-${item.key}`}
             type="number"
             value={item.quantity}
             onChange={(e) => onUpdate(item.key, "quantity", e.target.value)}
@@ -356,10 +380,11 @@ function LineItemEditCard({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-slate-500">Unit Price</label>
+          <label className="text-xs font-semibold text-slate-500" htmlFor={`edit-line-price-${item.key}`}>Unit Price</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
             <input
+              id={`edit-line-price-${item.key}`}
               type="number"
               value={item.unitPrice}
               onChange={(e) => onUpdate(item.key, "unitPrice", e.target.value)}
@@ -395,16 +420,26 @@ export default function QuoteDetail() {
   const [editing,         setEditing]         = useState(false);
   const [editNotes,       setEditNotes]        = useState("");
   const [editTerms,       setEditTerms]        = useState("");
-  const [editStatus,      setEditStatus]       = useState("");
-  const [editValidUntil,  setEditValidUntil]   = useState("");
+
   const [editPropertyId,  setEditPropertyId]   = useState<number | "">("");
   const [editLineItems,   setEditLineItems]    = useState<LineItemEdit[]>([]);
+  const [showPicker,      setShowPicker]       = useState(false);
+  // Only fetched once the picker is wanted; the page does not otherwise need
+  // the catalogue.
+  const { data: servicesForPicker } = useListServices({
+    query: { enabled: showPicker, queryKey: getListServicesQueryKey() },
+  });
 
   const { data: quote, isLoading, isError } = useGetQuote(quoteId);
 
   const updateMutation = useUpdateQuote({
     mutation: {
-      onSuccess: () => {
+      onSuccess: (updated) => {
+        // The response is the whole quote as it now stands. Writing it in makes
+        // the page right immediately instead of a refetch later: somebody who
+        // saves and reopens Edit within the second was otherwise handed the
+        // version from before their own save, and saving again put it back.
+        if (updated) queryClient.setQueryData(getGetQuoteQueryKey(quoteId), updated);
         queryClient.invalidateQueries({ queryKey: getGetQuoteQueryKey(quoteId) });
         queryClient.invalidateQueries({ queryKey: getListQuotesQueryKey() });
         toast({ title: "Quote updated!" });
@@ -430,8 +465,6 @@ export default function QuoteDetail() {
     if (!quote) return;
     setEditNotes(quote.notes ?? "");
     setEditTerms(quote.terms ?? "");
-    setEditStatus(quote.status);
-    setEditValidUntil(quote.validUntil ?? "");
     setEditPropertyId(quote.propertyId ?? "");
     setEditLineItems(
       (quote.lineItems ?? []).map((li) => ({
@@ -439,6 +472,7 @@ export default function QuoteDetail() {
         id: li.id,
         serviceId: li.serviceId,
         description: li.description,
+        serviceNotes: (li as { serviceNotes?: string | null }).serviceNotes ?? "",
         quantity: String(li.quantity),
         unitPrice: String(li.unitPrice),
       }))
@@ -450,22 +484,39 @@ export default function QuoteDetail() {
     setEditLineItems((prev) => prev.map((li) => (li.key === key ? { ...li, [field]: value } : li)));
   const removeItem = (key: string) =>
     setEditLineItems((prev) => prev.filter((li) => li.key !== key));
-  const addItem = () =>
-    setEditLineItems((prev) => [...prev, { key: crypto.randomUUID(), description: "", quantity: "1", unitPrice: "" }]);
+  // Kyle #7: a line can only be a service. There is no blank custom line to
+  // add any more — the Service Catalog is where one comes from.
+  const addFromCatalog = (service: { id: number; name: string; basePrice?: number | string | null }) => {
+    setEditLineItems((prev) => [...prev, {
+      key: crypto.randomUUID(),
+      serviceId: service.id,
+      description: service.name,
+      serviceNotes: "",
+      quantity: "1",
+      unitPrice: service.basePrice === null || service.basePrice === undefined
+        ? ""
+        : String(service.basePrice),
+    }]);
+    setShowPicker(false);
+  };
 
   const saveEdit = () => {
     const validItems = editLineItems.filter((li) => li.description.trim());
     updateMutation.mutate({
       id: quoteId,
       data: {
-        status: editStatus,
+        // Neither the status nor the expiry is edited here: the status has its
+        // own correction control above, and Kyle #11 made the expiry Corstead's
+        // to calculate from the company setting.
         propertyId: editPropertyId ? Number(editPropertyId) : null,
         notes: editNotes || undefined,
         terms: editTerms || undefined,
-        validUntil: editValidUntil || undefined,
         lineItems: validItems.map((li) => ({
           serviceId: li.serviceId ?? undefined,
           description: li.description,
+          // Without this the save rewrote every line without its description,
+          // quietly deleting what was written in the builder.
+          serviceNotes: li.serviceNotes.trim() || null,
           quantity: parseFloat(li.quantity) || 1,
           unitPrice: parseFloat(li.unitPrice) || 0,
         })),
@@ -569,7 +620,7 @@ export default function QuoteDetail() {
         </div>
         <p className="text-xs text-slate-400">
           Created {format(new Date(quote.createdAt), "MMMM d, yyyy")}
-          {quote.validUntil ? ` · Valid until ${quote.validUntil}` : ""}
+          {quote.validUntil ? ` · Valid until ${formatDateOnly(quote.validUntil)}` : ""}
         </p>
       </div>
 
@@ -666,12 +717,12 @@ export default function QuoteDetail() {
               </h2>
               {editing && (
                 <button
-                  onClick={addItem}
+                  onClick={() => setShowPicker(true)}
                   className="flex items-center gap-1.5 h-8 px-3 rounded-xl border border-slate-200
                              text-slate-600 text-xs font-semibold hover:bg-slate-50 active:scale-[.97] transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  Add Item
+                  Add Service
                 </button>
               )}
             </div>
@@ -682,7 +733,7 @@ export default function QuoteDetail() {
                 {editLineItems.length === 0 ? (
                   <div className="py-10 text-center border-2 border-dashed border-slate-200 rounded-xl">
                     <FileText className="w-10 h-10 text-slate-200 mx-auto mb-2" />
-                    <p className="text-slate-400 text-sm font-medium">No items. Add one above.</p>
+                    <p className="text-slate-400 text-sm font-medium">No services on this quote. Add one from your Service Catalog.</p>
                   </div>
                 ) : (
                   editLineItems.map((li, i) => (
@@ -751,27 +802,7 @@ export default function QuoteDetail() {
               <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Notes & Terms</h2>
 
               {/* Edit settings inline */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</Label>
-                  <Select value={editStatus} onValueChange={setEditStatus}>
-                    <SelectTrigger className="rounded-xl h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">Draft</SelectItem>
-                      <SelectItem value="sent">Sent</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="declined">Declined</SelectItem>
-                      <SelectItem value="expired">Expired</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Valid Until</Label>
-                  <Input type="date" value={editValidUntil} onChange={(e) => setEditValidUntil(e.target.value)} className="rounded-xl h-10" />
-                </div>
-              </div>
+
               <PropertyPicker
                 customerId={quote.customerId}
                 value={editPropertyId}
@@ -781,12 +812,12 @@ export default function QuoteDetail() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</Label>
-                  <Textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="Notes…" className="rounded-xl resize-none text-sm" rows={3} />
+                  <Label htmlFor="quote-edit-notes" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</Label>
+                  <Textarea id="quote-edit-notes" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="Notes…" className="rounded-xl resize-none text-sm" rows={3} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Terms</Label>
-                  <Textarea value={editTerms} onChange={(e) => setEditTerms(e.target.value)} placeholder="Terms & conditions…" className="rounded-xl resize-none text-sm" rows={3} />
+                  <Label htmlFor="quote-edit-terms" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Terms</Label>
+                  <Textarea id="quote-edit-terms" value={editTerms} onChange={(e) => setEditTerms(e.target.value)} placeholder="Your company's terms, if you use any" className="rounded-xl resize-none text-sm" rows={3} />
                 </div>
               </div>
 
@@ -929,7 +960,7 @@ export default function QuoteDetail() {
               {quote.validUntil && (
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Valid Until</span>
-                  <span className="text-slate-700 font-medium">{quote.validUntil}</span>
+                  <span className="text-slate-700 font-medium">{formatDateOnly(quote.validUntil)}</span>
                 </div>
               )}
             </div>
@@ -950,6 +981,14 @@ export default function QuoteDetail() {
       </div>
 
       {/* ── Confirm Delete Dialog ─────────────────────────────────────── */}
+      {showPicker && (
+        <ServicePickerDialog
+          services={(servicesForPicker ?? []) as never}
+          onAdd={addFromCatalog}
+          onClose={() => setShowPicker(false)}
+          navigate={navigate}
+        />
+      )}
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>

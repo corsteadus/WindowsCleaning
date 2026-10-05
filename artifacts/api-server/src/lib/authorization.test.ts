@@ -170,6 +170,14 @@ test("route actions resolve to capability guards, with specific safety routes fi
   assert.equal(requiredCapabilityForRequest("PATCH", "/admin/users/1"), "team_users.manage");
   assert.equal(requiredCapabilityForRequest("POST", "/admin/purge"), "admin.settings");
   assert.equal(requiredCapabilityForRequest("GET", "/catalogs/counties"), "catalogs.view");
+  // Kyle (#11, #13): anyone who may see a quote may read the company's validity
+  // and terms, because the builder shows them. Only an administrator may change
+  // what the whole company quotes on.
+  assert.equal(requiredCapabilityForRequest("GET", "/quote-settings"), "quotes.view");
+  assert.equal(requiredCapabilityForRequest("PUT", "/quote-settings"), "admin.settings");
+  // And the new path must not have swallowed the quote routes beside it.
+  assert.equal(requiredCapabilityForRequest("GET", "/quotes"), "quotes.view");
+  assert.equal(requiredCapabilityForRequest("POST", "/quotes"), "quotes.manage");
   assert.equal(requiredCapabilityForRequest("POST", "/catalogs/counties"), "catalogs.manage");
   assert.equal(requiredCapabilityForRequest("GET", "/custom-fields/definitions"), "custom_fields.view");
   assert.equal(requiredCapabilityForRequest("PATCH", "/custom-fields/definitions/1"), "custom_fields.manage");

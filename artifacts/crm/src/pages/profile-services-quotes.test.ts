@@ -8,6 +8,7 @@ import { test } from "node:test";
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 
 const quickAdd = read("../components/QuickAddService.tsx");
+const servicePicker = read("../components/ServicePickerDialog.tsx");
 const quoteNew = read("./QuoteNew.tsx");
 const jobNew = read("./JobNew.tsx");
 const services = read("./Services.tsx");
@@ -37,7 +38,10 @@ test("#22 the quick-add never renders a <form>, because the job form contains it
 });
 
 test("#22 a service can be added from the estimate's picker and from the job form", () => {
-  assert.match(quoteNew, /<QuickAddService\s+onCreated=\{\(service\) => onAdd\(service\)\}/);
+  // The picker moved out of QuoteNew on 2026-10-04 so the quote page could use
+  // the same one; the quick-add inside it is what #22 is about.
+  assert.match(servicePicker, /<QuickAddService\s+onCreated=\{\(service\) => onAdd\(service\)\}/);
+  assert.match(quoteNew, /<ServicePickerDialog/);
   assert.match(jobNew, /<QuickAddService/);
   assert.match(jobNew, /setServiceType\(service\.name\)/);
 });

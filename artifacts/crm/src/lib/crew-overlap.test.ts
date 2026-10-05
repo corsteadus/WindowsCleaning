@@ -130,9 +130,11 @@ test("midnight is a real time, not a missing one", () => {
 });
 
 test("spans read back in plain language", () => {
-  assert.equal(describeSpan(job()), "9:00 am – 11:00 am");
-  assert.equal(describeSpan(job({ startTime: "13:00", endTime: "17:30" })), "1:00 pm – 5:30 pm");
-  assert.equal(describeSpan(job({ endTime: null })), "9:00 am");
+  // Kyle (Testing Edits, 2026-10-01, #14): "Use standard AM / PM formatting."
+  // This used to read "9:00 am – 11:00 am", in its own lowercase style.
+  assert.equal(describeSpan(job()), "9:00 AM – 11:00 AM");
+  assert.equal(describeSpan(job({ startTime: "13:00", endTime: "17:30" })), "1:00 PM – 5:30 PM");
+  assert.equal(describeSpan(job({ endTime: null })), "9:00 AM");
   assert.equal(describeSpan(job({ startTime: null })), "No time");
-  assert.equal(describeSpan(job({ startTime: "00:00", endTime: null })), "12:00 am");
+  assert.equal(describeSpan(job({ startTime: "00:00", endTime: null })), "12:00 AM");
 });

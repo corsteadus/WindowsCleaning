@@ -43,6 +43,33 @@ export function useServiceCategories() {
   });
 }
 
+/**
+ * A category's own name, for anywhere a service is shown.
+ *
+ * A service stores the category's code — `window_cleaning` — and that is
+ * database wording, not something to put in front of the office. This returns
+ * the catalogue's name ("Window Cleaning"), falling back to a readable version
+ * of the code for one that has since been removed.
+ */
+export function readableCategory(code: string | null | undefined): string {
+  if (!code) return "";
+  return code
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+export function useServiceCategoryName(): (code: string | null | undefined) => string {
+  const categories = useServiceCategories();
+  const items = categories.data ?? [];
+  return (code) => {
+    if (!code) return "";
+    const match = items.find((item) => categoryCode(item) === code);
+    return match ? categoryLabel(match) : readableCategory(code);
+  };
+}
+
 export function ServiceCategoryPicker({
   value, onChange, disabled = false, onError,
 }: {

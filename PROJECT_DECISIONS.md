@@ -33,11 +33,13 @@ Worth a look before touching those areas.
 ## Where things stand right now — read this first
 
 **As of 2026-10-04.** Kyle's Testing Edits of 2026-10-01 are being worked through as
-phases 16–21. **16, 17 and 18 are done in the working tree and browser-verified**;
-**19, 20 and 21 remain.** Nothing since Phase 15 is on Sandbox 2 — the bundle there is
-still `index-043EjDyX.js`, so a **republish is owed** before Kyle tests any of it, and
-before the parked `properties.gate_code` / `access_notes` drop can run. The calendar
-note below is older and still true as a description of the spec work.
+phases 16–21. **16 through 20 are done in the working tree and browser-verified**, and a
+**usability sweep** of all of them found and fixed 36 things before Kyle sees any of it;
+**only 21 remains** (#3's custom-field search). Nothing since Phase 15 is on Sandbox 2 — the bundle there is still
+`index-043EjDyX.js`. The user decided on 2026-10-04: **one republish once Kyle's whole
+1 October list is finished**, and the message to him goes out then — not phase by phase.
+The parked `properties.gate_code` / `access_notes` drop still waits for that republish.
+The calendar note below is older and still true as a description of the spec work.
 
 **As of 2026-09-11.** Everything below this section is detail; this is the state of play.
 
@@ -127,6 +129,272 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 20 — time, done in the working tree 2026-10-04
+
+Kyle's Testing Edits of 2026-10-01, **#14**: *"Anywhere Corstead asks the user to
+select a time, use 15-minute increments … Each hour should offer :00, :15, :30,
+and :45. Use standard AM / PM formatting. Apply this consistently … throughout
+the platform."*
+
+Two halves: how a time is **chosen**, and how it is **read**.
+
+### Chosen: one selector, fifteen sites
+
+`<input type="time">` was in nine files, fifteen times. It let anybody type 8:07,
+and it showed the time in whatever format the browser's locale chose — **on a
+machine set outside the United States, with no AM or PM at all**, which is the
+part of #14 that could not be fixed by asking people to be careful.
+
+All fifteen are now `TimeSelect`: a native `<select>` of the day's ninety-six
+quarter hours, labelled "8:15 AM", storing the same `HH:mm` the API already
+took. Native on purpose — one tap on a phone, and typing jumps the keyboard.
+
+The sites: the estimate appointment in the builder and on the quote, converting
+an estimate into jobs, the scheduling queue, a new job, an existing job,
+rescheduling from the schedule, the first job booked while creating a profile,
+and quiet hours in Settings.
+
+**A time already booked off the grid is kept, not moved.** A job sitting at 8:20
+shows "8:20 AM (as booked)" in its own place between 8:15 and 8:30. Opening a
+form should never quietly reschedule somebody's work, and a snap-to-nearest
+would have done exactly that.
+
+### Read: seven formatters became one
+
+Dashboard, Jobs, Schedule, JobDetail, MonthCalendar and `crew-overlap` had each
+grown their own, and no two agreed: `8:15am`, `8:15 am`, `8:15a`. All six now
+call `formatTimeOfDay`. The quote's appointment line printed a 24-hour
+`2026-10-10 14:30`; it reads `2026-10-10 at 2:30 PM Chicago`.
+
+Four of the six were found by sweeping for `% 12 || 12` **after** the browser
+pass caught the fifth. Neither method alone would have found them all, and the
+guard test now sweeps the tree rather than naming screens.
+
+### One thing that had to change underneath
+
+`liveTimeControlValue` — which reads the live DOM value when a job is submitted,
+so an uncommitted picker cannot be lost — tested `control.type === "time"`. A
+`<select>` reports `select-one`, so it would have silently fallen back to React
+state and the guard would have been dead code. It now accepts both.
+
+### Left alone, deliberately
+
+- **Durations** (30 / 60 / 90 / 120 minutes) are a length, not a time of day.
+  They are already multiples of fifteen. Whether Kyle wants 15 and 45 offered
+  there is a question for him, not an assumption.
+- **No server-side rule** that a time must be on the quarter hour. The grid is
+  what Corstead offers; rejecting an off-grid value would make existing jobs
+  unsaveable, which is the opposite of keeping them.
+
+### Verified
+
+`scratchpad/p20-time.mjs` **15/15** headed, including: a select rather than an
+input, ninety-six options, Kyle's own 8:00/8:15/8:30/8:45/9:00 example, nothing
+between the quarters, midnight and noon reading as twelve, 5:30 PM in the
+evening, an 8:20 job kept and then moved onto the grid and stored as 08:30, no
+lowercase am/pm left on the jobs list or the dashboard, and quiet hours on the
+same grid with "Any time" for an empty one. CRM **532/532** (12 new unit tests,
+5 new guards; one existing test expected the old lowercase style and was
+updated). API untouched. Typechecks clean.
+
+### Worth keeping
+
+- **Inserting an import after "the last line starting with `import`" splits a
+  multi-line import** and breaks three files at once. Insert before the *first*
+  import line. A file with no imports at all needs the top of the file.
+- **Settings loads its quiet-hours card on a separate query, four seconds in.**
+  A fixed 2.5-second wait reported a missing control that was merely late — the
+  second false failure of the day from a `waitForTimeout`. Wait for the thing.
+
+---
+
+## The usability sweep, 2026-10-04 — before Kyle sees any of it
+
+The user: *"koi bhe usability issue nahi hona chaiye, bad impression hota hy
+client py."* So the nine screens phases 16–19 touched were measured rather than
+eyeballed: `scratchpad/usability-audit.mjs` walks each one and reports every
+control a person can type into that has no readable name, any database wording
+that reached the screen, any date printed as `2026-11-18`, and every disabled
+button. **36 findings. Now 0.**
+
+### The serious one: an edit deleted a line's description
+
+The quote page's edit panel had never caught up with Phase 18. On it, the
+service title was still an editable input (#9 says it must not be), **"Add Item"
+still added a blank custom line** (#7 removed exactly that), and there was no
+per-quote Description box at all.
+
+Worse than missing: **destructive**. The save rewrites every line, and it sent no
+`serviceNotes`, so the server stored null. Editing a price on an existing quote
+silently erased the description written in the builder. Nothing warned anybody
+and nothing in the test suite looked.
+
+A second fault came out of fixing it: saving and reopening Edit within the second
+handed back the version from **before** the save, and saving again put the old
+value back. The response already carries the whole quote, so it is now written
+into the cache instead of waiting for a refetch to land.
+
+`ServicePickerDialog` moved out of `QuoteNew.tsx` into its own component so both
+screens add a line the same way. Two copies of Kyle's rules is how the panel
+drifted in the first place.
+
+### The ones a client notices in a demo
+
+- **`Window_cleaning`.** A service stores its category's code and the card
+  printed it with CSS `capitalize`, which capitalises the first letter and leaves
+  the underscore. It now shows the catalogue's own name, through a new
+  `useServiceCategoryName()`. My first audit pass missed this because the regex
+  wanted a lowercase first letter — `text-transform` had already changed it.
+- **"Add countie".** The placeholder was the catalogue's title with an `s`
+  stripped off. Each catalogue now states what one of its entries is called.
+- **A disabled "Queue delivery"** with no reason beside it; it now says to
+  finalize the estimate first.
+- **`replace("_", " ")`** on a delivery status, which would leave the second
+  underscore in anything like `sent_to_provider`.
+
+### Twenty-four controls had no name
+
+Including both boxes in the builder's Notes & Terms card — found by the Phase 19
+browser test, which could not type into a field a person can see. The rest:
+every appointment field, the delivery recipients, the quote's edited notes and
+terms, the line quantity and price, the quiet-hours timezone, the custom-field
+row, the catalogue add boxes, and the profile search. A visible `<Label>` with no
+`htmlFor` names nothing.
+
+### Two things the audit got wrong
+
+Worth knowing, because both would waste the next session's time:
+
+- **A dropdown built on Radix renders a hidden native `<select>`** for form
+  submission, marked `aria-hidden`. Eight of them looked like unnamed controls;
+  the name belongs on the trigger, where it already was. The audit now skips
+  anything inside `[aria-hidden="true"]`.
+- **`team_admin` is the signed-in account's own email**, on every screen in the
+  page chrome. Account data, not product wording.
+
+### Verified
+
+`scratchpad/usability-audit.mjs` **0 findings** across nine screens and
+`scratchpad/p19b-quote-edit.mjs` **16/16**, both headed. The nine assertions in
+`src/pages/usability-sweep.test.ts` hold each fix in place. CRM **515/515** —
+one existing test had to be pointed at the dialog's new home, because it asserted
+where the picker lived rather than that it worked.
+
+---
+
+## Phase 19 — quote validity and the company's terms, done in the working tree 2026-10-04
+
+Kyle's Testing Edits of 2026-10-01, **#11, #12 and #13**. #12 was recorded as
+"already true" on 2026-10-03 — the link did die — but it died on a schedule that
+had nothing to do with the validity Kyle was describing, so it is covered here
+and now proven end to end.
+
+### What was actually wrong before
+
+Three things, none of them visible from the screens:
+
+1. **Nothing connected the date to the expiry.** `quotes.valid_until` was a date
+   somebody typed, shown on the quote. The customer's link died from
+   `estimate_public_links.expires_at`, set to **thirty days after sending**,
+   hard-coded. The two numbers never had to agree, and usually did not.
+2. **The link's life was clamped to 60 days** —
+   `Math.min(60, …expiresInDays ?? 30)` — so Kyle's own 90-day example would
+   have been silently shortened to 60.
+3. **A quote marked valid until the 3rd stopped working on the 3rd**, because
+   `expires_at` was an instant thirty days from the moment of sending. Delivered
+   at nine in the morning, the link died at nine in the morning on its last day.
+
+### The company decides once
+
+A new `quote_settings` table: one row, `validity_days` (1–365, default 30) and
+`terms` (nullable, **no default**), with the same `organization_key` singleton
+shape as `communication_notification_settings` beside it. **There is no row
+until somebody saves** — a company that never opens Settings gets thirty days
+and no terms, and nothing has to be seeded.
+
+`GET /api/quote-settings` is open to anyone who may see a quote, because the
+builder shows the expiry and fills in the terms. `PUT` needs `admin.settings`.
+
+**Not in `openapi.yaml`.** The only other company-settings feature
+(`/communication-safety/notification-settings`) is not either; it is called with
+a plain `protectedFetch`. Following that saved regenerating 310 orval files for
+two endpoints.
+
+### #11 — nobody types a date again
+
+The Valid Until field is gone from the builder and from the quote's edit panel.
+Both now **show** the date, with the number of days and where it came from. The
+server calculates it: at creation from the company setting, and again at
+delivery — **the clock starts when the customer is given the quote**, not when a
+draft was raised, and the quote's own date is moved to match so the two can
+never disagree. Kyle did not say which; this is the assumption, and it is in the
+message to him.
+
+### #12 — the record stays, the link stops
+
+`expires_at` is now the **last second of the valid-until day in the business's
+timezone**, so the date the customer reads is the date it stops working. Proven:
+the link opens on 200 while valid, 404s once expired, an acceptance through it
+404s too, and the quote is still on the profile afterwards.
+
+### #13 — the company's own words, and only the company's
+
+A Terms and Conditions box in Settings, empty until written in, with a line
+saying Corstead supplies no wording of its own. New quotes are filled in from
+it; an edit on a quote belongs to that quote and never touches the setting —
+both checked. **A test asserts that neither the server lib nor the form nor the
+card contains sample wording**, placeholder included, so a well-meaning
+"Payment due on completion…" cannot creep back in.
+
+### Two faults found next to the work
+
+- **A second status selector** sat in the quote's edit panel, left over from
+  before Phase 17's correction control. It offered **"Approved"**, which
+  `assertStaffWritableQuoteStatus` rejects with a 400 — a control that could
+  only ever fail — and still used the wording Kyle replaced in #10. Removed
+  rather than relabelled: the page already has one place to correct a status.
+- **The builder's Notes and Terms boxes had no label attached to them**
+  (`<Label>` with no `htmlFor`). The browser test found it by failing to type
+  into a field a person can see. Same family as the `F`-wrapper fault in
+  Customers.tsx.
+
+Three screens also printed the expiry as the raw `2026-11-18`; they now read
+`Nov 18, 2026` like every other date.
+
+### Reuse rather than a second convention
+
+`lib/date.ts` already held the authoritative business timezone and
+`addDaysToDateOnly`. The first draft of `quote-settings.ts` reimplemented both.
+It now imports them, and `BUSINESS_TIME_ZONE` is exported from `date.ts` so the
+one new thing — the *instant* a business day ends, which needed the zone's offset
+resolved twice for days either side of a daylight-saving change — is the only
+timezone code added.
+
+### Verified
+
+`scratchpad/p19-quote-settings.mjs` **40/40** headed, `scratchpad/p19a-api.mjs`
+**16/16** over HTTP, and the table's own constraints **4/4** (a validity of 0,
+of 400, over-long terms, and a second row for the same organization are all
+refused). CRM **506/506**, API **646/660** — the same 14 `DATABASE_URL`
+failures, 12 more tests than before and all of them passing. Typechecks clean.
+
+**No migration.** The table is additive, declared in the Drizzle schema so
+`drizzle-kit push` keeps it, and the code defaults when the row is absent. The
+database is back to its 2 customers, 2 quotes and 2 services, with
+`quote_settings` deliberately left **empty** so Kyle finds thirty days and no
+terms.
+
+### Worth keeping
+
+- **A fixed `waitForTimeout` after a save is not a verification.** One check
+  read the database before the mutation landed and reported a failure that had
+  not happened. Wait for the response.
+- **`input[type="date"]` is not the same question as "can the expiry be typed".**
+  The estimate appointment legitimately has a date field; two checks had to be
+  narrowed to "every date input belongs to the appointment".
+
+---
+
 ## Phase 18 — the service catalogue and quote lines, done in the working tree 2026-10-04
 
 Kyle's Testing Edits of 2026-10-01, #7, #8 and #9 — the largest of his items,
@@ -339,8 +607,15 @@ is republished.
 seventeen answers the grouping question we had open with him; eighteen is the
 largest and changes how every quote and job is priced.
 
-**Progress, 2026-10-04: 16, 17 and 18 are done** — each has its own section above,
-each browser-verified, none republished yet. **19, 20 and 21 are next**, in that order.
+**Progress, 2026-10-04: 16 through 20 are done** — each has its own section above, each
+browser-verified, none republished yet. **21 is the last one** (#3's custom-field search).
+
+Twelve of Kyle's fourteen items are therefore built: #1, #2, #4, #5, #6, #7, #8, #9, #10,
+#11, #12, #13 and #14 — with #3 half done since Phase 16 (the old section is gone; finding
+a profile by what is in a custom field is Phase 21).
+
+Phase 19 took #12 with it: the table above lists only #11 and #13 because #12 had been
+recorded as already true, which was half right. See the Phase 19 section.
 
 ### Two of his items reverse or change what we built
 

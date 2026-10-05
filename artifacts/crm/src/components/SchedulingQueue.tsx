@@ -1,3 +1,4 @@
+import { TimeSelect } from "@/components/TimeSelect";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -465,20 +466,18 @@ export function SchedulingQueue({ canManage, dueTab, onUnavailable }: {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="queue-schedule-start">Start time</Label>
-                <Input
+                <TimeSelect
                   id="queue-schedule-start"
-                  type="time"
                   value={form.start}
-                  onChange={(e) => setForm({ ...form, start: e.target.value })}
+                  onChange={(value) => setForm({ ...form, start: value })}
                 />
               </div>
               <div>
                 <Label htmlFor="queue-schedule-end">End time</Label>
-                <Input
+                <TimeSelect
                   id="queue-schedule-end"
-                  type="time"
                   value={form.end}
-                  onChange={(e) => setForm({ ...form, end: e.target.value })}
+                  onChange={(value) => setForm({ ...form, end: value })}
                 />
               </div>
             </div>

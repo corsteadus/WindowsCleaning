@@ -11,6 +11,7 @@ import { useAuth } from "@workspace/replit-auth-web";
 import { hasClientCapability } from "@/lib/rbac";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
+import { formatDateOnly } from "@/lib/quote-settings-form";
 import {
   buildActivityFeed, countFeed, filterFeed, lastNoteChange, profileStewardship,
   type FeedFilter,
@@ -2340,7 +2341,7 @@ function QuotesTab({ quotes, customerId, canCreate, onDelete }: { quotes: Quote[
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Created {new Date(q.createdAt).toLocaleDateString()}
-                  {q.validUntil && ` · Valid until ${q.validUntil}`}
+                  {q.validUntil && ` · Valid until ${formatDateOnly(q.validUntil)}`}
                 </p>
               </div>
               <p className="font-bold text-slate-900 text-sm shrink-0">${parseFloat(q.totalAmount).toFixed(2)}</p>

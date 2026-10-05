@@ -12,6 +12,7 @@ import { useAuth } from "@workspace/replit-auth-web";
 import { hasClientCapability } from "@/lib/rbac";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { format, parseISO, isToday, addDays } from "date-fns";
+import { formatTimeOfDay } from "@/lib/time-of-day";
 
 // ─── Types & config ───────────────────────────────────────────────────────────
 
@@ -129,11 +130,9 @@ function fmtDate(date?: string | null) {
   } catch { return date; }
 }
 
+// Kyle #14: one formatter, standard AM / PM.
 function fmtTime(t?: string | null) {
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  const ampm = h >= 12 ? "pm" : "am";
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")}${ampm}`;
+  return formatTimeOfDay(t) || null;
 }
 
 // ─── JobCard ─────────────────────────────────────────────────────────────────

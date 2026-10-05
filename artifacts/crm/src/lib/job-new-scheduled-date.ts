@@ -20,11 +20,24 @@ export function liveDateControlValue(
   return isTemporalControl(control, "date") ? control.value : controlledValue;
 }
 
+/**
+ * A time control is now a 15-minute `<select>` rather than
+ * `<input type="time">` (Kyle, Testing Edits 2026-10-01 #14), and a native
+ * select reports its type as "select-one". Both are read here, so the live DOM
+ * value is still what gets submitted.
+ */
+function isTimeControl(value: unknown): value is TemporalControl {
+  if (isTemporalControl(value, "time")) return true;
+  if (!value || typeof value !== "object") return false;
+  const control = value as Partial<TemporalControl>;
+  return control.type === "select-one" && typeof control.value === "string";
+}
+
 export function liveTimeControlValue(
   control: unknown,
   controlledValue: string,
 ): string {
-  return isTemporalControl(control, "time") ? control.value : controlledValue;
+  return isTimeControl(control) ? control.value : controlledValue;
 }
 
 export function submittedJobSchedule(

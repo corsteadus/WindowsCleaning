@@ -12,11 +12,17 @@
  */
 
 /**
+ * The authoritative business timezone, named so callers that need more than a
+ * date — the instant a day ends, say — do not hard-code it a second time.
+ */
+export const BUSINESS_TIME_ZONE = "America/Chicago";
+
+/**
  * Returns the current business date as "YYYY-MM-DD" in the process timezone.
  */
 export function businessDateStr(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Chicago",
+    timeZone: BUSINESS_TIME_ZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

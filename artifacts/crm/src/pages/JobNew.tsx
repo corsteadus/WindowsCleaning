@@ -34,6 +34,7 @@ import { submittedJobSchedule } from "@/lib/job-new-scheduled-date";
 import { committedJobScheduleMatches } from "@/lib/job-date-commit";
 import { useLocation, useSearch } from "wouter";
 import { format } from "date-fns";
+import { TimeSelect } from "@/components/TimeSelect";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -357,22 +358,22 @@ export default function JobNew() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Start Time</Label>
-                <Input
-                  type="time"
+                <TimeSelect
                   name="scheduledStartTime"
                   value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
+                  onChange={setStartTime}
                   className="rounded-xl"
+                  aria-label="Start time"
                 />
               </div>
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> End Time</Label>
-                <Input
-                  type="time"
+                <TimeSelect
                   name="scheduledEndTime"
                   value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
+                  onChange={setEndTime}
                   className="rounded-xl"
+                  aria-label="End time"
                 />
               </div>
             </div>

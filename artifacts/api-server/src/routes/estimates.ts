@@ -35,6 +35,8 @@ import {
   publicEstimateTokenLimiter,
 } from "../lib/public-estimate-guard.ts";
 import { businessDateStr } from "../lib/date.ts";
+import { normaliseValidityDays, quoteExpiryFor } from "../lib/quote-settings.ts";
+import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
 
 const router: IRouter = Router();
@@ -697,7 +699,17 @@ router.post("/quotes/:id/deliver", async (req, res): Promise<any> => {
   const missing = channels.find((channel) => !recipients[channel]);
   if (missing) return res.status(400).json({ error: `A ${missing} recipient is required` });
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + Math.min(60, Math.max(1, Number(req.body.expiresInDays ?? 30))) * 86_400_000);
+  // Kyle #11: the validity comes from the company setting, not from a number
+  // typed here. #12: the link then dies at the end of that last day, so the
+  // date the customer reads on the estimate is the date it stops working.
+  //
+  // The clock starts at delivery rather than at creation: a draft can sit for
+  // weeks, and the customer is entitled to the whole validity period from the
+  // moment they are given it. The quote's own Valid Until is moved to match.
+  const quoteSettings = await readQuoteSettings();
+  const validityDays = normaliseValidityDays(req.body.expiresInDays) ?? quoteSettings.validityDays;
+  const expiry = quoteExpiryFor(new Date(), validityDays);
+  const expiresAt = expiry.expiresAt;
   const result = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteId})`);
     const [lockedQuote] = await tx.select().from(quotesTable).where(eq(quotesTable.id, quoteId)).limit(1);
@@ -716,7 +728,7 @@ router.post("/quotes/:id/deliver", async (req, res): Promise<any> => {
       quoteId, publicLinkId: link.id, channel, recipient: recipients[channel]!,
       status: "provider_unconfigured", lastError: "No live delivery provider is configured in this Sandbox", requestedBy: actorId(req),
     }))).returning();
-    await tx.update(quotesTable).set({ status: "sent" }).where(eq(quotesTable.id, quoteId));
+    await tx.update(quotesTable).set({ status: "sent", validUntil: expiry.validUntil }).where(eq(quotesTable.id, quoteId));
     await tx.insert(estimateActivitiesTable).values({
       quoteId, publicLinkId: link.id, activityType: "estimate_sent", actorId: actorId(req),
       detail: { channels, expiresAt: expiresAt.toISOString() },

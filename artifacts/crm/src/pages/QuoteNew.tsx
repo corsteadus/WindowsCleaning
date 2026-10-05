@@ -1,3 +1,4 @@
+import { TimeSelect } from "@/components/TimeSelect";
 import { useState, useEffect, useRef } from "react";
 import { Layout } from "@/components/Layout";
 import {
@@ -35,11 +36,13 @@ import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 import { PropertyPicker } from "@/components/PropertyPicker";
 import { CustomerCombobox } from "@/components/CustomerCombobox";
 import { QuickAddService } from "@/components/QuickAddService";
+import { ServicePickerDialog } from "@/components/ServicePickerDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@workspace/replit-auth-web";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { useLocation } from "wouter";
 import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
+import { expiryPreview, formatDateOnly } from "@/lib/quote-settings-form";
 import {
   captureAndRetainSubmittedQuoteAppointment,
   prepareQuoteAppointment,
@@ -189,96 +192,6 @@ function LineItemCard({
   );
 }
 
-// ─── ServicePickerDialog ──────────────────────────────────────────────────────
-
-function ServicePickerDialog({
-  services,
-  onAdd,
-  onClose,
-  navigate,
-}: {
-  services: Array<{ id: number; name: string; description?: string | null; basePrice?: number | string | null; category?: string | null; unit?: string | null; isActive: boolean }>;
-  onAdd: (s: { id: number; name: string; basePrice?: number | string | null }) => void;
-  onClose: () => void;
-  navigate: (to: string) => void;
-}) {
-  const active = services.filter((s) => s.isActive);
-  // An empty catalogue opens straight onto the quick-add; otherwise it is one click away.
-  const [adding, setAdding] = useState(false);
-  const showQuickAdd = adding || active.length === 0;
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg rounded-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="w-4 h-4 text-primary" />
-            Add from Service Catalog
-          </DialogTitle>
-        </DialogHeader>
-        {showQuickAdd ? (
-          <QuickAddService
-            onCreated={(service) => onAdd(service)}
-            onCancel={active.length > 0 ? () => setAdding(false) : undefined}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 py-2 text-sm font-medium text-primary hover:bg-primary/5"
-          >
-            <Plus className="h-4 w-4" /> New service
-          </button>
-        )}
-        <div className="max-h-[60vh] overflow-y-auto space-y-1.5 -mx-2 px-2">
-          {active.length === 0 ? (
-            <p className="py-2 text-center text-xs text-slate-400">
-              The catalog is empty. A service you add here is saved to it for every profile.{" "}
-              <button type="button" className="text-primary font-medium hover:underline" onClick={() => { onClose(); navigate("/services"); }}>
-                Open the catalog
-              </button>
-            </p>
-          ) : (
-            active.map((service) => (
-              <button
-                type="button"
-                key={service.id}
-                onClick={() => onAdd(service)}
-                className="w-full text-left flex items-center justify-between p-3.5 rounded-xl border border-slate-100
-                           hover:bg-primary/5 hover:border-primary/20 active:scale-[.99] transition-all group"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-900 text-sm truncate group-hover:text-primary transition-colors">
-                    {service.name}
-                  </p>
-                  {service.description && (
-                    <p className="text-xs text-slate-500 truncate mt-0.5">{service.description}</p>
-                  )}
-                  {service.category && (
-                    <Badge variant="outline" className="mt-1 text-[10px] capitalize bg-blue-50 border-blue-100 text-blue-700 px-1.5 py-0">
-                      {service.category.replace("_", " ")}
-                    </Badge>
-                  )}
-                </div>
-                <div className="ml-4 shrink-0 text-right">
-                  <p className="font-bold text-slate-900 text-sm">{service.basePrice === null || service.basePrice === undefined ? "" : formatCurrency(Number(service.basePrice))}</p>
-                  {service.unit && <p className="text-[10px] text-slate-400">per {service.unit}</p>}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-full h-10 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
-        >
-          Cancel
-        </button>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function QuoteNew() {
@@ -337,7 +250,9 @@ export default function QuoteNew() {
   const [status,     setStatus]     = useState("draft");
   const [notes,      setNotes]      = useState("");
   const [terms,      setTerms]      = useState("");
-  const [validUntil, setValidUntil] = useState("");
+  // Kyle #13: filled in from the company's settings once, and only while the
+  // box is still untouched, so a change made here is never written over.
+  const [termsTouched, setTermsTouched] = useState(false);
   const [lineItems,  setLineItems]  = useState<LineItemDraft[]>([]);
   const [showPicker, setShowPicker] = useState(false);
   const [appointmentDate, setAppointmentDate] = useState("");
@@ -358,6 +273,20 @@ export default function QuoteNew() {
 
   // API
   const { data: services } = useListServices();
+  // Kyle #11 and #13: how long a quote stays valid and what terms it carries
+  // are the company's decisions, made once in Settings.
+  const { data: quoteSettings } = useQuery({
+    queryKey: ["quote-settings"],
+    queryFn: async () => {
+      const response = await protectedFetch(`${BASE}/api/quote-settings`);
+      if (!response.ok) throw new Error("Unable to load the company's quote settings");
+      return response.json() as Promise<{ validityDays: number; terms: string | null }>;
+    },
+  });
+  useEffect(() => {
+    if (!quoteSettings || termsTouched) return;
+    setTerms(quoteSettings.terms ?? "");
+  }, [quoteSettings, termsTouched]);
   const { data: estimateEmployees = [], isLoading: estimateEmployeesLoading } = useQuery({
     queryKey: ["estimate-employees"],
     queryFn: async () => {
@@ -520,7 +449,8 @@ export default function QuoteNew() {
       status,
       notes: notes || undefined,
       terms: terms || undefined,
-      validUntil: validUntil || undefined,
+      // #11: no date is sent. The server works the expiry out from the company
+      // setting, so there is one answer rather than one per screen.
       lineItems: validItems.map((li) => ({
         serviceId: li.serviceId ?? undefined,
         description: li.description,
@@ -613,9 +543,20 @@ export default function QuoteNew() {
                   </SelectContent>
                 </Select>
               </div>
+              {/* Kyle #11: the expiry is Corstead's to calculate, from the
+                  company's validity setting. Nobody picks a date here. */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Valid Until</Label>
-                <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className="rounded-xl h-11" />
+                <p className="text-sm font-semibold text-slate-800">
+                  {quoteSettings
+                    ? formatDateOnly(expiryPreview(quoteSettings.validityDays))
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  {quoteSettings
+                    ? `${quoteSettings.validityDays} days, from your company settings`
+                    : "Reading your company settings…"}
+                </p>
               </div>
             </div>
           </div>
@@ -758,15 +699,15 @@ export default function QuoteNew() {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <input type="hidden" name="appointmentDurationTouched" value={String(appointmentDurationTouched)} readOnly />
               <input type="hidden" name="appointmentFallbackPropertyId" value={propertyId} readOnly />
-              <div className="space-y-1.5"><Label>Date</Label><Input name="appointmentDate" type="date" value={appointmentDate} onChange={(e) => setAppointmentDate(e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Start time</Label><Input name="appointmentTime" type="time" value={appointmentTime} onChange={(e) => setAppointmentTime(e.target.value)} /></div>
+              <div className="space-y-1.5"><Label htmlFor="appointment-date">Date</Label><Input id="appointment-date" name="appointmentDate" type="date" value={appointmentDate} onChange={(e) => setAppointmentDate(e.target.value)} /></div>
+              <div className="space-y-1.5"><Label htmlFor="appointment-time">Start time</Label><TimeSelect id="appointment-time" name="appointmentTime" value={appointmentTime} onChange={setAppointmentTime} /></div>
               <div className="space-y-1.5">
                 <Label>Duration</Label>
                 <Select name="appointmentDuration" value={appointmentDuration} onValueChange={(value) => {
                   setAppointmentDuration(value);
                   setAppointmentDurationTouched(true);
                 }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="Appointment duration"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="30">30 minutes</SelectItem><SelectItem value="60">1 hour</SelectItem>
                     <SelectItem value="90">90 minutes</SelectItem><SelectItem value="120">2 hours</SelectItem>
@@ -776,7 +717,7 @@ export default function QuoteNew() {
               <div className="space-y-1.5">
                 <Label>Assigned employee</Label>
                 <Select name="assignedUserId" value={assignedUserId} onValueChange={setAssignedUserId} disabled={selectableEstimateEmployees.length === 0}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="Assigned employee"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="unassigned">Unassigned</SelectItem>{selectableEstimateEmployees.map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.displayName}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
@@ -790,8 +731,8 @@ export default function QuoteNew() {
               <div><Label>Estimate locations</Label><div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">{availableAppointmentProperties.map((property: any) => <label key={property.id} className="flex items-start gap-2 rounded-xl border p-3 text-sm"><input name="appointmentPropertyIds" value={property.id} type="checkbox" checked={appointmentPropertyIds.includes(property.id)} onChange={(e) => setAppointmentPropertyIds((current) => e.target.checked ? [...current, property.id] : current.filter((id) => id !== property.id))} /><span><strong>{property.name || property.address}</strong><span className="block text-xs text-slate-400">{[property.address, property.city, property.state].filter(Boolean).join(", ")}</span></span></label>)}</div></div>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>Appointment notes</Label><Textarea name="appointmentNotes" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} placeholder="Arrival, access, or scheduling notes…" rows={3} /></div>
-              <div className="space-y-1.5"><Label>Estimate notes</Label><Textarea name="estimateNotes" value={estimateNotes} onChange={(e) => setEstimateNotes(e.target.value)} placeholder="Scope to inspect or discuss…" rows={3} /></div>
+              <div className="space-y-1.5"><Label htmlFor="appointment-notes">Appointment notes</Label><Textarea id="appointment-notes" name="appointmentNotes" value={appointmentNotes} onChange={(e) => setAppointmentNotes(e.target.value)} placeholder="Arrival, access, or scheduling notes…" rows={3} /></div>
+              <div className="space-y-1.5"><Label htmlFor="estimate-notes">Estimate notes</Label><Textarea id="estimate-notes" name="estimateNotes" value={estimateNotes} onChange={(e) => setEstimateNotes(e.target.value)} placeholder="Scope to inspect or discuss…" rows={3} /></div>
             </div>
           </div>
 
@@ -800,8 +741,9 @@ export default function QuoteNew() {
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Notes & Terms</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</Label>
+                <Label htmlFor="quote-notes" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</Label>
                 <Textarea
+                  id="quote-notes"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Any notes for this quote…"
@@ -810,14 +752,18 @@ export default function QuoteNew() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Terms & Conditions</Label>
+                <Label htmlFor="quote-terms" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Terms & Conditions</Label>
                 <Textarea
+                  id="quote-terms"
                   value={terms}
-                  onChange={(e) => setTerms(e.target.value)}
-                  placeholder="Payment terms, conditions…"
+                  onChange={(e) => { setTermsTouched(true); setTerms(e.target.value); }}
+                  placeholder="Your company's terms, if you use any"
                   className="rounded-xl resize-none text-sm"
                   rows={3}
                 />
+                {quoteSettings?.terms && !termsTouched && (
+                  <p className="text-[10px] text-slate-400">From your company settings — edit for this quote only</p>
+                )}
               </div>
             </div>
           </div>

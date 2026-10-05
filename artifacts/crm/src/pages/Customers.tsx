@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Users, Phone, Mail, ChevronRight, ChevronLeft, User, MapPin, Layers, Info, StickyNote, CalendarClock } from "lucide-react";
+import { TimeSelect } from "@/components/TimeSelect";
 
 const PAGE_SIZE = 75;
 
@@ -695,10 +696,10 @@ function NewCustomerForm({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <F label="Start Time" required>
-                  <input type="time" value={initialStart} onChange={(event) => setInitialStart(event.target.value)} className={INPUT_CLS} />
+                  <TimeSelect value={initialStart} onChange={setInitialStart} className={INPUT_CLS} />
                 </F>
                 <F label="End Time" required>
-                  <input type="time" value={initialEnd} onChange={(event) => setInitialEnd(event.target.value)} className={INPUT_CLS} />
+                  <TimeSelect value={initialEnd} onChange={setInitialEnd} className={INPUT_CLS} />
                 </F>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -970,6 +971,8 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
       <div className="relative mb-3">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
         <input
+          type="search"
+          aria-label="Search profiles"
           placeholder="Search by name, company, city, email, or phone…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}

@@ -1,4 +1,5 @@
 import { ScheduleNotificationSettings } from "@/components/ScheduleNotificationSettings";
+import { QuoteSettingsCard } from "@/components/QuoteSettingsCard";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -30,6 +31,7 @@ import {
 import { useGetFinancialCapabilities } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { hasClientCapability } from "@/lib/rbac";
+import { TimeSelect } from "@/components/TimeSelect";
 
 interface AdminStats {
   customers: number;
@@ -82,6 +84,9 @@ export default function Settings() {
   const canManageCatalogs =
     hasClientCapability(user, "catalogs.manage") &&
     hasClientCapability(user, "custom_fields.manage");
+  // What the whole company quotes on is an administrator's decision; everyone
+  // else sees the settings read-only, because the quote builder shows them.
+  const canManageQuoteSettings = hasClientCapability(user, "admin.settings");
 
   const {
     data: stats,
@@ -202,6 +207,10 @@ export default function Settings() {
         capabilitiesLoading={capabilitiesQuery.isLoading}
       />
 
+      {/* Kyle (#11, #13): quote validity and the company's own terms, decided
+          once for the business instead of on every quote. */}
+      <QuoteSettingsCard canManage={canManageQuoteSettings} />
+
       <CatalogManagement canManage={canManageCatalogs} />
 
       {/* ── Danger Zone ────────────────────────────────────────────── */}
@@ -308,14 +317,16 @@ type CustomFieldDefinition = CatalogEntry & {
   required?: boolean;
 };
 
+// `one` is what a single entry is called. It used to be guessed by dropping
+// an "s" from the title, which turned Counties into "Add countie".
 const CATALOGS = [
-  { type: "profile-types", title: "Profile types", description: "Classifications available on customer profiles." },
-  { type: "profile-groups", title: "Profile groups", description: "Groups used to organize customer profiles." },
-  { type: "counties", title: "Counties", description: "Service-area counties for location addresses." },
-  { type: "payment-terms", title: "Payment terms", description: "Terms offered on estimates and invoices." },
-  { type: "marketing-sources", title: "Marketing sources", description: "Attribution choices for incoming business." },
-  { type: "service-types", title: "Service types", description: "Service classifications used by operations." },
-  { type: "job-types", title: "Job types", description: "Job classifications used for scheduling and reporting." },
+  { type: "profile-types", title: "Profile types", one: "profile type", description: "Classifications available on customer profiles." },
+  { type: "profile-groups", title: "Profile groups", one: "profile group", description: "Groups used to organize customer profiles." },
+  { type: "counties", title: "Counties", one: "county", description: "Service-area counties for location addresses." },
+  { type: "payment-terms", title: "Payment terms", one: "payment term", description: "Terms offered on estimates and invoices." },
+  { type: "marketing-sources", title: "Marketing sources", one: "marketing source", description: "Attribution choices for incoming business." },
+  { type: "service-types", title: "Service types", one: "service type", description: "Service classifications used by operations." },
+  { type: "job-types", title: "Job types", one: "job type", description: "Job classifications used for scheduling and reporting." },
 ] as const;
 
 function catalogRows(value: unknown): CatalogEntry[] {
@@ -356,8 +367,8 @@ function CatalogManagement({ canManage }: { canManage: boolean }) {
 }
 
 function CatalogList({
-  type, title, description, canManage,
-}: { type: string; title: string; description: string; canManage: boolean }) {
+  type, title, one, description, canManage,
+}: { type: string; title: string; one: string; description: string; canManage: boolean }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [label, setLabel] = useState("");
@@ -405,7 +416,7 @@ function CatalogList({
             })}
           </div>}
       {canManage && <form onSubmit={(event) => { event.preventDefault(); const trimmed = label.trim(); if (!trimmed) return; mutation.mutate({ method: "POST", body: { label: trimmed, active: true, sortOrder: rows.length } }, { onSuccess: () => setLabel("") }); }} className="mt-3 flex gap-2">
-        <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder={`Add ${title.toLowerCase().replace(/s$/, "")}`} className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 text-xs" />
+        <input value={label} onChange={(event) => setLabel(event.target.value)} aria-label={`Add a ${one}`} placeholder={`Add ${one}`} className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 text-xs" />
         <button type="submit" disabled={!label.trim() || mutation.isPending} className="inline-flex h-8 items-center gap-1 rounded-lg bg-slate-800 px-2.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add</button>
       </form>}
     </div>
@@ -434,7 +445,7 @@ function CustomFieldManager({ canManage }: { canManage: boolean }) {
       const name = field.label ?? field.name ?? field.fieldKey ?? "Untitled";
       return <div key={field.id} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2"><span className={`h-2 w-2 rounded-full ${active ? "bg-emerald-500" : "bg-slate-300"}`} /><span className={`flex-1 text-sm ${active ? "text-slate-700" : "text-slate-400 line-through"}`}>{name}</span><span className="text-[10px] uppercase text-slate-400">{field.fieldType ?? "text"}</span>{canManage && <><button aria-label={`Move ${name} up`} onClick={() => mutation.mutate({ method: "PATCH", id: field.id, body: { sortOrder: Math.max(0, (field.sortOrder ?? 0) - 1) } })} className="rounded p-1 text-slate-400 hover:bg-slate-100"><ChevronUp className="h-3.5 w-3.5" /></button><button aria-label={`Move ${name} down`} onClick={() => mutation.mutate({ method: "PATCH", id: field.id, body: { sortOrder: (field.sortOrder ?? 0) + 1 } })} className="rounded p-1 text-slate-400 hover:bg-slate-100"><ChevronDown className="h-3.5 w-3.5" /></button><button onClick={() => mutation.mutate({ method: "PATCH", id: field.id, body: { active: !active } })} className="text-[11px] font-semibold text-slate-500 hover:text-slate-900">{active ? "Deactivate" : "Activate"}</button><button aria-label={`Remove ${name}`} onClick={() => window.confirm(`Remove "${name}"?`) && mutation.mutate({ method: "DELETE", id: field.id })} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-3.5 w-3.5" /></button></>}</div>;
     })}</div>
-    {canManage && <form onSubmit={(event) => { event.preventDefault(); const trimmed = label.trim(); if (!trimmed) return; mutation.mutate({ method: "POST", body: { label: trimmed, fieldKey: trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""), fieldType, template, active: true, sortOrder: rows.length } }, { onSuccess: () => setLabel("") }); }} className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_130px_auto]"><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Field label" className="h-8 min-w-0 rounded-lg border border-slate-200 px-2.5 text-xs" /><select value={fieldType} onChange={event => setFieldType(event.target.value)} className="h-8 rounded-lg border border-slate-200 px-2 text-xs"><option value="text">Text</option><option value="multiline">Long text</option><option value="number">Number</option><option value="date">Date</option><option value="boolean">Yes / no</option></select><select value={template} onChange={event => setTemplate(event.target.value)} className="h-8 rounded-lg border border-slate-200 px-2 text-xs"><option value="all">All profiles</option><option value="residential">Residential</option><option value="commercial">Commercial</option></select><button type="submit" disabled={!label.trim() || mutation.isPending} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-slate-800 px-2.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add field</button></form>}
+    {canManage && <form onSubmit={(event) => { event.preventDefault(); const trimmed = label.trim(); if (!trimmed) return; mutation.mutate({ method: "POST", body: { label: trimmed, fieldKey: trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""), fieldType, template, active: true, sortOrder: rows.length } }, { onSuccess: () => setLabel("") }); }} className="mt-3 grid gap-2 sm:grid-cols-[1fr_120px_130px_auto]"><input value={label} onChange={(event) => setLabel(event.target.value)} aria-label="New field label" placeholder="Field label" className="h-8 min-w-0 rounded-lg border border-slate-200 px-2.5 text-xs" /><select value={fieldType} aria-label="What kind of field" onChange={event => setFieldType(event.target.value)} className="h-8 rounded-lg border border-slate-200 px-2 text-xs"><option value="text">Text</option><option value="multiline">Long text</option><option value="number">Number</option><option value="date">Date</option><option value="boolean">Yes / no</option></select><select value={template} aria-label="Which profiles it appears on" onChange={event => setTemplate(event.target.value)} className="h-8 rounded-lg border border-slate-200 px-2 text-xs"><option value="all">All profiles</option><option value="residential">Residential</option><option value="commercial">Commercial</option></select><button type="submit" disabled={!label.trim() || mutation.isPending} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-slate-800 px-2.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-40"><Plus className="h-3.5 w-3.5" /> Add field</button></form>}
   </div>;
 }
 
@@ -581,10 +592,11 @@ function CommunicationSafetySettings({
         ) : (
           <>
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
+              <label htmlFor="quiet-hours-timezone" className="block text-xs font-semibold text-slate-600 mb-1">
                 IANA timezone
               </label>
               <input
+                id="quiet-hours-timezone"
                 value={timezone}
                 onChange={(event) => setTimezone(event.target.value)}
                 placeholder="America/Chicago"
@@ -598,11 +610,11 @@ function CommunicationSafetySettings({
                   className="text-xs font-semibold text-slate-600"
                 >
                   {label}
-                  <input
-                    type="time"
+                  <TimeSelect
                     value={value}
-                    onChange={(event) => setter(event.target.value)}
+                    onChange={setter}
                     className="mt-1 h-9 w-full rounded-lg border border-slate-200 px-3 text-sm font-normal"
+                    placeholder="Any time"
                   />
                 </label>
               ))}

@@ -7,6 +7,7 @@ export * from "./properties.ts";
 export * from "./services.ts";
 export * from "./quotes.ts";
 export * from "./quote_line_items.ts";
+export * from "./quote_settings.ts";
 export * from "./estimate_lifecycle.ts";
 export * from "./jobs.ts";
 export * from "./invoices.ts";

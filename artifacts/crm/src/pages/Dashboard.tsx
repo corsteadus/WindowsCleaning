@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils";
 import { authScopedQueryKey } from "@/lib/auth-scope";
 import { EstimateStatusModule } from "@/components/EstimateStatusModule";
+import { formatTimeOfDay } from "@/lib/time-of-day";
 
 const PERIODS = [
   [DashboardPeriod.today, "Today"],
@@ -30,10 +31,9 @@ const PERIODS = [
   [DashboardPeriod.this_year, "This Year"],
 ] as const;
 
+// Kyle #14 asked for standard AM / PM everywhere, so the one formatter does it.
 function fmtTime(value?: string | null) {
-  if (!value) return null;
-  const [hours, minutes] = value.split(":").map(Number);
-  return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")}${hours >= 12 ? "pm" : "am"}`;
+  return formatTimeOfDay(value) || null;
 }
 
 function Comparison({ metric, suffix = "" }: { metric: DashboardComparedMetric; suffix?: string }) {

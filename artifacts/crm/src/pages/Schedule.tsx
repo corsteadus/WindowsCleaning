@@ -1,3 +1,5 @@
+import { formatTimeOfDay } from "@/lib/time-of-day";
+import { TimeSelect } from "@/components/TimeSelect";
 import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useState, useMemo } from "react";
 import { Layout } from "@/components/Layout";
@@ -93,10 +95,7 @@ const STATUS_CFG: Record<string, { label: string; bg: string; text: string; dot:
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtTime(t?: string | null) {
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  const ampm = h >= 12 ? "pm" : "am";
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")}${ampm}`;
+  return formatTimeOfDay(t) || null;
 }
 
 function customerLabel(job: JobLike) {
@@ -165,11 +164,11 @@ function RescheduleModal({ job, onClose }: { job: JobLike | null; onClose: () =>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Start</Label>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="rounded-xl" />
+              <TimeSelect aria-label="Start time" value={startTime} onChange={setStartTime} className="rounded-xl" />
             </div>
             <div className="space-y-1.5">
               <Label>End</Label>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="rounded-xl" />
+              <TimeSelect aria-label="End time" value={endTime} onChange={setEndTime} className="rounded-xl" />
             </div>
           </div>
         </div>

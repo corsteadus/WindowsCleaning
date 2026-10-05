@@ -1,3 +1,4 @@
+import { formatTimeOfDay } from "@/lib/time-of-day";
 import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -93,10 +94,7 @@ function occurrenceTint(occurrence: CalendarOccurrence): string {
 }
 
 function timeLabel(occurrence: CalendarOccurrence): string {
-  if (!occurrence.startTime) return "No time";
-  const [h, m] = occurrence.startTime.split(":").map(Number);
-  const ampm = h >= 12 ? "p" : "a";
-  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${ampm}`;
+  return formatTimeOfDay(occurrence.startTime) || "No time";
 }
 
 /** The card's contents, shared by the real card and the drag preview. */

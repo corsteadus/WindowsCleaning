@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { protectedFetch } from "@/lib/auth-scope";
+import { formatDateOnly } from "@/lib/quote-settings-form";
 import { formatCurrency } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -143,7 +144,7 @@ export default function QuotePrint() {
       {quote.validUntil && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6 text-sm">
           <span className="font-medium text-amber-800">Valid until: </span>
-          <span className="text-amber-700">{quote.validUntil}</span>
+          <span className="text-amber-700">{formatDateOnly(quote.validUntil)}</span>
         </div>
       )}
 

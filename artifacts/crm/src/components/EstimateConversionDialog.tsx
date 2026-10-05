@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { createIdempotencyKey } from "@/lib/idempotency";
 import { protectedFetch } from "@/lib/auth-scope";
+import { TimeSelect } from "@/components/TimeSelect";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -143,8 +144,8 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
                 <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs space-y-1">{lines.map((line) => <div key={line.id} className="flex justify-between gap-3"><span>{line.quantity} × {line.description}</span><strong>${Number(line.totalPrice).toFixed(2)}</strong></div>)}</div>
                 {row && <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div><Label>Date</Label><Input type="date" value={row.scheduledDate} onChange={(event) => update(location.id, { scheduledDate: event.target.value })} /></div>
-                  <div><Label>Start</Label><Input type="time" value={row.scheduledStartTime} onChange={(event) => update(location.id, { scheduledStartTime: event.target.value })} /></div>
-                  <div><Label>End</Label><Input type="time" value={row.scheduledEndTime} onChange={(event) => update(location.id, { scheduledEndTime: event.target.value })} /></div>
+                  <div><Label>Start</Label><TimeSelect aria-label="Start time" value={row.scheduledStartTime} onChange={(value) => update(location.id, { scheduledStartTime: value })} /></div>
+                  <div><Label>End</Label><TimeSelect aria-label="End time" value={row.scheduledEndTime} onChange={(value) => update(location.id, { scheduledEndTime: value })} /></div>
                   <div><Label>Crew</Label><Select value={row.crewId || "none"} onValueChange={(value) => update(location.id, { crewId: value === "none" ? "" : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Unassigned</SelectItem>{(crews.data ?? []).filter((crew) => crew.isActive).map((crew) => <SelectItem key={crew.id} value={String(crew.id)}>{crew.name}</SelectItem>)}</SelectContent></Select></div>
                   <div><Label>Employee</Label><Select value={row.assignedUserId || "none"} onValueChange={(value) => update(location.id, { assignedUserId: value === "none" ? "" : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Unassigned</SelectItem>{(employees.data ?? []).map((employee) => <SelectItem key={employee.id} value={employee.id}>{employee.displayName}</SelectItem>)}</SelectContent></Select></div>
                   <div className="sm:col-span-3"><Label>Job notes</Label><Textarea value={row.jobNotes} onChange={(event) => update(location.id, { jobNotes: event.target.value })} placeholder="Location-specific instructions…" /></div>

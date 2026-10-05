@@ -35,6 +35,8 @@ import { deriveQuoteStatuses } from "../lib/estimate-status-batch.js";
 import { isManuallyCorrectableStatus, MANUALLY_CORRECTABLE_STATUSES } from "../lib/estimate-lifecycle.js";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
+import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, normaliseQuoteTerms, QUOTE_VALIDITY_PRESETS } from "../lib/quote-settings.js";
+import { readQuoteSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -152,6 +154,39 @@ class DrizzleTxAdapter implements ConvertAdapter {
 }
 
 const router: IRouter = Router();
+
+// ─── the company's own quote settings ───────────────────────────────────────
+
+/**
+ * Kyle (#11, #13): how long a quote stays valid, and the terms the company
+ * puts on it, are decided once for the business rather than on every quote.
+ *
+ * The read is open to anyone who may see a quote, because the builder needs
+ * it to show the expiry and to fill in the terms. Only an administrator may
+ * change it — see ROUTE_RULES.
+ */
+router.get("/quote-settings", async (_req, res) => {
+  const settings = await readQuoteSettings();
+  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS] });
+});
+
+router.put("/quote-settings", async (req, res) => {
+  const body = (req.body ?? {}) as { validityDays?: unknown; terms?: unknown };
+  const problem = validateQuoteSettingsInput(body);
+  if (problem) {
+    res.status(400).json({ error: problem });
+    return;
+  }
+  const settings = await writeQuoteSettings(
+    {
+      validityDays: normaliseValidityDays(body.validityDays)!,
+      // Corstead never writes terms of its own: an empty box stays empty.
+      terms: normaliseQuoteTerms(body.terms),
+    },
+    getPerformedBy(req),
+  );
+  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS] });
+});
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -339,6 +374,12 @@ async function createQuoteTx(
     await requireActivePropertyForCustomer(tx, requestedCustomerId!, requestedPropertyId);
   }
   const subtotal = lineItemsInput.reduce((sum, li) => sum + li.quantity * li.unitPrice, 0);
+  // Kyle #11: nobody types a Valid Until date. It is calculated from the
+  // company's validity setting, and an explicit date is only honoured if one
+  // is sent (an import, or a caller correcting a single quote).
+  const settings = await readQuoteSettings(tx);
+  const validUntil = body.validUntil
+    || quoteExpiryFor(new Date(), settings.validityDays).validUntil;
   const [created] = await tx.insert(quotesTable).values({
     customerId: requestedCustomerId,
     leadId: body.leadId ? Number(body.leadId) : null,
@@ -350,8 +391,9 @@ async function createQuoteTx(
     discountTotal: "0",
     totalAmount: String(subtotal),
     notes: body.notes || null,
-    terms: body.terms || null,
-    validUntil: body.validUntil || null,
+    // #13: the company's own terms, when it has written any. Never Corstead's.
+    terms: body.terms || settings.terms || null,
+    validUntil,
   }).returning();
 
   if (lineItemsInput.length > 0) {

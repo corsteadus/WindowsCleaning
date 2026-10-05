@@ -322,6 +322,11 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { prefix: "/contacts", capability: "contacts.manage" },
   { prefix: "/properties", methods: ["GET"], capability: "properties.view" },
   { prefix: "/properties", capability: "properties.manage" },
+  // Kyle (#11, #13): the company's quote validity and terms. Anyone who may see
+  // a quote may read them — the builder shows the expiry and fills in the terms —
+  // but only an administrator may change what the whole company quotes on.
+  { prefix: "/quote-settings", methods: ["GET"], capability: "quotes.view" },
+  { prefix: "/quote-settings", capability: "admin.settings" },
   { prefix: "/quotes", methods: ["GET"], capability: "quotes.view" },
   { prefix: "/quotes", matches: (method, path) => isMethod(method, "POST") && /\/appointment$/.test(path), capability: "estimates.schedule" },
   { prefix: "/quotes", matches: (method, path) => isMethod(method, "POST") && /\/(?:finalize|revisions)$/.test(path), capability: "estimates.finalize" },

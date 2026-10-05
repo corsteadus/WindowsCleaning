@@ -22,7 +22,7 @@ import {
   canSubmitService, emptyServiceDraft, newServiceIdempotencyKey as newIdempotencyKey,
   serviceDraftToBody, serviceIdempotencyHeaders, type ServiceDraft,
 } from "@/lib/service-form";
-import { ServiceCategoryPicker } from "@/components/ServiceCategoryPicker";
+import { ServiceCategoryPicker, useServiceCategoryName } from "@/components/ServiceCategoryPicker";
 
 export default function Services() {
   const { data: services, isLoading } = useListServices();
@@ -30,6 +30,8 @@ export default function Services() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const canManage = hasClientCapability(user, "services.manage");
+  // A service stores its category's code; the office should read its name.
+  const categoryName = useServiceCategoryName();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<ServiceDraft>(emptyServiceDraft);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +100,7 @@ export default function Services() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {services?.map((service) => <Card key={service.id} className="border-none shadow-sm hover:shadow-md transition-shadow bg-white rounded-2xl overflow-hidden">
             <CardHeader className="border-b border-slate-100 pb-4"><div className="flex justify-between items-start">
-              <Badge variant={service.isActive ? "default" : "secondary"} className="capitalize">{service.category}</Badge>
+              <Badge variant={service.isActive ? "default" : "secondary"}>{categoryName(service.category)}</Badge>
               {service.basePrice !== null && service.basePrice !== undefined && <span className="font-display text-sm text-slate-400" title="A price this service was given before; the quote decides what is charged">{formatCurrency(service.basePrice)}</span>}
             </div><CardTitle className="text-xl mt-3 text-slate-900">{service.name}</CardTitle></CardHeader>
             <CardContent className="pt-4"><p className="text-sm text-slate-600 line-clamp-2 min-h-[40px]">{service.description || "No description provided."}</p>

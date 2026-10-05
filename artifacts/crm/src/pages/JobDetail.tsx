@@ -55,6 +55,8 @@ import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
 import { liveDateControlValue, liveTimeControlValue } from "@/lib/job-new-scheduled-date";
 import { committedJobScheduleMatches } from "@/lib/job-date-commit";
 import { canOfferPermanentJobDelete, isCompletedJobStatus } from "@/lib/job-delete-eligibility";
+import { TimeSelect } from "@/components/TimeSelect";
+import { formatTimeOfDay } from "@/lib/time-of-day";
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
@@ -84,11 +86,10 @@ function formatDateShort(d?: string | null) {
   return formatJobDateOnly(d, "EEE, MMM d");
 }
 
+// The fourth copy of this, found by the Phase 20 browser pass. Kyle #14 asked
+// for standard AM / PM; one formatter now does it for every screen.
 function formatTime(t?: string | null) {
-  if (!t) return null;
-  const [h, m] = t.split(":").map(Number);
-  const ampm = h >= 12 ? "pm" : "am";
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  return formatTimeOfDay(t) || null;
 }
 
 function formatDatetime(d?: string | null) {
@@ -177,8 +178,8 @@ export default function JobDetail() {
   const [editCrewId, setEditCrewId] = useState<number | "">("");
   const [editAssignedTechnicianUserId, setEditAssignedTechnicianUserId] = useState<string>("");
   const editDateInputRef = useRef<HTMLInputElement>(null);
-  const editStartTimeInputRef = useRef<HTMLInputElement>(null);
-  const editEndTimeInputRef = useRef<HTMLInputElement>(null);
+  const editStartTimeInputRef = useRef<HTMLSelectElement>(null);
+  const editEndTimeInputRef = useRef<HTMLSelectElement>(null);
 
   // Notes state (always-visible inline)
   const [notesDraft, setNotesDraft] = useState<string | null>(null);
@@ -841,11 +842,11 @@ export default function JobDetail() {
                     </div>
                     <div className="space-y-1.5">
                       <Label>Start Time</Label>
-                       <Input ref={editStartTimeInputRef} type="time" value={editStartTime} onChange={(e) => setEditStartTime(e.target.value)} className="rounded-xl" />
+                       <TimeSelect ref={editStartTimeInputRef} aria-label="Start time" value={editStartTime} onChange={setEditStartTime} className="rounded-xl" />
                     </div>
                     <div className="space-y-1.5">
                       <Label>End Time</Label>
-                       <Input ref={editEndTimeInputRef} type="time" value={editEndTime} onChange={(e) => setEditEndTime(e.target.value)} className="rounded-xl" />
+                       <TimeSelect ref={editEndTimeInputRef} aria-label="End time" value={editEndTime} onChange={setEditEndTime} className="rounded-xl" />
                     </div>
                     <div className="sm:col-span-2 space-y-1.5">
                       <Label>Service Type</Label>

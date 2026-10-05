@@ -1,3 +1,4 @@
+import { formatTimeOfDay } from "./time-of-day.ts";
 /**
  * Crew double-booking detection.
  *
@@ -87,11 +88,8 @@ export function describeSpan(job: OverlapCandidate): string {
   const from = timeToMinutes(job.startTime);
   if (from === null) return "No time";
   const to = timeToMinutes(job.endTime);
-  const label = (minutes: number) => {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const ampm = h >= 12 ? "pm" : "am";
-    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
-  };
+  const label = (minutes: number) => formatTimeOfDay(
+    `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+  );
   return to === null || to === from ? label(from) : `${label(from)} – ${label(to)}`;
 }
