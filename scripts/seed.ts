@@ -169,16 +169,16 @@ async function main() {
     const stories = rand(1, 3);
     const windows = rand(8, 40);
     const r = await pool.query(
-      `INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, gate_code, has_screens, has_hard_water, has_tracks, service_notes, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,'AZ',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()) RETURNING id`,
+      // access_notes and gate_code were dropped on 2026-10-05 (Kyle, 2026-09-23
+      // #2). The access note here became the service note it always was.
+      `INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,'AZ',$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW()) RETURNING id`,
       [
         cid,
         ptype === "commercial" ? `${pick(lastNames)} Business` : "Primary Residence",
         `${rand(100,9999)} ${pick(streets)}`,
         pick(cities), `850${rand(10,99)}`,
         ptype, stories, windows,
-        stories > 1 ? "Second floor requires extension pole — no ladder access on north side" : "Ground floor, easy access",
-        i % 3 === 0 ? `${rand(1000,9999)}` : null,
         i % 2 === 0, i % 5 === 0, i % 3 === 0,
         windows > 25 ? "Large property — schedule 3+ hours" : "Standard service",
       ]
@@ -187,16 +187,15 @@ async function main() {
     // Some customers get a second property
     if (i % 5 === 0) {
       const r2 = await pool.query(
-        `INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_screens, has_hard_water, has_tracks, service_notes, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,'AZ',$5,'commercial',2,$6,$7,$8,$9,$10,$11,NOW(),NOW()) RETURNING id`,
+        `INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,'AZ',$5,'commercial',2,$6,$7,$8,$9,$10,NOW(),NOW()) RETURNING id`,
         [
           cid, "Rental Property",
           `${rand(100,9999)} ${pick(streets)}`,
           pick(cities), `850${rand(10,99)}`,
           rand(10, 20),
-          "Tenant must be notified 48 hrs in advance",
           true, false, true,
-          "Rental — bill customer not tenant",
+          "Rental — bill customer not tenant. Tenant must be notified 48 hrs in advance.",
         ]
       );
       propertyIds.push(r2.rows[0].id);

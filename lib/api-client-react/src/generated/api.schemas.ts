@@ -690,10 +690,6 @@ export interface Property {
   stories?: number | null;
   /** @nullable */
   windowCount?: number | null;
-  /** @nullable */
-  accessNotes?: string | null;
-  /** @nullable */
-  gateCode?: string | null;
   hasScreens: boolean;
   hasHardWater: boolean;
   hasTracks: boolean;
@@ -1392,10 +1388,6 @@ export interface PropertyCreateInput {
   stories?: number | null;
   /** @nullable */
   windowCount?: number | null;
-  /** @nullable */
-  accessNotes?: string | null;
-  /** @nullable */
-  gateCode?: string | null;
   hasScreens?: boolean;
   hasHardWater?: boolean;
   hasTracks?: boolean;
@@ -1436,10 +1428,6 @@ export interface PropertyUpdateInput {
   stories?: number | null;
   /** @nullable */
   windowCount?: number | null;
-  /** @nullable */
-  accessNotes?: string | null;
-  /** @nullable */
-  gateCode?: string | null;
   hasScreens?: boolean;
   hasHardWater?: boolean;
   hasTracks?: boolean;

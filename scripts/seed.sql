@@ -157,22 +157,13 @@ RETURNING id INTO c_chen;
 -- ─────────────────────────────────────────────────────────────────
 -- PROPERTIES
 -- ─────────────────────────────────────────────────────────────────
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, gate_code, has_screens, has_hard_water, has_tracks, service_notes)
-VALUES (c_hartley, 'Main Residence', '4820 E Camelback Rd', 'Scottsdale', 'AZ', '85251',
-        'residential', 2, 28, 'Side gate code below. Dog in backyard.', '1847#', true, true, true,
-        'Hard water on rear windows. Use Aqua Buff.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes) VALUES (c_hartley, 'Main Residence', '4820 E Camelback Rd', 'Scottsdale', 'AZ', '85251', 'residential', 2, 28, true, true, true, 'Hard water on rear windows. Use Aqua Buff.')
 RETURNING id INTO p_hartley1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_screens, has_hard_water, service_notes)
-VALUES (c_hartley, 'Guest House', '4822 E Camelback Rd', 'Scottsdale', 'AZ', '85251',
-        'residential', 1, 8, 'Unlocked shed on left.', false, false,
-        'Small casita. Usually done same day as main house.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, service_notes) VALUES (c_hartley, 'Guest House', '4822 E Camelback Rd', 'Scottsdale', 'AZ', '85251', 'residential', 1, 8, false, false, 'Small casita. Usually done same day as main house.')
 RETURNING id INTO p_hartley2;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_screens, has_hard_water, has_tracks, service_notes)
-VALUES (c_morrison, 'Scottsdale Office Plaza', '8901 N Pima Rd Ste 200', 'Scottsdale', 'AZ', '85258',
-        'commercial', 2, 44, 'Check in with front desk. Park in visitor lot B.', false, false, true,
-        'Exterior only. Coordinate with property manager Greg (480-555-0300).')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes) VALUES (c_morrison, 'Scottsdale Office Plaza', '8901 N Pima Rd Ste 200', 'Scottsdale', 'AZ', '85258', 'commercial', 2, 44, false, false, true, 'Exterior only. Coordinate with property manager Greg (480-555-0300).')
 RETURNING id INTO p_morrison1;
 
 INSERT INTO properties (customer_id, address, city, state, zip, property_type, stories, window_count, has_screens, service_notes)
@@ -180,16 +171,10 @@ VALUES (c_delgado, '1133 W McDowell Rd', 'Phoenix', 'AZ', '85007',
         'residential', 1, 16, true, 'Single story ranch. Straightforward job.')
 RETURNING id INTO p_delgado1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, gate_code, has_screens, has_hard_water, has_tracks, service_notes)
-VALUES (c_kim, 'Family Home', '2200 E Ocotillo Rd', 'Chandler', 'AZ', '85249',
-        'residential', 2, 34, '2281', true, true, true,
-        'Always request Alpha Crew. Ji-Yeon inspects every window.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes) VALUES (c_kim, 'Family Home', '2200 E Ocotillo Rd', 'Chandler', 'AZ', '85249', 'residential', 2, 34, true, true, true, 'Always request Alpha Crew. Ji-Yeon inspects every window.')
 RETURNING id INTO p_kim1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_hard_water, service_notes)
-VALUES (c_nakamura, 'Sonoran Grille', '15505 N Hayden Rd', 'Scottsdale', 'AZ', '85260',
-        'commercial', 1, 18, 'Must arrive before 7am. Manager opens at 6:45am.', true,
-        'Front facade storefront glass. Hard water from sprinklers.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_hard_water, service_notes) VALUES (c_nakamura, 'Sonoran Grille', '15505 N Hayden Rd', 'Scottsdale', 'AZ', '85260', 'commercial', 1, 18, true, 'Front facade storefront glass. Hard water from sprinklers.')
 RETURNING id INTO p_nakamura1;
 
 INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, service_notes)
@@ -197,22 +182,13 @@ VALUES (c_schwartz, 'Shea Blvd Home', '6200 E Shea Blvd', 'Scottsdale', 'AZ', '8
         'residential', 2, 22, true, false, '')
 RETURNING id INTO p_schwartz1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_screens, service_notes)
-VALUES (c_schwartz, 'Rental Condo', '7300 E Earll Dr #204', 'Scottsdale', 'AZ', '85251',
-        'residential', 1, 10, 'Call tenant Dana first: 480-555-0811.', true,
-        'Tenant prefers weekday morning appointments.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, service_notes) VALUES (c_schwartz, 'Rental Condo', '7300 E Earll Dr #204', 'Scottsdale', 'AZ', '85251', 'residential', 1, 10, true, 'Tenant prefers weekday morning appointments.')
 RETURNING id INTO p_schwartz2;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_hard_water, service_notes)
-VALUES (c_oconnell, 'OConnell Law Offices', '3300 N Central Ave Ste 1800', 'Phoenix', 'AZ', '85012',
-        'commercial', 18, 60, 'High-rise. Use freight elevator #3 with code 4419.', false,
-        'Beta Crew only — high-rise certified. Exterior from rope access.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_hard_water, service_notes) VALUES (c_oconnell, 'OConnell Law Offices', '3300 N Central Ave Ste 1800', 'Phoenix', 'AZ', '85012', 'commercial', 18, 60, false, 'Beta Crew only — high-rise certified. Exterior from rope access.')
 RETURNING id INTO p_oconnell1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, gate_code, has_screens, has_hard_water, has_tracks, service_notes)
-VALUES (c_patel, 'Paradise Valley Estate', '7100 E Lincoln Dr', 'Paradise Valley', 'AZ', '85253',
-        'residential', 3, 52, 'Call 20 mins before arrival. Guard gate.', '7710#', false, true, true,
-        'New client. Ladder work on 3rd floor. Crew must be certified.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_screens, has_hard_water, has_tracks, service_notes) VALUES (c_patel, 'Paradise Valley Estate', '7100 E Lincoln Dr', 'Paradise Valley', 'AZ', '85253', 'residential', 3, 52, false, true, true, 'New client. Ladder work on 3rd floor. Crew must be certified.')
 RETURNING id INTO p_patel1;
 
 INSERT INTO properties (customer_id, address, city, state, zip, property_type, stories, window_count, has_screens, service_notes)
@@ -225,10 +201,7 @@ VALUES (c_fitzgerald, '20750 N 87th St', 'Scottsdale', 'AZ', '85255',
         'residential', 2, 26, true, false, '')
 RETURNING id INTO p_fitzgerald1;
 
-INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, access_notes, has_hard_water, service_notes)
-VALUES (c_langford, 'Langford Build Site — Arcadia', '4200 E Camelback Rd', 'Phoenix', 'AZ', '85018',
-        'commercial', 2, 36, 'Active construction site. Hard hat required. Contact Jose: 602-555-0700.', true,
-        'Post-construction cleanup. Stucco and paint overspray.')
+INSERT INTO properties (customer_id, name, address, city, state, zip, property_type, stories, window_count, has_hard_water, service_notes) VALUES (c_langford, 'Langford Build Site — Arcadia', '4200 E Camelback Rd', 'Phoenix', 'AZ', '85018', 'commercial', 2, 36, true, 'Post-construction cleanup. Stucco and paint overspray.')
 RETURNING id INTO p_langford1;
 
 INSERT INTO properties (customer_id, address, city, state, zip, property_type, stories, window_count, has_screens, service_notes)

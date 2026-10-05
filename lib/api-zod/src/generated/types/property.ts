@@ -38,10 +38,6 @@ export interface Property {
   stories?: number | null;
   /** @nullable */
   windowCount?: number | null;
-  /** @nullable */
-  accessNotes?: string | null;
-  /** @nullable */
-  gateCode?: string | null;
   hasScreens: boolean;
   hasHardWater: boolean;
   hasTracks: boolean;

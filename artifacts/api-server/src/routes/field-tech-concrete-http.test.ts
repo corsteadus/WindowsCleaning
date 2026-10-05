@@ -27,8 +27,9 @@ class FieldTechHttpFixture {
     { id: 2, firstName: "Bea", lastName: "Other", companyName: null, email: "bea@example.test", phone: "555-0102", homePhone: null, workPhone: null, cellPhone: null, altPhone: null, billingAddress: "2 Main", billingCity: "Austin", billingState: "TX", billingZip: "78702", preferredContactMethod: null, status: "active", lifecycleStatus: "customer", clientType: "residential", directions: null, windowCount: 4, createdAt: NOW, updatedAt: NOW },
   ];
   readonly properties = [
-    { id: 10, customerId: 1, name: "Ada home", address: "1 Main", city: "Austin", state: "TX", zip: "78701", propertyType: "residential", stories: 1, windowCount: 12, directions: "Side gate", locationNotes: null, accessNotes: "Call first", gateCode: null, riskNotes: null, serviceNotes: null, hasScreens: true, hasHardWater: false, hasTracks: true },
-    { id: 20, customerId: 2, name: "Bea home", address: "2 Main", city: "Austin", state: "TX", zip: "78702", propertyType: "residential", stories: 1, windowCount: 4, directions: null, locationNotes: null, accessNotes: null, gateCode: null, riskNotes: null, serviceNotes: null, hasScreens: false, hasHardWater: false, hasTracks: false },
+    // access_notes and gate_code were dropped on 2026-10-05 (Kyle, 2026-09-23 #2).
+    { id: 10, customerId: 1, name: "Ada home", address: "1 Main", city: "Austin", state: "TX", zip: "78701", propertyType: "residential", stories: 1, windowCount: 12, directions: "Side gate", locationNotes: null, riskNotes: null, serviceNotes: null, hasScreens: true, hasHardWater: false, hasTracks: true },
+    { id: 20, customerId: 2, name: "Bea home", address: "2 Main", city: "Austin", state: "TX", zip: "78702", propertyType: "residential", stories: 1, windowCount: 4, directions: null, locationNotes: null, riskNotes: null, serviceNotes: null, hasScreens: false, hasHardWater: false, hasTracks: false },
   ];
   readonly contacts = [
     { id: 100, customerId: 1, firstName: "Ada", lastName: "Assigned", email: "ada@example.test", phone: "555-0101", alternatePhone: null, role: "Owner", isPrimary: true },

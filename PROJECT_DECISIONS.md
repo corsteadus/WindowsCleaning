@@ -43,10 +43,13 @@ reading those screenshots turned up verified **8/8** after the republish that ca
 **The release message has gone to Kyle and Lute.** What we are waiting on them for is listed
 under "Waiting on the client" — eight items, none of which blocks Phase 13 or 14.
 
-**Phase 13 — sub-customers is done** in the working tree (2026-10-05) and not yet
-republished. **Next in our own queue:** the parked `properties.gate_code` / `access_notes`
-drop, then **Phase 14 — the calendar**, the largest remaining piece. Phase 15 go-live needs
-a date from Lute; Phase 12b email and A#9 still wait on his keys.
+**Phase 13 — sub-customers is done** in the working tree (2026-10-05), along with taking
+**Gate Code and Access Notes out of the code**. Neither is republished yet, and the column
+`DROP` waits for that republish — the deployed API still selects them.
+
+**Next:** republish, run the drop, then **Phase 14 — the calendar**, the largest remaining
+piece. Phase 15 go-live needs a date from Lute; Phase 12b email and A#9 still wait on his
+keys.
 
 Three things to put to Kyle with the republish, all recorded in their phases: whether a
 quote's validity should run from **delivery** (the assumption built) or from creation;
@@ -143,6 +146,73 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Gate Code and Access Notes — out of the code, 2026-10-05
+
+Kyle (2026-09-23, #2): *"Remove entirely as built-in fields — the property form
+**and** their display on assigned jobs. Corstead must not prompt anyone to store
+gate codes or card details; a company that wants it can make its own custom
+field. **Liability is the reason.**"*
+
+The screens and the write path went in Phase 8. This is the rest: the schema,
+the contract and the seed data.
+
+### The order matters, and the DROP is not done yet
+
+**The columns are still on the database.** The API deployed on Sandbox 2 selects
+both of them by name — Drizzle writes an explicit column list — so dropping them
+before that build is replaced would break **every property query Kyle makes**.
+
+So the sequence is: remove from the code → commit, push, **republish** → *then*
+drop. Only the first step is done. `scratchpad/p13b-drop-columns.mjs` is written
+and waiting, and it **refuses to run** until the deploy is ready.
+
+Its first version asked the wrong question. It read the deployed client bundle
+for `gateCode`, which has been clean since Phase 8 took the fields off the
+screens — so it answered "ready" while the deployed API would still have broken.
+It now signs in to the deployed API and reads an actual property: if the response
+still carries those keys, that build still selects the columns. Run today it says
+**"STILL answers with gateCode/accessNotes — it would break"** and stops, which
+is the correct answer and the reason the drop is not done.
+
+**No data is lost by the drop**: 0 rows hold a value in either column.
+
+### What changed
+
+- `lib/db/src/schema/properties.ts` — both columns gone.
+- `lib/api-spec/openapi.yaml` — `accessNotes` and `gateCode` removed from all
+  three Property schemas, and orval re-run. The API stops answering with keys
+  nothing fills in.
+- `seed-demo.ts`, `scripts/seed.sql`, `scripts/seed.ts` — nine `INSERT INTO
+  properties` statements in each of the first two, and two parameterised ones in
+  the third. Where an access note said something real about the job ("Tenant must be
+  notified 48 hrs in advance") it became part of the service notes, which is what
+  it always was.
+
+### Rewriting SQL by script, carefully
+
+Removing a column from an `INSERT` means removing its value from every tuple,
+and getting that wrong would **shift every later value one field to the left** —
+seeding a gate code into `service_notes` rather than nowhere. So:
+
+1. The rewrite ran against **copies** first.
+2. A separate checker, `scratchpad/check-inserts.mjs`, counts columns against
+   values for every `INSERT INTO properties` in both files. **28 statements, 0
+   mismatches**, before and after.
+3. The first attempt did get it wrong, and the checker is not what caught it —
+   reading the output did: the VALUES terminator ran past the closing bracket and
+   swallowed `RETURNING id INTO p_hartley1`, leaving a stray bracket. Fixed by
+   ending the list at the last balanced tuple.
+
+### Verified
+
+`scratchpad/verify-properties-without-gatecode.mjs` **7/7** over HTTP: a property
+can still be created, edited and read back on the profile; the response carries
+neither key; and **an old client that sends a gate code is not obeyed** rather
+than quietly storing one. API **669/683** (the same 14 `DATABASE_URL` failures),
+CRM **558/558**, every typecheck clean.
+
+---
+
 ## Phase 13 — sub-customers, done in the working tree 2026-10-05
 
 Kyle (2026-09-23, answer #5): *"Linking only. Any profile can sit beneath a main
@@ -819,7 +889,7 @@ is republished.
 | | Where it stands |
 |---|---|
 | **Republish** | **Does not wait for anything.** Three rounds are pushed and unseen, and Kyle keeps testing a stale build until it happens |
-| **Drop `properties.gate_code` and `access_notes`** | Code removal not started; only `seed-demo.ts` and the schema still carry them. The `DROP` must follow a republish or the deployed API breaks |
+| **Drop `properties.gate_code` and `access_notes`** | **Code removal done 2026-10-05** — schema, contract and seed data. The `DROP` itself waits for the republish that carries it; `scratchpad/p13b-drop-columns.mjs` checks the deployed API and refuses until then |
 | **A#9 — address a message to the contact that owns the channel** | Deliberately held for Phase 12b: it means making the sending path resolve recipients from contact channels, which is also what makes A#7's pause bite |
 | **Phase 13 — sub-customers** | **Done in the working tree, 2026-10-05.** Not republished; see its own section |
 | **Phase 14 — calendar** | Not started. The largest remaining piece |

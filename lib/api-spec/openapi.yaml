@@ -5229,10 +5229,6 @@ components:
           type: ["integer", "null"]
         windowCount:
           type: ["integer", "null"]
-        accessNotes:
-          type: ["string", "null"]
-        gateCode:
-          type: ["string", "null"]
         hasScreens:
           type: boolean
         hasHardWater:
@@ -5360,10 +5356,6 @@ components:
           type: ["integer", "null"]
         windowCount:
           type: ["integer", "null"]
-        accessNotes:
-          type: ["string", "null"]
-        gateCode:
-          type: ["string", "null"]
         hasScreens:
           type: boolean
         hasHardWater:
@@ -5423,10 +5415,6 @@ components:
           type: ["integer", "null"]
         windowCount:
           type: ["integer", "null"]
-        accessNotes:
-          type: ["string", "null"]
-        gateCode:
-          type: ["string", "null"]
         hasScreens:
           type: boolean
         hasHardWater:

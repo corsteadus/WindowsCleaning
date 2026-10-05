@@ -23,8 +23,10 @@ export const propertiesTable = pgTable("properties", {
   propertyType: text("property_type").notNull().default("residential"),
   stories: integer("stories"),
   windowCount: integer("window_count"),
-  accessNotes: text("access_notes"),
-  gateCode: text("gate_code"),
+  // `access_notes` and `gate_code` were dropped on 2026-10-05. Kyle
+  // (2026-09-23, #2): "Remove entirely as built-in fields … Corstead must not
+  // prompt anyone to store gate codes." A company that wants either can make a
+  // custom field of its own.
   hasScreens: boolean("has_screens").notNull().default(false),
   hasHardWater: boolean("has_hard_water").notNull().default(false),
   hasTracks: boolean("has_tracks").notNull().default(false),
