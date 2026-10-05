@@ -16,6 +16,7 @@ import {
   contactChannelsTable,
   contactChannelPurposesTable,
   accountProfileSettingsTable,
+  customFieldDefinitionsTable,
   customFieldValuesTable,
   estimateAppointmentsTable,
   estimateRevisionsTable,
@@ -64,6 +65,10 @@ import {
   prospectLifecycleTransition,
 } from "../lib/prospect-account.ts";
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
+import {
+  containsPattern,
+  parseCustomFieldFilter,
+} from "../lib/custom-field-search.ts";
 import { deriveQuoteStatuses } from "../lib/estimate-status-batch.js";
 import {
   customerSinceOnCreate,
@@ -131,7 +136,11 @@ async function lockProposedContactSignals(tx: any, fields: Record<string, unknow
 
 // ─── List customers (paginated) ───────────────────────────────────────────────
 router.get(["/customers", "/prospects"], async (req, res): Promise<void> => {
-  const { search, status, lifecycleStatus, clientType, accountType, page, limit } = req.query;
+  const {
+    search, status, lifecycleStatus, clientType, accountType, page, limit,
+    // Kyle #3: find a profile by what is in one of its custom fields.
+    customFieldId, customFieldValue,
+  } = req.query;
   const isProspectRoute = req.path === "/prospects";
   const effectiveLifecycleStatus = isProspectRoute ? "prospect" : lifecycleStatus;
 
@@ -156,8 +165,18 @@ router.get(["/customers", "/prospects"], async (req, res): Promise<void> => {
     // Full-name concat (handles "Kyle Stafford", "stafford kyle", partial first+last)
     const fullNameMatch = sql`UPPER(CONCAT(${customersTable.firstName}, ' ', ${customersTable.lastName})) LIKE UPPER(${likeTerm})`;
 
+    // Kyle #3: what somebody typed into a custom field is part of the profile,
+    // so the search box finds it. EXISTS rather than a join: a profile with
+    // three matching fields must still be one row.
+    const inCustomField = sql`EXISTS (
+      SELECT 1 FROM ${customFieldValuesTable}
+       WHERE ${customFieldValuesTable.customerId} = ${customersTable.id}
+         AND ${customFieldValuesTable.value} ILIKE ${containsPattern(term)}
+    )`;
+
     conditions.push(or(
       fullNameMatch,
+      inCustomField,
       ilike(customersTable.firstName,        likeTerm),
       ilike(customersTable.lastName,         likeTerm),
       ilike(customersTable.companyName,      likeTerm),
@@ -190,6 +209,35 @@ router.get(["/customers", "/prospects"], async (req, res): Promise<void> => {
   const requestedAccountType = accountType ?? clientType;
   if (requestedAccountType) {
     conditions.push(eq(customersTable.clientType, normalizeAccountType(requestedAccountType)));
+  }
+
+  // Kyle #3: one field, one value. What a value means depends on the field —
+  // a choice or a number is exact, free text is a contains match — which is
+  // decided in lib/custom-field-search.ts.
+  if (customFieldId !== undefined || customFieldValue !== undefined) {
+    const definitions = await db.select({
+      id: customFieldDefinitionsTable.id,
+      fieldType: customFieldDefinitionsTable.fieldType,
+    }).from(customFieldDefinitionsTable);
+    const parsed = parseCustomFieldFilter({ customFieldId, customFieldValue }, definitions);
+    if (parsed.kind === "error") {
+      res.status(400).json({ error: parsed.message });
+      return;
+    }
+    if (parsed.kind === "filter") {
+      const { definitionId, value, mode } = parsed.filter;
+      const valueCondition = value === null
+        ? sql`${customFieldValuesTable.value} IS NOT NULL AND ${customFieldValuesTable.value} <> ''`
+        : mode === "exact"
+          ? sql`${customFieldValuesTable.value} = ${value}`
+          : sql`${customFieldValuesTable.value} ILIKE ${containsPattern(value)}`;
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM ${customFieldValuesTable}
+         WHERE ${customFieldValuesTable.customerId} = ${customersTable.id}
+           AND ${customFieldValuesTable.definitionId} = ${definitionId}
+           AND ${valueCondition}
+      )`);
+    }
   }
 
   const where = conditions.length === 0

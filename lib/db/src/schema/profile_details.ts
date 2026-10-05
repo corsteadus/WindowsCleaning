@@ -105,6 +105,10 @@ export const customFieldValuesTable = pgTable("custom_field_values", {
 }, (table) => [
   primaryKey({ name: "custom_field_values_pk", columns: [table.customerId, table.definitionId] }),
   index("custom_field_values_definition_idx").on(table.definitionId),
+  // Kyle (Testing Edits, 2026-10-01, #3): finding a profile by one field's
+  // value. Declared here as well as on the database so a `drizzle-kit push`
+  // does not propose dropping it.
+  index("custom_field_values_definition_value_idx").on(table.definitionId, table.value),
 ]);
 
 export const insertProfileCatalogItemSchema = createInsertSchema(profileCatalogItemsTable)

@@ -32,13 +32,22 @@ Worth a look before touching those areas.
 
 ## Where things stand right now — read this first
 
-**As of 2026-10-04.** Kyle's Testing Edits of 2026-10-01 are being worked through as
-phases 16–21. **16 through 20 are done in the working tree and browser-verified**, and a
-**usability sweep** of all of them found and fixed 36 things before Kyle sees any of it;
-**only 21 remains** (#3's custom-field search). Nothing since Phase 15 is on Sandbox 2 — the bundle there is still
-`index-043EjDyX.js`. The user decided on 2026-10-04: **one republish once Kyle's whole
-1 October list is finished**, and the message to him goes out then — not phase by phase.
-The parked `properties.gate_code` / `access_notes` drop still waits for that republish.
+**As of 2026-10-05. All fourteen of Kyle's Testing Edits of 2026-10-01 are built and
+browser-verified** — phases 16 through 21 — along with a **usability sweep** of every
+screen they touched, which found and fixed 36 things before he sees any of it.
+
+**The next action is the republish.** Nothing since Phase 15 is on Sandbox 2; the bundle
+there is still `index-043EjDyX.js`. The user decided on 2026-10-04: **one republish now
+that the whole list is finished**, and the message to Kyle goes out then — not phase by
+phase. After that republish, the parked `properties.gate_code` / `access_notes` drop can
+finally run, and our own queue resumes (A#9, Phase 13 sub-customers, Phase 14 calendar,
+Phase 15 go-live; Phase 12b email still waits on Lute's keys).
+
+Three things to put to Kyle with the republish, all recorded in their phases: whether a
+quote's validity should run from **delivery** (the assumption built) or from creation;
+whether appointment **durations** should offer 15 and 45 minutes as well; and which other
+profile fields are commercial-only.
+
 The calendar note below is older and still true as a description of the spec work.
 
 **As of 2026-09-11.** Everything below this section is detail; this is the state of play.
@@ -129,6 +138,83 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 21 — finding a profile by its custom fields, done in the working tree 2026-10-05
+
+Kyle's Testing Edits of 2026-10-01, the last part of **#3**: *"These custom
+fields should later be searchable/filterable so a company can categorize and
+find prospects or customers based on the values entered."*
+
+**This completes all fourteen of his items.**
+
+### Two different questions
+
+The sentence asks for two things, and they want different answers:
+
+- **The search box** answers "is this text anywhere on this profile". Custom
+  field values are now part of that, always as a contains match. One `EXISTS`
+  subquery rather than a join, so a profile with three matching fields is still
+  one row — checked.
+- **A filter** answers "which profiles have *this* value in *this* field", and
+  what a match means depends on the field. A dropdown choice, a date, a tick and
+  a **number** are exact; free text is a contains match. Filtering a window
+  count of 12 must not return the profile with 120, and that is a test.
+
+### What the screen says
+
+The filter sits under the existing ones on Prospects and Customers (one file
+serves both). The value control follows the field's type — a select of the
+field's own choices for a dropdown, Ticked / Not ticked for a checkbox, a number
+or date box, a text box — and underneath it a line says *what a match means*:
+"Matches exactly", "Matches the chosen option", "Matches anywhere in the text".
+Without that, "12 found nothing" is a mystery.
+
+Choosing a field with **no value** asks who has that field filled in at all,
+which is how you find the profiles somebody has not categorised yet. Changing
+the field clears the value, because last field's value rarely fits the next one.
+A company with no custom fields sees no filter.
+
+### Decisions worth knowing
+
+- **A field id that does not exist is a 400 with a reason**, not an empty list.
+  A stale bookmark should say so rather than look like "no matches".
+- **A value's own wildcards are escaped.** Without it, filtering for `100%`
+  would have matched every profile. `containsPattern` escapes `%`, `_` and `\`,
+  and the API test proves `100%` matches only itself.
+- **A checkbox accepts yes / true / 1 / ticked** from a form and stores "true";
+  anything else is refused with a reason rather than silently finding nothing.
+- **No new table.** Values already live in `custom_field_values`; a dropdown's
+  choices already live in `profile_catalog_items` under a catalogue per field,
+  which the filter reads through the existing `/catalogs/custom-field-<id>`.
+- **One additive index**, `(definition_id, value)`, for the exact-match path,
+  declared in the Drizzle schema as well as on the database. A contains match
+  cannot use a btree index; if the data ever grows enough to matter the answer
+  is a trigram index, not this one.
+
+### Verified
+
+`scratchpad/p21-api.mjs` **21/21** over HTTP and `scratchpad/p21-browser.mjs`
+**16/16** headed. CRM **547/547** (20 new unit tests, 7 new guards), API
+**658/672** — the same 14 `DATABASE_URL` failures, 12 more tests and all of them
+passing. Typechecks clean. The database is back to its 2 customers with **no**
+custom field definitions, which is how Kyle will find it: he has not created any
+yet, so the filter will stay hidden until he does.
+
+### Worth keeping
+
+- **A list that debounces cannot be read after a fixed sleep.** Two assertions
+  failed while their own printed detail showed the right answer, because the
+  first read landed mid-refetch. They poll for the expected set now. That is the
+  third time today a `waitForTimeout` lied.
+- **Test data needs distinct phone numbers.** Three prospects sharing one were
+  refused as duplicates — correct of the product, wrong of the test — and the
+  failure showed up five assertions later as "no Bob".
+- **A custom field's key is unique**, so ZZ definitions left by a previous run
+  collide. Deactivating them is not enough; the test deletes them at both ends.
+- **A lib imported by a test must use `.ts` in its own imports.** `./x.js`
+  resolves in the bundle but not under `node --experimental-strip-types`.
+
+---
+
 ## Phase 20 — time, done in the working tree 2026-10-04
 
 Kyle's Testing Edits of 2026-10-01, **#14**: *"Anywhere Corstead asks the user to
@@ -607,12 +693,12 @@ is republished.
 seventeen answers the grouping question we had open with him; eighteen is the
 largest and changes how every quote and job is priced.
 
-**Progress, 2026-10-04: 16 through 20 are done** — each has its own section above, each
-browser-verified, none republished yet. **21 is the last one** (#3's custom-field search).
+**Progress, 2026-10-05: 16 through 21 are all done** — each has its own section above,
+each browser-verified, none republished yet. **Kyle's list is finished.**
 
-Twelve of Kyle's fourteen items are therefore built: #1, #2, #4, #5, #6, #7, #8, #9, #10,
-#11, #12, #13 and #14 — with #3 half done since Phase 16 (the old section is gone; finding
-a profile by what is in a custom field is Phase 21).
+All fourteen are built: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13 and #14.
+#3 took two phases — Phase 16 replaced the old Window & Property Details section, and
+Phase 21 made the fields searchable.
 
 Phase 19 took #12 with it: the table above lists only #11 and #13 because #12 had been
 recorded as already true, which was half right. See the Phase 19 section.

@@ -37,6 +37,12 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Users, Phone, Mail, ChevronRight, ChevronLeft, User, MapPin, Layers, Info, StickyNote, CalendarClock } from "lucide-react";
 import { TimeSelect } from "@/components/TimeSelect";
+import { CustomFieldFilter } from "@/components/CustomFieldFilter";
+import {
+  type CustomFieldFilterState,
+  NO_CUSTOM_FIELD_FILTER,
+  customFieldFilterParams,
+} from "@/lib/custom-field-filter";
 
 const PAGE_SIZE = 75;
 
@@ -111,14 +117,27 @@ interface CustomerPage {
   totalPages: number;
 }
 
-function useCustomers(search: string, page: number, accountType: string, lifecycleStatus: string, mode: "customers" | "prospects") {
+function useCustomers(
+  search: string,
+  page: number,
+  accountType: string,
+  lifecycleStatus: string,
+  mode: "customers" | "prospects",
+  // Kyle #3: one custom field and one value, narrowing the list with everything else.
+  customField: CustomFieldFilterState = NO_CUSTOM_FIELD_FILTER,
+) {
   const { user } = useAuth();
   const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
   if (search) params.set("search", search);
   if (accountType) params.set("accountType", accountType);
   if (lifecycleStatus) params.set("lifecycleStatus", lifecycleStatus);
+  const customFieldParams = customFieldFilterParams(customField);
+  for (const [key, value] of Object.entries(customFieldParams)) params.set(key, value);
   return useQuery<CustomerPage>({
-    queryKey: authScopedQueryKey(user, [mode, "paginated", page, search, accountType, lifecycleStatus]),
+    queryKey: authScopedQueryKey(user, [
+      mode, "paginated", page, search, accountType, lifecycleStatus,
+      customFieldParams.customFieldId ?? "", customFieldParams.customFieldValue ?? "",
+    ]),
     queryFn: async () => {
       const response = await protectedFetch(`/api/${mode}?${params}`);
       if (!response.ok) throw new Error(`Failed to load ${mode}`);
@@ -907,6 +926,7 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
   const [debouncedSearch, setDebouncedSearch] = useState(initialQ);
   const [page, setPage] = useState(1);
   const [accountType, setAccountType] = useState("");
+  const [customField, setCustomField] = useState<CustomFieldFilterState>(NO_CUSTOM_FIELD_FILTER);
   const [lifecycleStatus, setLifecycleStatus] = useState(isProspect ? "prospect" : "");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
@@ -939,7 +959,7 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
     return () => clearTimeout(t);
   }, [navigate, search, urlSearch]);
 
-  const { data, isLoading } = useCustomers(debouncedSearch, page, accountType, lifecycleStatus, mode);
+  const { data, isLoading } = useCustomers(debouncedSearch, page, accountType, lifecycleStatus, mode, customField);
 
   const customers  = data?.customers ?? [];
   const total      = data?.total ?? 0;
@@ -973,7 +993,7 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
         <input
           type="search"
           aria-label="Search profiles"
-          placeholder="Search by name, company, city, email, or phone…"
+          placeholder="Search by name, company, city, email, phone, or a custom field…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-full h-10 pl-10 pr-4 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
@@ -1021,6 +1041,12 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
           </button>
         ))}
       </div>
+
+      {/* Kyle #3: find a profile by what is in one of its custom fields. */}
+      <CustomFieldFilter
+        state={customField}
+        onChange={(next) => { setCustomField(next); setPage(1); }}
+      />
 
       {/* ─── Customer list ────────────────────────────── */}
       {isLoading ? (

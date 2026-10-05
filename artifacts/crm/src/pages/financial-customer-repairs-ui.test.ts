@@ -76,7 +76,10 @@ test("same-page header searches resync q and retain authorization-scoped keys", 
   assert.match(customers, /customerListSearchLocation\(\s*window\.location\.pathname,\s*urlSearch,\s*search/);
   assert.match(customers, /navigate\(nextLocation, \{ replace: true \}\)/);
   assert.match(customers, /customerListSearchLocation\(pathname, urlSearch, ""\), \{ replace: true \}/);
-  assert.match(customers, /authScopedQueryKey\(user, \[mode, "paginated", page, search, accountType, lifecycleStatus\]\)/);
+  // Still authorization-scoped, and still keyed on every input that narrows the
+  // list. Kyle #3 (2026-10-05) added the custom field filter to that list.
+  assert.match(customers, /authScopedQueryKey\(user, \[\s*\n?\s*mode, "paginated", page, search, accountType, lifecycleStatus,/);
+  assert.match(customers, /customFieldParams\.customFieldId \?\? ""/);
 });
 
 test("job assignments never expose raw IDs and invoice generation remains explicit", () => {
