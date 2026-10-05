@@ -12,6 +12,7 @@ import { hasClientCapability } from "@/lib/rbac";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
 import { formatDateOnly } from "@/lib/quote-settings-form";
+import { MainProfileCard, type ProfileLink } from "@/components/MainProfileCard";
 import {
   buildActivityFeed, countFeed, filterFeed, lastNoteChange, profileStewardship,
   type FeedFilter,
@@ -24,7 +25,7 @@ import {
   Layers, Info, AlertCircle, CheckCircle2, Clock, DollarSign,
   Repeat, Plus, Trash2, Star, CreditCard, Activity, PowerOff, Power, Paperclip, RotateCcw,
   Users,
-  ContactRound, Archive,
+  ContactRound, Archive, Link2,
 } from "lucide-react";
 import { FilesTab } from "@/components/FilesTab";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
@@ -57,6 +58,10 @@ interface CustomerDetail {
   id: number;
   firstName: string;
   lastName: string;
+  // Kyle's answer #5: the profile this one sits beneath, and the ones beneath it.
+  parentCustomerId?: number | null;
+  mainProfile?: ProfileLink | null;
+  subProfiles?: ProfileLink[];
   email?: string | null;
   phone?: string | null;
   homePhone?: string | null;
@@ -851,7 +856,14 @@ export default function CustomerDetail() {
         {/* ── Tab content ─────────────────────────────────────────────────── */}
         <div>
           {activeTab === "overview" && (
-            <OverviewTab customer={customer} isEditing={isEditing} form={form} />
+            <OverviewTab
+              customer={customer}
+              isEditing={isEditing}
+              form={form}
+              canManage={canManageCustomer}
+              onProfileLinkChanged={() =>
+                queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) })}
+            />
           )}
           {activeTab === "profile" && (
             <ProfileDetailsTab
@@ -1437,10 +1449,12 @@ function Section({ title, icon: Icon, children }: {
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ customer, isEditing, form }: {
+function OverviewTab({ customer, isEditing, form, canManage, onProfileLinkChanged }: {
   customer: CustomerDetail; isEditing: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   form: any;
+  canManage: boolean;
+  onProfileLinkChanged: () => void;
 }) {
   // Who last wrote a general note, and who created and last touched the
   // profile — both read from the recorded history (Random Edits #3, #6).
@@ -1452,6 +1466,17 @@ function OverviewTab({ customer, isEditing, form }: {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      {/* Kyle's answer #5: sub-customers are a link and nothing else. */}
+      <Section title="Linked profiles" icon={Link2}>
+        <MainProfileCard
+          customerId={customer.id}
+          mainProfile={customer.mainProfile ?? null}
+          subProfiles={customer.subProfiles ?? []}
+          canManage={canManage}
+          onChanged={onProfileLinkChanged}
+        />
+      </Section>
 
       {/* General notes, on the Overview rather than buried in Profile Details */}
       <Section title="General Notes" icon={StickyNote}>

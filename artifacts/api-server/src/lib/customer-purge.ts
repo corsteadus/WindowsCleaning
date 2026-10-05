@@ -15,6 +15,7 @@
  * route counts what is left. Anything above zero means a table was missed, and
  * the transaction is rolled back rather than leaving half a customer behind.
  */
+import { SUB_PROFILE_UNLINK } from "./customer-hierarchy.ts";
 
 export interface PurgeStep {
   /** Table the statement deletes from. */
@@ -126,6 +127,9 @@ function withId(sql: string, customerId: number): string {
 export function purgeStatements(customerId: number): string[] {
   return [
     withId(LEAD_UNLINK, customerId),
+    // A sub-customer is a separate profile, not a belonging: erasing a main
+    // profile leaves the ones beneath it standing (Kyle's answer #5).
+    withId(SUB_PROFILE_UNLINK, customerId),
     ...CUSTOMER_PURGE_ORDER.map((step) => withId(`DELETE FROM ${step.table} WHERE ${step.where}`, customerId)),
   ];
 }

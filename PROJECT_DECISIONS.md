@@ -36,14 +36,17 @@ Worth a look before touching those areas.
 browser-verified** — phases 16 through 21 — along with a **usability sweep** of every
 screen they touched, which found and fixed 36 things before he sees any of it.
 
-**Phases 16–21 are live on Sandbox 2** (bundle `index-CGgtUgPk.js`), verified 25/25 against
-the deployed app on 2026-10-05. Reading those screenshots then found **four more things**,
-fixed in the working tree and **awaiting one more republish** — see the Sandbox 2 section.
+**Everything is live on Sandbox 2** (bundle `index-CYXe_Ae1.js`, built 2026-10-05 07:32
+GMT): phases 16–21 verified **25/25** against the deployed app, and the four fixes that
+reading those screenshots turned up verified **8/8** after the republish that carried them.
 
-**After that republish:** the message to Kyle, then the parked `properties.gate_code` /
-`access_notes` drop can finally run, and our own queue resumes (A#9, Phase 13
-sub-customers, Phase 14 calendar, Phase 15 go-live; Phase 12b email still waits on Lute's
-keys).
+**The release message has gone to Kyle and Lute.** What we are waiting on them for is listed
+under "Waiting on the client" — eight items, none of which blocks Phase 13 or 14.
+
+**Phase 13 — sub-customers is done** in the working tree (2026-10-05) and not yet
+republished. **Next in our own queue:** the parked `properties.gate_code` / `access_notes`
+drop, then **Phase 14 — the calendar**, the largest remaining piece. Phase 15 go-live needs
+a date from Lute; Phase 12b email and A#9 still wait on his keys.
 
 Three things to put to Kyle with the republish, all recorded in their phases: whether a
 quote's validity should run from **delivery** (the assumption built) or from creation;
@@ -140,6 +143,89 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 13 — sub-customers, done in the working tree 2026-10-05
+
+Kyle (2026-09-23, answer #5): *"Linking only. Any profile can sit beneath a main
+profile, residential or commercial, one or many. **No 'bill to parent', no
+combined invoices** — linking changes nothing about billing. Can come later;
+must not delay the basics."*
+
+So the whole phase is one nullable column and the rules around it. The hardest
+part was deciding what **not** to build.
+
+### Two levels, and why
+
+He said "beneath a main profile", which reads as two. Chains would mean deciding
+what a grandparent's lists, totals and invoices do — exactly the "later" he
+warned against. So a profile that already has profiles beneath it is not offered
+a main profile, and a profile that has one cannot be made somebody's main
+profile. The rule is enforced from **both directions** and both are tested.
+
+Deeper nesting would be a change to one function, not a rewrite. It is question
+5 on the list waiting for him.
+
+### Nothing about money moved
+
+`MainProfileCard` shows **no totals, no balances, no invoices** — a test asserts
+the file contains no currency formatting at all, because a number there would be
+the first step towards the combined billing he ruled out. Another test reads the
+money libraries and fails if any of them starts reading `parentCustomerId`. The
+API test proves it from the other end: an invoice raised on a sub-profile does
+not appear on the main profile's detail.
+
+### Deleting a main profile frees the ones beneath it
+
+The important one. A sub-customer is a **separate profile**, not a belonging, so
+erasing a main profile must leave its sub-profiles standing. Two things make
+that true: `ON DELETE SET NULL` on the column, and `SUB_PROFILE_UNLINK` running
+with the lead unlink before the purge's deletes — the purge counts what still
+points at the profile afterwards and would otherwise roll back.
+
+Proven three ways: the constraint itself in a rolled-back transaction, the purge
+statement's position in `customer-purge.ts`, and over HTTP — delete the main
+profile, and the profile beneath it answers 200 with nothing above it.
+
+### The shape
+
+- `customers.parent_customer_id`, nullable, self-referencing, `ON DELETE SET
+  NULL`, indexed, with a check constraint that a profile cannot be its own main
+  profile. The database holds that one itself.
+- `lib/customer-hierarchy.ts` — `decideMainProfile()` returns link, unlink, or an
+  error with its own status: 400 for itself, 404 for a profile that does not
+  exist, 409 for a third level or an archived main profile. **A bad id is a 400
+  with a reason, not an empty result.**
+- `PUT /api/customers/:id/main-profile` (and the prospects alias), which locks
+  the account, reads both sides, decides, writes, and records the change in the
+  history in words: *"ZZUnit Four now sits beneath ZZ Acme Holdings"*. A route of
+  its own rather than another field on the generic PATCH, so a refusal can say
+  which rule it broke.
+- The profile detail carries `mainProfile` and `subProfiles`, so the card needs
+  no request of its own.
+
+### Verified
+
+`scratchpad/p13-ddl.mjs` **3/3** on the constraints, `scratchpad/p13-api.mjs`
+**18/18** over HTTP, `scratchpad/p13-browser.mjs` **10/10** headed. CRM
+**558/558** (6 new guards), API **669/683** — the same 14 `DATABASE_URL`
+failures, 11 more tests and all of them passing. Typechecks clean. The database
+is back to its 2 customers with **no** links, which is how Kyle will find it.
+
+**No migration.** The column is additive and nullable, declared in the Drizzle
+schema, and nothing deployed reads it.
+
+### Worth keeping
+
+- **The purge's safety net is what makes a new foreign key risky.** It counts
+  what still points at the profile after the deletes and rolls back if anything
+  does. Any future column pointing at `customers` needs a line in that file, not
+  just an `ON DELETE` rule.
+- A PowerShell `cd` inside a compound command does not survive to a later
+  `[System.IO.File]::ReadAllText` with a relative path — the second one resolved
+  against the old directory and silently read nothing. Use absolute paths, or the
+  editing tools.
+
+---
+
 ## Sandbox 2 checked after the republish — 2026-10-05
 
 The user republished. The bundle moved from `index-043EjDyX.js` to
@@ -178,8 +264,18 @@ estimate is counted as Open, the six tiles account for both quotes, and the Open
 filter lists that estimate and hides the other. CRM **552/552**, with the Phase
 17 test that asserted the old shape updated to the new one. API untouched.
 
-**These four are in the working tree, not on Sandbox 2.** They need the next
-republish.
+**All four are live**, verified 8/8 on the deployed app by
+`scratchpad/verify-sandbox2-fixes.mjs`: the Open tile counts the scheduled estimate, the
+six tiles account for both quotes, the Open filter lists it and hides the other, the
+catalogue no longer offers to manage pricing, an old price reads `was $150.00`, and a new
+quote's status reads Open.
+
+**It took three republishes**, and that is the thing to remember: the first two rebuilt
+from a workspace that did not have the commit, producing a *freshly built* bundle with the
+old code in it — the asset's `Last-Modified` was minutes old while its contents predated the
+fix. Replit builds from the workspace's files, not from GitHub, so a push is not a deploy:
+the workspace has to pull first. Checking the bundle for a string that **should have gone**
+is what caught it; checking only for the new string would have looked like a caching fault.
 
 ### Worth keeping
 
@@ -725,7 +821,7 @@ is republished.
 | **Republish** | **Does not wait for anything.** Three rounds are pushed and unseen, and Kyle keeps testing a stale build until it happens |
 | **Drop `properties.gate_code` and `access_notes`** | Code removal not started; only `seed-demo.ts` and the schema still carry them. The `DROP` must follow a republish or the deployed API breaks |
 | **A#9 — address a message to the contact that owns the channel** | Deliberately held for Phase 12b: it means making the sending path resolve recipients from contact channels, which is also what makes A#7's pause bite |
-| **Phase 13 — sub-customers** | Not started |
+| **Phase 13 — sub-customers** | **Done in the working tree, 2026-10-05.** Not republished; see its own section |
 | **Phase 14 — calendar** | Not started. The largest remaining piece |
 | **Phase 15 — go-live** | Not started |
 | **Phase 12b — email delivery** | Blocked on Lute: provider keys, plus an automation rule, a template, and the queue running |
@@ -2327,6 +2423,32 @@ Also: the three reschedule sites disagree on blank values. `Schedule.tsx:182` se
 ---
 
 ## Waiting on the client
+
+### Open as of 2026-10-05 — ask whenever there is a reply
+
+Everything Kyle asked for in his 1 October list is built and live, so these are
+the only things outside our hands. **Nothing here blocks Phase 13 or 14**; the
+first four were sent with the release message.
+
+**Kyle**
+
+| # | Ask | What it blocks |
+|---|---|---|
+| 1 | **Card payments** — should Corstead take cards through a processor (he has mentioned Square; Stripe is what is installed), or keep recording that a card was used, as it does now? | Any real card work. Phase 12a deliberately records only, and asks for no card details |
+| 2 | **Quote validity** — do the days run from when the quote is **sent** (what we built) or from when it is created? | Nothing. It is an assumption that may need reversing; see Phase 19 |
+| 3 | **Appointment duration** — offer 15 and 45 minutes as well as 30 / 60 / 90 / 120? | Nothing. One list in two screens if he wants it |
+| 4 | **Commercial-only fields** — besides Company Name, which others belong only on a commercial profile? (Birthday, Salutation, Alt. Contact Name, County, Subdivision) | The rest of #1. The form hides Company Name today and nothing else |
+| 5 | **Sub-customers depth** — he said "any profile beneath a main profile". Built as **two levels** (a main profile and the profiles under it), no chains. Is a sub-customer ever allowed its own sub-customers? | Nothing. Deeper nesting is a later change, not a rewrite; see Phase 13 |
+
+**Lute**
+
+| # | Ask | What it blocks |
+|---|---|---|
+| 6 | **Email provider keys.** He offered `info@corstead.us` for testing on 2026-10-02 but has not sent keys | **Phase 12b** — estimates and invoices cannot leave the system — and **A#9** with it |
+| 7 | **Address autocomplete** (A#11 / B#2) — he owns the account and the billing, and asked for the cost to be checked first | That feature only |
+| 8 | **Neon ownership and the production branch** — he asked for ownership on our side to move to his, and production decisions are his | **Phase 15 go-live.** Needs a date from him more than an answer |
+
+### Older, still unanswered — all from the parked notification work
 
 1. **The overnight recurring-plan cron** (`lib/recurring-plan-engine.ts:95`) creates jobs at
    06:15 with nobody at a screen. Send nothing, park a draft for morning review, or allow

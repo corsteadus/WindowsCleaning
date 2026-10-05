@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, boolean, integer, index, check } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, boolean, integer, index, check, foreignKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -72,6 +72,10 @@ export const customersTable = pgTable("customers", {
   lastImportFingerprint: text("last_import_fingerprint"),
   mergeReviewStatus: text("merge_review_status"),
   defaultPropertyId: integer("default_property_id"),
+  // Kyle (2026-09-23, answer #5): a profile may sit beneath a main profile.
+  // Linking only — no bill-to-parent and no combined invoices. Deleting the main
+  // profile frees the ones beneath it rather than taking them with it.
+  parentCustomerId: integer("parent_customer_id"),
   // Timestamps
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
@@ -86,6 +90,15 @@ export const customersTable = pgTable("customers", {
     "customers_lifecycle_status_check",
     sql`${t.lifecycleStatus} in ('prospect', 'customer', 'inactive', 'archived')`,
   ),
+  index("idx_customers_parent_customer_id").on(t.parentCustomerId),
+  // A profile cannot be its own main profile. The two-level rule lives in
+  // lib/customer-hierarchy.ts; this is the one the database can hold itself.
+  check("customers_parent_not_self_check", sql`${t.parentCustomerId} IS NULL OR ${t.parentCustomerId} <> ${t.id}`),
+  foreignKey({
+    name: "customers_parent_customer_id_customers_id_set_null_fk",
+    columns: [t.parentCustomerId],
+    foreignColumns: [t.id],
+  }).onDelete("set null"),
 ]);
 
 export const insertCustomerSchema = createInsertSchema(customersTable).omit({ id: true, createdAt: true, updatedAt: true });

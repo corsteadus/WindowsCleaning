@@ -65,6 +65,7 @@ import {
   prospectLifecycleTransition,
 } from "../lib/prospect-account.ts";
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
+import { decideMainProfile, describeMainProfileChange } from "../lib/customer-hierarchy.ts";
 import {
   containsPattern,
   parseCustomFieldFilter,
@@ -793,8 +794,39 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
     quotes, appointments: quoteAppointments, revisions: quoteRevisions, links: quoteLinks, jobs: quoteJobs,
   });
 
+  // Kyle's answer #5: the profile above this one, and the profiles beneath it.
+  // A link and nothing more — no totals, no invoices, no money of any kind.
+  const profileFields = {
+    id: customersTable.id,
+    firstName: customersTable.firstName,
+    lastName: customersTable.lastName,
+    companyName: customersTable.companyName,
+    lifecycleStatus: customersTable.lifecycleStatus,
+    clientType: customersTable.clientType,
+  };
+  const [mainProfileRow, subProfiles] = await Promise.all([
+    customer.parentCustomerId
+      ? db.select(profileFields).from(customersTable)
+        .where(eq(customersTable.id, customer.parentCustomerId)).limit(1)
+      : Promise.resolve([]),
+    db.select(profileFields).from(customersTable)
+      .where(eq(customersTable.parentCustomerId, id))
+      .orderBy(asc(customersTable.lastName), asc(customersTable.firstName)),
+  ]);
+  const asProfileLink = (row: typeof profileFields extends never ? never : {
+    id: number; firstName: string; lastName: string; companyName: string | null;
+    lifecycleStatus: string; clientType: string | null;
+  }) => ({
+    id: row.id,
+    name: displayName(row),
+    lifecycleStatus: row.lifecycleStatus,
+    accountType: normalizeAccountType(row.clientType),
+  });
+
   res.json({
     ...serialize(customer),
+    mainProfile: mainProfileRow[0] ? asProfileLink(mainProfileRow[0]) : null,
+    subProfiles: subProfiles.map(asProfileLink),
     effectiveDefaultPropertyId,
     defaultPropertySource,
     jobs: jobs.map(j => ({ ...j, createdAt: j.createdAt.toISOString(), updatedAt: j.updatedAt.toISOString() })),
@@ -889,6 +921,79 @@ function serializeFieldContact(contact: typeof contactsTable.$inferSelect) {
     isPrimary: contact.isPrimary,
   };
 }
+
+// ─── The profile this one sits beneath ────────────────────────────────────────
+//
+// Kyle (2026-09-23, answer #5): linking only. No bill-to-parent, no combined
+// invoices — nothing about money reads this.
+router.put(["/customers/:id/main-profile", "/prospects/:id/main-profile"], async (req, res): Promise<void> => {
+  const id = parseId(req.params.id);
+  const raw = (req.body ?? {}).parentCustomerId;
+  const requestedParentId = raw === null || raw === undefined || raw === ""
+    ? null
+    : Number(raw);
+
+  const result = await db.transaction(async (tx) => {
+    await lockAccount(tx, id);
+    const [customer] = await tx.select({
+      id: customersTable.id,
+      firstName: customersTable.firstName,
+      lastName: customersTable.lastName,
+      companyName: customersTable.companyName,
+      parentCustomerId: customersTable.parentCustomerId,
+    }).from(customersTable).where(eq(customersTable.id, id)).limit(1);
+    if (!customer) return { kind: "notFound" as const };
+
+    const [parent] = requestedParentId === null ? [] : await tx.select({
+      id: customersTable.id,
+      firstName: customersTable.firstName,
+      lastName: customersTable.lastName,
+      companyName: customersTable.companyName,
+      parentCustomerId: customersTable.parentCustomerId,
+      lifecycleStatus: customersTable.lifecycleStatus,
+    }).from(customersTable).where(eq(customersTable.id, requestedParentId)).limit(1);
+
+    const children = await tx.select({ id: customersTable.id }).from(customersTable)
+      .where(eq(customersTable.parentCustomerId, id)).limit(1);
+
+    const decision = decideMainProfile({
+      customerId: id,
+      requestedParentId,
+      parentExists: Boolean(parent),
+      parentHasParent: Boolean(parent?.parentCustomerId),
+      customerHasChildren: children.length > 0,
+      parentIsArchived: parent?.lifecycleStatus === "archived",
+    });
+    if (decision.kind === "error") return { kind: "error" as const, decision };
+
+    const [updated] = await tx.update(customersTable)
+      .set({ parentCustomerId: decision.kind === "link" ? decision.parentCustomerId : null })
+      .where(eq(customersTable.id, id))
+      .returning();
+    return { kind: "ok" as const, decision, customer, parent, updated };
+  });
+
+  if (result.kind === "notFound") { res.status(404).json({ error: "Customer not found" }); return; }
+  if (result.kind === "error") {
+    res.status(result.decision.status).json({ error: result.decision.message });
+    return;
+  }
+
+  const note = describeMainProfileChange(result.decision, {
+    customer: displayName(result.customer),
+    parent: result.parent ? displayName(result.parent) : undefined,
+  });
+  await db.insert(activityLogsTable).values({
+    entityType: "customer",
+    entityId: id,
+    action: "main_profile_changed",
+    fromValue: result.customer.parentCustomerId === null ? null : String(result.customer.parentCustomerId),
+    toValue: result.decision.kind === "link" ? String(result.decision.parentCustomerId) : null,
+    note,
+    performedBy: getPerformedBy(req),
+  });
+  res.json({ ...serialize(result.updated), mainProfileChange: note });
+});
 
 // ─── Update customer ──────────────────────────────────────────────────────────
 router.patch(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void> => {
@@ -1235,6 +1340,14 @@ function normalizeCustomerFields(
     out.status = legacyStatusFromLifecycleStatus(lifecycle);
   }
   return { fields: out };
+}
+
+/** A company name if there is one, otherwise the person's name. */
+function displayName(customer: {
+  firstName?: string | null; lastName?: string | null; companyName?: string | null;
+}): string {
+  const person = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
+  return (customer.companyName ?? "").trim() || person || "This profile";
 }
 
 function serialize(c: typeof customersTable.$inferSelect) {
