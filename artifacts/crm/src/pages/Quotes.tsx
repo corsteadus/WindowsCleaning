@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
+import { estimateStatusGroup, estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
 import {
   FileText, Plus, Search, ArrowRightCircle, Trash2,
   CheckCircle2, XCircle, Send, Clock, Eye,
@@ -189,19 +189,23 @@ export default function Quotes() {
     convertMutation.mutate({ id, key: createIdempotencyKey() });
   };
 
+  // Counted by the group the badge shows, not by the raw derived status: an
+  // estimate with an appointment derives as `scheduled` and reads Open, and
+  // counting `draft` alone left it out of every tile.
+  const groupOf = (quote: Parameters<typeof estimateStatusOf>[0]) =>
+    estimateStatusGroup(estimateStatusOf(quote));
   const counts = {
     all:      quotes?.length ?? 0,
-    draft:    quotes?.filter((q) => estimateStatusOf(q) === "draft").length    ?? 0,
-    sent:     quotes?.filter((q) => estimateStatusOf(q) === "sent").length     ?? 0,
-    viewed:   quotes?.filter((q) => estimateStatusOf(q) === "viewed").length   ?? 0,
-    // an accepted estimate reads "accepted & scheduled" once it has a job
-    accepted: quotes?.filter((q) => estimateStatusOf(q).startsWith("accepted")).length ?? 0,
-    declined: quotes?.filter((q) => estimateStatusOf(q) === "declined").length ?? 0,
-    expired:  quotes?.filter((q) => estimateStatusOf(q) === "expired").length  ?? 0,
+    draft:    quotes?.filter((q) => groupOf(q) === "draft").length    ?? 0,
+    sent:     quotes?.filter((q) => groupOf(q) === "sent").length     ?? 0,
+    viewed:   quotes?.filter((q) => groupOf(q) === "viewed").length   ?? 0,
+    accepted: quotes?.filter((q) => groupOf(q) === "accepted").length ?? 0,
+    declined: quotes?.filter((q) => groupOf(q) === "declined").length ?? 0,
+    expired:  quotes?.filter((q) => groupOf(q) === "expired").length  ?? 0,
   };
 
   const filtered = (quotes ?? []).filter((q) => {
-    const matchStatus = filter === "all" || estimateStatusOf(q) === filter;
+    const matchStatus = filter === "all" || groupOf(q) === filter;
     const ql = search.toLowerCase();
     const matchSearch = !ql
       || q.quoteNumber.toLowerCase().includes(ql)

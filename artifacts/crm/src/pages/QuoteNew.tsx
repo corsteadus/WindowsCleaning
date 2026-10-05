@@ -43,6 +43,7 @@ import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { useLocation } from "wouter";
 import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
 import { expiryPreview, formatDateOnly } from "@/lib/quote-settings-form";
+import { ESTIMATE_STATUS_LABELS } from "@/lib/estimate-status";
 import {
   captureAndRetainSubmittedQuoteAppointment,
   prepareQuoteAppointment,
@@ -538,8 +539,9 @@ export default function QuoteNew() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="sent">Sent</SelectItem>
+                    {/* Kyle #10's words. The stored values do not change. */}
+                    <SelectItem value="draft">{ESTIMATE_STATUS_LABELS.draft}</SelectItem>
+                    <SelectItem value="sent">{ESTIMATE_STATUS_LABELS.sent}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

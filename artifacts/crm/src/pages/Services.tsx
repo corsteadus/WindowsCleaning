@@ -89,7 +89,7 @@ export default function Services() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-display font-bold text-slate-900">Service Catalog</h1>
-          <p className="text-muted-foreground mt-1">Manage your pricing and offerings.</p>
+          <p className="text-muted-foreground mt-1">The services you offer. What each one costs is decided on the quote.</p>
         </div>
         {canManage && <Button onClick={start} className="rounded-xl shadow-lg shadow-primary/20" data-testid="button-add-service">
           <Plus className="w-5 h-5 mr-2" /> Add Service
@@ -101,7 +101,9 @@ export default function Services() {
           {services?.map((service) => <Card key={service.id} className="border-none shadow-sm hover:shadow-md transition-shadow bg-white rounded-2xl overflow-hidden">
             <CardHeader className="border-b border-slate-100 pb-4"><div className="flex justify-between items-start">
               <Badge variant={service.isActive ? "default" : "secondary"}>{categoryName(service.category)}</Badge>
-              {service.basePrice !== null && service.basePrice !== undefined && <span className="font-display text-sm text-slate-400" title="A price this service was given before; the quote decides what is charged">{formatCurrency(service.basePrice)}</span>}
+              {/* A price from before #8. Labelled, because an unexplained $150 on the
+                  card reads as the catalogue price the quote is supposed to decide. */}
+              {service.basePrice !== null && service.basePrice !== undefined && <span className="text-xs text-slate-400" title="A price this service was given before. The quote decides what is charged.">was {formatCurrency(service.basePrice)}</span>}
             </div><CardTitle className="text-xl mt-3 text-slate-900">{service.name}</CardTitle></CardHeader>
             <CardContent className="pt-4"><p className="text-sm text-slate-600 line-clamp-2 min-h-[40px]">{service.description || "No description provided."}</p>
               <div className="mt-4 flex items-center justify-between text-sm"><span />

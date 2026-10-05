@@ -36,12 +36,14 @@ Worth a look before touching those areas.
 browser-verified** — phases 16 through 21 — along with a **usability sweep** of every
 screen they touched, which found and fixed 36 things before he sees any of it.
 
-**The next action is the republish.** Nothing since Phase 15 is on Sandbox 2; the bundle
-there is still `index-043EjDyX.js`. The user decided on 2026-10-04: **one republish now
-that the whole list is finished**, and the message to Kyle goes out then — not phase by
-phase. After that republish, the parked `properties.gate_code` / `access_notes` drop can
-finally run, and our own queue resumes (A#9, Phase 13 sub-customers, Phase 14 calendar,
-Phase 15 go-live; Phase 12b email still waits on Lute's keys).
+**Phases 16–21 are live on Sandbox 2** (bundle `index-CGgtUgPk.js`), verified 25/25 against
+the deployed app on 2026-10-05. Reading those screenshots then found **four more things**,
+fixed in the working tree and **awaiting one more republish** — see the Sandbox 2 section.
+
+**After that republish:** the message to Kyle, then the parked `properties.gate_code` /
+`access_notes` drop can finally run, and our own queue resumes (A#9, Phase 13
+sub-customers, Phase 14 calendar, Phase 15 go-live; Phase 12b email still waits on Lute's
+keys).
 
 Three things to put to Kyle with the republish, all recorded in their phases: whether a
 quote's validity should run from **delivery** (the assumption built) or from creation;
@@ -138,6 +140,56 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Sandbox 2 checked after the republish — 2026-10-05
+
+The user republished. The bundle moved from `index-043EjDyX.js` to
+`index-CGgtUgPk.js`, and **everything from phases 16 to 21 is live**, server as
+well as client: `scratchpad/verify-sandbox2.mjs` is **25/25** against the
+deployed app, including `/api/quote-settings` answering with Kyle's four presets,
+the custom field filter refusing a bad id with a reason, the fifteen-minute
+time list with his own 8:00/8:15/8:30/8:45 example, a phone number formatting
+itself to `(816) 555-1234` as it is typed, and no Company Name on a residential
+profile. Nothing was created on the shared database to check it; the only thing
+typed into a form was a phone number, never saved.
+
+### Four things the screenshots showed
+
+Reading the screenshots rather than only the assertions is what found these.
+
+1. **A quote badged Open while the Open tile read 0**, and the six tiles summed
+   to **one of two quotes**. An estimate with an appointment derives as
+   `scheduled`, which reads as Open — and the tiles counted `draft` only, so it
+   was counted nowhere. Clicking the Open filter hid it too. Both now go through
+   a new `estimateStatusGroup()` in `lib/estimate-status.ts`, and a test asserts
+   that **every** derived status falls into one of Kyle's six with the same
+   label it is badged with.
+2. **"Manage your pricing and offerings"** still sat under the Service Catalog
+   heading, after #8 took pricing out of it.
+3. **The two legacy services showed `$150.00`** with the explanation only in a
+   `title` attribute, invisible unless hovered. It reads `was $150.00` now.
+4. **The New Quote status selector still said Draft and Sent** — the words #10
+   replaced. It uses `ESTIMATE_STATUS_LABELS` now; the stored values are
+   unchanged.
+
+### Verified
+
+`scratchpad/verify-open-count.mjs` **6/6** against the real data: the scheduled
+estimate is counted as Open, the six tiles account for both quotes, and the Open
+filter lists that estimate and hides the other. CRM **552/552**, with the Phase
+17 test that asserted the old shape updated to the new one. API untouched.
+
+**These four are in the working tree, not on Sandbox 2.** They need the next
+republish.
+
+### Worth keeping
+
+- **Read the screenshots.** 25 assertions passed on a screen whose tiles were
+  visibly wrong; the arithmetic error was only apparent by looking.
+- A filter chip renders its count in an inline span with no space, so its text
+  is `Open1` while the tile beside it reads `1 Open`. Four runs went into that.
+
+---
+
 ## Phase 21 — finding a profile by its custom fields, done in the working tree 2026-10-05
 
 Kyle's Testing Edits of 2026-10-01, the last part of **#3**: *"These custom

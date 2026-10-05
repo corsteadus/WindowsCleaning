@@ -37,6 +37,25 @@ export const ESTIMATE_STATUS_ORDER = [
 /** What an authorised employee may correct a status to; never Accepted. */
 export const CORRECTABLE_ESTIMATE_STATUSES = ["draft", "sent", "viewed", "declined", "expired"] as const;
 
+/**
+ * The group a derived status belongs to — one of Kyle's six.
+ *
+ * Two derived statuses share a label: `scheduled` reads as Open, and
+ * `accepted_scheduled` reads as Accepted. Anything that counts or filters by
+ * status has to agree with the badge, or a quote shows as Open while the Open
+ * tile says none: that is exactly what the Sandbox 2 screenshot of 2026-10-05
+ * showed, with one of two quotes counted nowhere at all.
+ */
+export type EstimateStatusGroup = (typeof ESTIMATE_STATUS_ORDER)[number];
+
+export function estimateStatusGroup(status: string): EstimateStatusGroup {
+  if (status === "scheduled") return "draft";
+  if (status.startsWith("accepted")) return "accepted";
+  return (ESTIMATE_STATUS_ORDER as readonly string[]).includes(status)
+    ? (status as EstimateStatusGroup)
+    : "draft";
+}
+
 export function estimateStatusOf(
   quote: { displayStatus?: string | null; status?: string | null } | null | undefined,
 ): string {

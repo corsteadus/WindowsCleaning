@@ -4,7 +4,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { CORRECTABLE_ESTIMATE_STATUSES, ESTIMATE_STATUS_LABELS, estimateStatusOf } from "../lib/estimate-status.ts";
+import {
+  CORRECTABLE_ESTIMATE_STATUSES,
+  ESTIMATE_STATUS_LABELS,
+  estimateStatusGroup,
+  estimateStatusOf,
+} from "../lib/estimate-status.ts";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const quotes = read("./Quotes.tsx");
@@ -17,6 +22,39 @@ test("the derived status is preferred, with the old column as the fallback", () 
   assert.equal(estimateStatusOf({ status: "sent" }), "sent");
   assert.equal(estimateStatusOf({}), "draft");
   assert.equal(estimateStatusOf(null), "draft");
+});
+
+test("a status that reads as Open is counted as Open", () => {
+  // Sandbox 2, 2026-10-05: a quote badged Open while the Open tile said 0, and
+  // the six tiles summed to one of two quotes. `scheduled` reads as Open and
+  // was counted nowhere.
+  assert.equal(estimateStatusGroup("scheduled"), "draft");
+  assert.equal(estimateStatusGroup("draft"), "draft");
+  assert.equal(estimateStatusGroup("accepted_scheduled"), "accepted");
+  assert.equal(estimateStatusGroup("accepted"), "accepted");
+  for (const status of ["sent", "viewed", "declined", "expired"]) {
+    assert.equal(estimateStatusGroup(status), status);
+  }
+  assert.equal(estimateStatusGroup("something new"), "draft", "an unknown status is not lost");
+});
+
+test("every derived status falls into one of Kyle's six", () => {
+  // Nothing may be counted nowhere, which is the fault this guards.
+  for (const status of ["draft", "scheduled", "sent", "viewed", "accepted", "accepted_scheduled", "declined", "expired"]) {
+    const group = estimateStatusGroup(status);
+    assert.ok(ESTIMATE_STATUS_LABELS[group], `${status} groups to ${group}, which has no label`);
+    assert.equal(
+      ESTIMATE_STATUS_LABELS[group], ESTIMATE_STATUS_LABELS[status],
+      `${status} is badged differently from the group it counts in`,
+    );
+  }
+});
+
+test("the quotes list counts and filters by that group, not by the raw status", () => {
+  assert.match(quotes, /const groupOf = /);
+  assert.match(quotes, /estimateStatusGroup\(estimateStatusOf\(quote\)\)/);
+  assert.doesNotMatch(quotes, /estimateStatusOf\(q\) === "draft"/);
+  assert.match(quotes, /filter === "all" \|\| groupOf\(q\) === filter/);
 });
 
 test("every status Kyle listed has a label and a badge", () => {
@@ -60,8 +98,13 @@ test("the list filters are Kyle's statuses, not the old column's words", () => {
 });
 
 test("filtering and counting use the derived status too", () => {
-  assert.match(quotes, /filter === "all" \|\| estimateStatusOf\(q\) === filter/);
-  assert.match(quotes, /estimateStatusOf\(q\)\.startsWith\("accepted"\)/, "an accepted estimate with a job must still count as accepted");
+  // Through the group, since 2026-10-05: comparing the derived status directly
+  // left `scheduled` — which reads as Open — out of every tile.
+  assert.match(quotes, /filter === "all" \|\| groupOf\(q\) === filter/);
+  assert.equal(
+    estimateStatusGroup("accepted_scheduled"), "accepted",
+    "an accepted estimate with a job must still count as accepted",
+  );
   assert.doesNotMatch(quotes, /q\.status === "approved"/);
 });
 

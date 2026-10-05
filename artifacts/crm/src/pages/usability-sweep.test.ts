@@ -100,6 +100,22 @@ test("a disabled button says why", () => {
   assert.match(quoteDetail, /Finalize the estimate first/);
 });
 
+test("the Service Catalog does not offer to manage pricing it no longer holds", () => {
+  // Kyle #8 took pricing out of the catalogue; the page still advertised it.
+  assert.doesNotMatch(services, /Manage your pricing and offerings/);
+  assert.match(services, /What each one costs is decided on the quote/);
+  // A price from before #8 says that is what it is, rather than sitting there
+  // unexplained in the corner of the card.
+  assert.match(services, /was \{formatCurrency\(service\.basePrice\)\}/);
+});
+
+test("#10's words are used where a new quote's status is chosen", () => {
+  const quoteNewSource = read("./QuoteNew.tsx");
+  assert.doesNotMatch(quoteNewSource, /<SelectItem value="draft">Draft<\/SelectItem>/);
+  assert.match(quoteNewSource, /ESTIMATE_STATUS_LABELS\.draft/);
+  assert.match(quoteNewSource, /ESTIMATE_STATUS_LABELS\.sent/);
+});
+
 test("a status with two underscores still reads as words", () => {
   assert.doesNotMatch(quoteDetail, /item\.status\.replace\("_", " "\)/);
   assert.match(quoteDetail, /item\.status\.replaceAll\("_", " "\)/);
