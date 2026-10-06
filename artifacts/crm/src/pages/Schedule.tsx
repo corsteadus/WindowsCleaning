@@ -15,7 +15,7 @@ import {
   getListJobsQueryKey,
   getListUnscheduledJobsQueryKey,
 } from "@workspace/api-client-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,8 @@ import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { hasClientCapability } from "@/lib/rbac";
 import { getScheduleEmptyStateCopy } from "@/lib/schedule-empty-state";
 import { MonthCalendar } from "@/components/MonthCalendar";
+import { fetchCalendarPreferences, saveCalendarPreferences } from "@/lib/calendar-api";
+import { type CalendarFilterState, NO_CALENDAR_FILTERS } from "@/lib/calendar-filters";
 import { SchedulingQueue } from "@/components/SchedulingQueue";
 import { DEFAULT_WEEK_START, shiftMonth } from "@/lib/calendar-grid";
 import {
@@ -524,6 +526,43 @@ export default function Schedule() {
   });
   const [, navigate] = useLocation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  // Spec §11.6: what this person left the calendar looking like. Until it
+  // answers, the calendar shows everything — a filter nobody has chosen yet
+  // must not hide work.
+  const preferencesQuery = useQuery({
+    queryKey: authScopedQueryKey(user, ["calendar-preferences"]),
+    queryFn: fetchCalendarPreferences,
+    staleTime: 300000,
+  });
+  const savePreferences = useMutation({
+    mutationFn: saveCalendarPreferences,
+    onSuccess: (saved: Awaited<ReturnType<typeof saveCalendarPreferences>>) => {
+      queryClient.setQueryData(authScopedQueryKey(user, ["calendar-preferences"]), saved);
+    },
+    onError: () => {
+      // The bar has already moved; put it back to what is stored.
+      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["calendar-preferences"]) });
+      toast({ title: "Could not save your calendar filters", variant: "destructive" });
+    },
+  });
+  const calendarFilters: CalendarFilterState = preferencesQuery.data
+    ? {
+      selectedAssignments: preferencesQuery.data.selectedAssignments,
+      showCompletedJobs: preferencesQuery.data.showCompletedJobs,
+    }
+    : NO_CALENDAR_FILTERS;
+  const changeCalendarFilters = (next: CalendarFilterState) => {
+    // Optimistic: the month redraws now, the save follows.
+    if (preferencesQuery.data) {
+      queryClient.setQueryData(authScopedQueryKey(user, ["calendar-preferences"]), {
+        ...preferencesQuery.data, ...next,
+      });
+    }
+    savePreferences.mutate(next);
+  };
   const canManageSchedule = hasClientCapability(user, "schedule.manage");
   const canViewScheduleJobs =
     hasClientCapability(user, "schedule.view") || hasClientCapability(user, "jobs.view");
@@ -858,6 +897,9 @@ export default function Schedule() {
           weekStartsOn={DEFAULT_WEEK_START}
           onOpenJob={(jobId) => navigate(`/jobs/${jobId}`)}
           canMove={canManageSchedule}
+          filters={calendarFilters}
+          onFiltersChange={changeCalendarFilters}
+          savingFilters={savePreferences.isPending}
         />
       ) : loadingWeek ? (
         <ScheduleSkeleton />

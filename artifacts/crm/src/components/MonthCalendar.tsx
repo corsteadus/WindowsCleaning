@@ -1,4 +1,19 @@
+import { blockDropForOccurrence, readableBlockMessage, type BlockDrop } from "@/lib/calendar-block-conflicts";
+import { formatDateOnly } from "@/lib/quote-settings-form";
 import { formatTimeOfDay } from "@/lib/time-of-day";
+import { CalendarFilterBar } from "@/components/CalendarFilterBar";
+import { JobSideDrawer } from "@/components/JobSideDrawer";
+import { MoveDayDialog } from "@/components/MoveDayDialog";
+import { BlockDayDialog } from "@/components/BlockDayDialog";
+import {
+  type CalendarFilterState,
+  NO_CALENDAR_FILTERS,
+  amountsAreHidden,
+  assignmentOptions,
+  filterOccurrences,
+  isFiltering,
+  totalsFromOccurrences,
+} from "@/lib/calendar-filters";
 import { askAboutSchedule, type JobUpdateResult } from "@/components/ScheduleNotificationPrompt";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,9 +29,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, CalendarClock, CalendarOff, RefreshCw } from "lucide-react";
 import { useAuth } from "@workspace/replit-auth-web";
-import { getListJobsQueryKey, useUpdateJob } from "@workspace/api-client-react";
+import {
+  getListCrewsQueryKey, getListJobsQueryKey, useListCrews, useUpdateJob,
+} from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { authScopedQueryKey } from "@/lib/auth-scope";
@@ -36,6 +53,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  fetchCalendarBlocks,
+  liftCalendarBlock,
+  type SchedulingBlock,
   fetchCalendarOccurrences,
   fetchCalendarTotals,
   sumDayTotals,
@@ -71,6 +91,10 @@ type MonthCalendarProps = {
   onOpenDay?: (date: string) => void;
   /** Whether this viewer may reschedule. Read-only viewers get no drag. */
   canMove: boolean;
+  /** Spec Step 3. Omitted means an unfiltered month, and no filter bar. */
+  filters?: CalendarFilterState;
+  onFiltersChange?: (next: CalendarFilterState) => void;
+  savingFilters?: boolean;
 };
 
 const STATUS_ACCENT: Record<string, string> = {
@@ -171,6 +195,9 @@ function DayCell({
   onOpenJob,
   onOpenDay,
   canMove,
+  onMoveDay,
+  blocks,
+  onLiftBlock,
 }: {
   day: GridDay;
   occurrences: CalendarOccurrence[];
@@ -180,6 +207,9 @@ function DayCell({
   onOpenJob: (jobId: number) => void;
   onOpenDay?: (date: string) => void;
   canMove: boolean;
+  onMoveDay?: (date: string) => void;
+  blocks?: SchedulingBlock[];
+  onLiftBlock?: (block: SchedulingBlock) => void;
 }) {
   // Adjacent-month days are drop targets too: moving a job across a month
   // boundary should not require navigating away first.
@@ -201,10 +231,45 @@ function DayCell({
         >
           {day.dayOfMonth}
         </button>
-        {jobCount > 0 && (
-          <span className="text-[9px] font-semibold text-slate-400">{jobCount}</span>
-        )}
+        <span className="flex items-center gap-1">
+          {jobCount > 0 && (
+            <span className="text-[9px] font-semibold text-slate-400">{jobCount}</span>
+          )}
+          {/* V1 #11. Rendered, not revealed on hover: a tablet has no hover. */}
+          {canMove && jobCount > 0 && onMoveDay && (
+            <button
+              type="button"
+              aria-label={`Move the work on ${day.date} to another day`}
+              onClick={() => onMoveDay(day.date)}
+              className="rounded p-0.5 text-slate-300 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            >
+              <CalendarClock className="h-3 w-3" />
+            </button>
+          )}
+        </span>
       </div>
+
+      {/* Blocks first, and deliberately unlike a job card: a blocked day is
+          not work, and §11.4 says it must never read as any. */}
+      {(blocks ?? []).map((block) => (
+        <button
+          key={block.id}
+          type="button"
+          data-testid="calendar-block"
+          data-block-mode={block.blockMode}
+          onClick={() => onLiftBlock?.(block)}
+          disabled={!onLiftBlock}
+          title={block.blockMode === "hard"
+            ? `${block.title} — bookings are refused. Click to lift.`
+            : `${block.title} — bookings warn first. Click to lift.`}
+          className={`mb-1 w-full truncate rounded px-1 py-0.5 text-left text-[9px] font-bold uppercase tracking-wide
+            ${block.blockMode === "hard"
+              ? "bg-rose-100 text-rose-700 hover:bg-rose-200"
+              : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}
+        >
+          {block.title}
+        </button>
+      ))}
 
       {/* Every job is drawn. The cell grows; work is never hidden behind a
           "+2 more" link the office has to click to trust the day. */}
@@ -236,16 +301,33 @@ export function MonthCalendar({
   onOpenJob,
   onOpenDay,
   canMove,
+  filters = NO_CALENDAR_FILTERS,
+  onFiltersChange,
+  savingFilters,
 }: MonthCalendarProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [dragging, setDragging] = useState<CalendarOccurrence | null>(null);
+  // The card that is open in the drawer. Holding the whole occurrence, not
+  // just an id, is what lets the drawer open with an answer already in it.
+  const [openJob, setOpenJob] = useState<CalendarOccurrence | null>(null);
+  const [movingDay, setMovingDay] = useState<string | null>(null);
+  const [blockingDays, setBlockingDays] = useState(false);
+  // Only asked for while somebody is actually writing a block.
+  const crewsQuery = useListCrews({
+    query: { enabled: blockingDays, queryKey: getListCrewsQueryKey() },
+  });
+  // A held move: a crew already booked, a soft block on the day, or both.
+  // One dialog for both, because being asked twice about one drag teaches
+  // people to click through without reading.
   const [conflict, setConflict] = useState<{
     occurrence: CalendarOccurrence;
     from: string;
     to: string;
     clashes: CalendarOccurrence[];
+    /** A soft block on the day, when there is one. */
+    warning: Extract<BlockDrop, { kind: "warn" }> | null;
   } | null>(null);
 
   // Pointer drags start only after a short distance so a click still opens the
@@ -267,6 +349,13 @@ export function MonthCalendar({
     queryFn: () => fetchCalendarOccurrences(range),
     // Keep the previous month on screen while the next one loads, so paging
     // through months does not blank the grid on every click.
+    placeholderData: (previous) => previous,
+  });
+
+  // Spec V1 #12. Bounded by the same window as everything else here.
+  const blocksQuery = useQuery({
+    queryKey: authScopedQueryKey(user, ["calendar-blocks", range.start, range.end]),
+    queryFn: () => fetchCalendarBlocks(range),
     placeholderData: (previous) => previous,
   });
 
@@ -295,12 +384,41 @@ export function MonthCalendar({
     }
   }, [year, month, weekStartsOn, occurrencesQuery.isFetching, queryClient, user]);
 
-  // One pass over the response, not one filter per cell.
-  const buckets = useMemo(
-    () => bucketByDate(occurrencesQuery.data?.occurrences ?? []),
-    [occurrencesQuery.data],
+  const allOccurrences = occurrencesQuery.data?.occurrences ?? [];
+  // Only the assignments actually booked this month are worth offering.
+  const options = useMemo(() => assignmentOptions(allOccurrences), [allOccurrences]);
+  const visibleOccurrences = useMemo(
+    () => filterOccurrences(allOccurrences, filters),
+    [allOccurrences, filters],
   );
-  const dayTotals = useMemo(() => totalsByDate(totalsQuery.data), [totalsQuery.data]);
+  const hiddenCount = allOccurrences.length - visibleOccurrences.length;
+  const filtering = isFiltering(filters);
+
+  // One pass over the response, not one filter per cell.
+  const buckets = useMemo(() => bucketByDate(visibleOccurrences), [visibleOccurrences]);
+  // While a filter is on, the footers count what is on screen. The server's
+  // totals are the whole month's, and a cell showing three jobs under a footer
+  // saying eleven is a disagreement nobody trusts twice.
+  // A block can span days, so each day it covers gets its own entry.
+  const blocksByDate = useMemo(() => {
+    const map = new Map<string, SchedulingBlock[]>();
+    for (const block of blocksQuery.data?.blocks ?? []) {
+      const last = block.endDate ?? block.startDate;
+      for (let date = block.startDate; date <= last;) {
+        map.set(date, [...(map.get(date) ?? []), block]);
+        const [year, month, day] = date.split("-").map(Number);
+        date = new Date(Date.UTC(year, month - 1, day + 1, 12)).toISOString().slice(0, 10);
+      }
+    }
+    return map;
+  }, [blocksQuery.data]);
+
+  const dayTotals = useMemo(
+    () => (filtering
+      ? totalsFromOccurrences(visibleOccurrences, { amountsHidden: amountsAreHidden(totalsQuery.data) })
+      : totalsByDate(totalsQuery.data)),
+    [filtering, visibleOccurrences, totalsQuery.data],
+  );
 
   const labels = useMemo(() => weekdayLabels(weekStartsOn), [weekStartsOn]);
 
@@ -316,8 +434,23 @@ export function MonthCalendar({
     return dates;
   }, [grid]);
   const period = useMemo(
-    () => sumDayTotals(totalsQuery.data, (date) => inMonthDates.has(date)),
-    [totalsQuery.data, inMonthDates],
+    () => {
+      if (!filtering) return sumDayTotals(totalsQuery.data, (date) => inMonthDates.has(date));
+      if (!totalsQuery.data) return undefined;
+      const amountsHidden = amountsAreHidden(totalsQuery.data);
+      const summed = { jobCount: 0, completedCount: 0, scheduledValueCents: amountsHidden ? null : 0, durationMinutes: 0 };
+      for (const [date, day] of dayTotals) {
+        if (!inMonthDates.has(date)) continue;
+        summed.jobCount += day.jobCount;
+        summed.completedCount += day.completedCount;
+        summed.durationMinutes += day.durationMinutes;
+        if (!amountsHidden && day.scheduledValueCents !== null) {
+          summed.scheduledValueCents = (summed.scheduledValueCents ?? 0) + day.scheduledValueCents;
+        }
+      }
+      return summed;
+    },
+    [filtering, totalsQuery.data, dayTotals, inMonthDates],
   );
   const error = occurrencesQuery.error ?? totalsQuery.error;
 
@@ -328,6 +461,28 @@ export function MonthCalendar({
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["calendar-totals"]) });
     queryClient.invalidateQueries({ queryKey: getListJobsQueryKey() });
   }, [queryClient, user]);
+
+  const refreshBlocks = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["calendar-blocks"]) });
+  }, [queryClient, user]);
+
+  /**
+   * Lifting a block is a small, reversible act, so it asks once and does it —
+   * the block is switched off rather than erased, and can be put back.
+   */
+  const liftBlock = useCallback((block: SchedulingBlock) => {
+    if (!window.confirm(`Lift "${block.title}"? Work can be booked on these days again.`)) return;
+    liftCalendarBlock(block.id)
+      .then(() => {
+        refreshBlocks();
+        toast({ title: "Block lifted", description: block.title });
+      })
+      .catch((error: unknown) => toast({
+        title: "Could not lift the block",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      }));
+  }, [refreshBlocks, toast]);
 
   const moveMutation = useUpdateJob({
     mutation: {
@@ -387,19 +542,38 @@ export function MonthCalendar({
         return;
       }
 
-      // The day being dropped on is already painted, so its jobs are in hand:
-      // the clash check costs no read.
+      // The day being dropped on is already painted, so its jobs and its
+      // blocks are both in hand: neither check costs a read.
+      // Spec #34: a hard block refuses the drop outright. The server refuses it
+      // too — this is the same answer given in the moment rather than after a
+      // round trip.
+      const blocked = blockDropForOccurrence(occurrence, drop.to, blocksByDate.get(drop.to) ?? []);
+      if (blocked.kind === "refused") {
+        toast({
+          title: "Cannot move this job",
+          description: readableBlockMessage(blocked.message),
+          variant: "destructive",
+        });
+        return;
+      }
+
       const clashes = findCrewOverlaps(occurrence, buckets.get(drop.to) ?? []);
-      if (clashes.length) {
+      if (clashes.length || blocked.kind === "warn") {
         // A warning, not a refusal — the spec reserves refusal for hard blocks,
-        // and only the scheduler knows whether the overlap is deliberate.
-        setConflict({ occurrence, from: drop.from, to: drop.to, clashes });
+        // and only the scheduler knows whether the exception is deliberate.
+        setConflict({
+          occurrence,
+          from: drop.from,
+          to: drop.to,
+          clashes,
+          warning: blocked.kind === "warn" ? blocked : null,
+        });
         return;
       }
 
       commitMove(occurrence, drop.from, drop.to);
     },
-    [buckets, commitMove, toast],
+    [blocksByDate, buckets, commitMove, toast],
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -424,6 +598,34 @@ export function MonthCalendar({
       onDragCancel={() => setDragging(null)}
     >
     <div className="space-y-3">
+      {/* Spec Step 3. The bar lives here because this is where the month's cards
+          are: it can offer only the assignments actually booked, with counts. */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        {onFiltersChange ? (
+          <CalendarFilterBar
+            options={options}
+            state={filters}
+            onChange={onFiltersChange}
+            hiddenCount={hiddenCount}
+            saving={savingFilters}
+          />
+        ) : <span />}
+
+        {/* V1 #12. Beside the filters, because both are about what the month
+            shows rather than about any one job. */}
+        {canMove && (
+          <button
+            type="button"
+            onClick={() => setBlockingDays(true)}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5
+                       text-xs font-semibold text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+          >
+            <CalendarOff className="h-3.5 w-3.5" />
+            Block days
+          </button>
+        )}
+      </div>
+
       {occurrencesQuery.data?.truncated && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
           <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
@@ -473,7 +675,10 @@ export function MonthCalendar({
                       jobCount={total?.jobCount ?? 0}
                       valueCents={total?.scheduledValueCents ?? null}
                       inMonth={day.inMonth}
-                      onOpenJob={onOpenJob}
+                      onOpenJob={(jobId) => setOpenJob(buckets.get(day.date)?.find((card) => card.id === jobId) ?? null)}
+                      onMoveDay={setMovingDay}
+                      blocks={blocksByDate.get(day.date) ?? []}
+                      {...(canMove ? { onLiftBlock: liftBlock } : {})}
                       canMove={canMove}
                       {...(onOpenDay ? { onOpenDay } : {})}
                     />
@@ -520,25 +725,53 @@ export function MonthCalendar({
       </div>
     </div>
 
-    {/* Crew double-booking. The move is held, not cancelled: the scheduler
-        sees exactly what it would collide with and decides. */}
+    {/* A crew already booked, a soft block, or both. The move is held, not
+        cancelled: the scheduler sees what it would run into and decides. */}
     <Dialog open={conflict !== null} onOpenChange={(open) => !open && setConflict(null)}>
       <DialogContent className="max-w-md rounded-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <AlertTriangle className="w-4 h-4 text-amber-500" />
-            {conflict?.occurrence.crewName ?? "This crew"} is already booked
+            {conflict?.clashes.length
+              ? `${conflict.occurrence.crewName ?? "This crew"} is already booked`
+              : "This day is marked off"}
           </DialogTitle>
         </DialogHeader>
 
         {conflict && (
           <div className="space-y-3">
             <p className="text-sm text-slate-600">
-              Moving <span className="font-semibold text-slate-900">{conflict.occurrence.customerLabel}</span>{" "}
-              to {conflict.to} overlaps {conflict.clashes.length === 1 ? "another job" : `${conflict.clashes.length} other jobs`}{" "}
-              already on {conflict.occurrence.crewName ?? "this crew"}.
+              {conflict.clashes.length ? (
+                <>
+                  Moving <span className="font-semibold text-slate-900">{conflict.occurrence.customerLabel}</span>{" "}
+                  to {formatDateOnly(conflict.to)} overlaps {conflict.clashes.length === 1 ? "another job" : `${conflict.clashes.length} other jobs`}{" "}
+                  already on {conflict.occurrence.crewName ?? "this crew"}.
+                </>
+              ) : (
+                <>
+                  Moving <span className="font-semibold text-slate-900">{conflict.occurrence.customerLabel}</span>{" "}
+                  to {formatDateOnly(conflict.to)}, which is marked off.
+                </>
+              )}
             </p>
 
+            {/* The block is named. "That day is blocked" without saying which
+                is the kind of message people learn to click past. */}
+            {conflict.warning?.blocks.map((block) => (
+              <div
+                key={block.id}
+                data-testid="drop-block-warning"
+                className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
+              >
+                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Marked off</p>
+                <p className="text-sm font-semibold text-slate-900">{block.title}</p>
+                <p className="text-xs text-slate-600">
+                  {block.reason ?? "This is a soft block — work can still be booked."}
+                </p>
+              </div>
+            ))}
+
+            {conflict.clashes.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 divide-y divide-amber-100">
               <div className="px-3 py-2">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Moving</p>
@@ -553,6 +786,7 @@ export function MonthCalendar({
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
@@ -575,6 +809,27 @@ export function MonthCalendar({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Step 3: the card's own drawer. It opens over the month rather than
+        taking the person off it. */}
+    <JobSideDrawer
+      occurrence={openJob}
+      onClose={() => setOpenJob(null)}
+      onOpenJob={onOpenJob}
+    />
+
+    <MoveDayDialog
+      from={movingDay}
+      onClose={() => setMovingDay(null)}
+      onMoved={refreshCalendar}
+    />
+
+    <BlockDayDialog
+      open={blockingDays}
+      onClose={() => setBlockingDays(false)}
+      onSaved={refreshBlocks}
+      crews={(crewsQuery.data ?? []).map((crew) => ({ id: crew.id, name: crew.name ?? `Crew #${crew.id}` }))}
+    />
 
     {/* The dragged card follows the cursor at full opacity while the original
         dims in place, so it stays clear which job is being moved. */}

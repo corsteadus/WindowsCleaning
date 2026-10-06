@@ -1,3 +1,4 @@
+import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import {
   decideSchedulePrompt, enabledChannels, promptSummary, scheduleEventFor,
 } from "../lib/appointment-notification-core.ts";
@@ -571,6 +572,24 @@ router.post("/jobs", async (req, res): Promise<void> => {
       return;
     }
 
+    // A day the office has blocked off refuses the booking (spec V1 #12,
+    // §7.15). Only a **hard** block lands here: a soft one is a warning for
+    // whoever is booking, and a warning the API answers by itself is a
+    // refusal wearing a different word.
+    if (body.scheduledDate) {
+      const refusal = await hardBlockRefusal(db, {
+        date: body.scheduledDate,
+        crewId: normalizeCrewId(body.crewId),
+        userId: normalizeAssignmentUserId(body.assignedTechnicianUserId),
+        startTime: body.scheduledStartTime ?? null,
+        endTime: body.scheduledEndTime ?? null,
+      });
+      if (refusal) {
+        res.status(409).json({ error: refusal, code: "day_blocked" });
+        return;
+      }
+    }
+
     let insertedJobId:     number;
 
     if (quoteId !== null) {
@@ -965,6 +984,34 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
         if (lock) return { kind: "scheduleLocked" as const, reason: lock };
       }
 
+      // The same refusal as creating one, read off the row as it will be and
+      // not off the patch alone — so moving a job onto a crew whose day is
+      // blocked is caught even though the date never changed.
+      const movesOntoADay = touchesSchedule(scheduleChanges)
+        || body.crewId !== undefined
+        || body.assignedTechnicianUserId !== undefined;
+      if (movesOntoADay) {
+        const nextDate = body.scheduledDate !== undefined
+          ? (body.scheduledDate || null)
+          : current.scheduledDate;
+        if (nextDate) {
+          const refusal = await hardBlockRefusal(tx, {
+            date: nextDate,
+            crewId: body.crewId !== undefined ? normalizeCrewId(body.crewId) : current.crewId,
+            userId: body.assignedTechnicianUserId !== undefined
+              ? normalizeAssignmentUserId(body.assignedTechnicianUserId)
+              : current.assignedTechnicianUserId,
+            startTime: body.scheduledStartTime !== undefined
+              ? (body.scheduledStartTime || null)
+              : current.scheduledStartTime,
+            endTime: body.scheduledEndTime !== undefined
+              ? (body.scheduledEndTime || null)
+              : current.scheduledEndTime,
+          });
+          if (refusal) return { kind: "hardBlocked" as const, message: refusal };
+        }
+      }
+
       if (body.propertyId !== undefined) {
         const propertyId = normalizeOptionalPropertyId(body.propertyId);
         if (propertyId !== null) {
@@ -1137,6 +1184,10 @@ router.patch("/jobs/:id", async (req, res): Promise<void> => {
         code: "schedule_locked",
         reason: result.reason,
       });
+      return;
+    }
+    if (result.kind === "hardBlocked") {
+      res.status(409).json({ error: result.message, code: "day_blocked" });
       return;
     }
     if (result.kind === "forbiddenAssignmentChange") {

@@ -43,13 +43,17 @@ reading those screenshots turned up verified **8/8** after the republish that ca
 **The release message has gone to Kyle and Lute.** What we are waiting on them for is listed
 under "Waiting on the client" — eight items, none of which blocks Phase 13 or 14.
 
-**Phase 13 — sub-customers is done** in the working tree (2026-10-05), along with taking
-**Gate Code and Access Notes out of the code**. Neither is republished yet, and the column
-`DROP` waits for that republish — the deployed API still selects them.
+**Phase 13 — sub-customers is live on Sandbox 2**, and **Gate Code and Access Notes are
+gone for good** — out of the code, republished, and the columns dropped on 2026-10-05,
+verified 9/9 against the deployed app afterwards.
 
-**Next:** republish, run the drop, then **Phase 14 — the calendar**, the largest remaining
-piece. Phase 15 go-live needs a date from Lute; Phase 12b email and A#9 still wait on his
-keys.
+**Phase 14 — the calendar is under way.** Step 3 is done (filters, the §11.6 preferences
+behind them, and the job side drawer), and **Step 4 is complete**: Move Entire Day,
+scheduling blocks, and the conflict validation that turns a block from advice into a rule
+on every path that can book a day. All in the working tree, **none republished**. **Two of
+the four architectural blockers are cleared** (§11.6 and §11.4), both by using tables Step 1
+created and nothing had read. Next is **Step 5, bulk invoicing**, then Steps 6–13. Phase 15
+go-live needs a date from Lute; Phase 12b email and A#9 still wait on his keys.
 
 Three things to put to Kyle with the republish, all recorded in their phases: whether a
 quote's validity should run from **delivery** (the assumption built) or from creation;
@@ -146,7 +150,472 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
-## Gate Code and Access Notes — out of the code, 2026-10-05
+## Phase 14, Step 4c — conflict validation, done in the working tree 2026-10-06
+
+Spec **V1 #34**, with **#12** and **§7.15**. Step 4b drew blocked days on the
+calendar; **nothing stopped work being booked onto one**. A block was advice.
+This is the step that makes it a rule, and Step 4 is now complete.
+
+### Where the rule lives
+
+On the server, on every path that can put work on a day:
+
+- `POST /jobs` — a job cannot be created on a hard-blocked day;
+- `PATCH /jobs/:id` — nor rescheduled onto one, checked beside the existing
+  completed/invoiced lock and **inside the same locked transaction**, so a
+  block created mid-request cannot be stepped over;
+- `POST /calendar/move-day` — the day being moved **to** gets the same say a
+  single drag gets.
+
+All three share one helper (`calendar-blocks-store.ts`), and it reads **one
+day**, not a window: a drag that waits on a month of rows is a drag that feels
+broken.
+
+### Hard refuses, soft still only warns
+
+The API refuses **hard** blocks and lets **soft** ones through. A warning the
+server answers by itself is a refusal wearing a different word — and only the
+person booking knows whether the exception is deliberate. So the soft question
+is asked on the screen, in the dialog that already held crew double-bookings:
+**one dialog for both reasons**, because being asked twice about one drag is
+how people learn to click through without reading.
+
+The month grid also answers a hard block *locally*, from the blocks already
+painted on the day, so the refusal arrives in the gesture rather than as a
+bounced save. The server remains the thing that enforces it. A unit test reads
+both files and fails if the two rule sets drift apart.
+
+### What the checks are made of
+
+- The reschedule check runs on the row **as it will be**, not on the patch
+  alone: putting a blocked crew on a job already sitting on that day is the
+  same move by another name, and the date never changes.
+- A calendar card carries its crew, not its technician, so an **employee**
+  block cannot be matched in the grid. The server still refuses it and its
+  message is what the failed move shows. A refusal that arrives a moment late
+  beats a drag that ignores a block.
+- Move Entire Day skips only the jobs the target day refuses. One crew blocked
+  there leaves the rest of the day free to move.
+
+### Two things the browser found
+
+- **"Staying on 16 Oct — ZZConfAda — completed."** The day-move dialog printed
+  `reason === "invoiced" ? "invoiced" : "completed"`: a two-way guess, where the
+  planner now has three reasons. A blocked job was labelled *completed*, which
+  sends somebody looking at the wrong job. It names the block now.
+- **Two spellings of one date in one dialog.** The heading said "Oct 18, 2026"
+  and the line under it said "2026-10-18 is blocked: Closed", because that
+  sentence is composed by the rule. Every place a block's message is shown now
+  passes it through `readableBlockMessage`.
+
+### Verified
+
+26 unit tests (12 on the server rules and routes, 10 on the grid's own answer,
+plus the planner's new reason), `scratchpad/p14d-conflicts-api.mjs` **20/20**
+over HTTP and `scratchpad/p14-conflicts-browser.mjs` **15/15** headed. Nothing
+regressed: 4a HTTP 15/15, 4b HTTP 17/17, and in the browser filters 15/15,
+drawer 14/14, move-day 11/11, blocks 10/10. CRM **613/613**, API **722/736** —
+the same 14 `DATABASE_URL` failures. No migration: `calendar_events` already
+held everything this needed.
+
+### Worth keeping — a drag that landed a row out
+
+The first browser run reported "the dialog never opened". It had opened for the
+first two drags and not the third, and the job had moved to a day nobody
+dropped it on. **dnd-kit scrolls the page while a drag is in flight**, so a day
+cell measured before the drag started is a row out by the time the pointer gets
+there. The helper now measures the target twice *during* the drag and once more
+before releasing. A fixed `waitForTimeout` would have hidden it — the failure
+was geometry, not timing.
+
+And one for the toolbox: **this shell's heredoc eats one level of
+backslashes**, so a patch script written that way produced `/d{4}-d{2}-d{2}/`
+from `\d{4}-\d{2}-\d{2}`. It typechecked, and the function silently returned
+its input. Patch scripts that carry a regex now build the backslash explicitly.
+
+---
+
+## Phase 14, Step 4b — scheduling blocks, done in the working tree 2026-10-06
+
+Spec **V1 #12**, **§7.15** and **§11.4**. `calendar_events` was created in Step 1
+and, like `calendar_preferences` before it, **nothing had ever read or written
+it**. That is the second of the four architectural blockers cleared by using the
+table it was built for.
+
+### A block is not a job
+
+§11.4 is explicit, and it matters arithmetically: if a blocked day were stored as
+a job it would be counted in that day's job count and its scheduled value. It is
+a `calendar_events` row, and the test proves the consequence — a blocked day
+reports **0 occurrences and a zero total**.
+
+### Hard refuses, soft warns
+
+- **hard** — the day the business is closed. A booking is turned away.
+- **soft** — a crew on training, a van in for service. The scheduler is told and
+  decides.
+
+**Soft is the default**, because that is this calendar's posture everywhere else
+(`crew-overlap.ts` warns rather than refuses): only the person booking knows
+whether the exception is deliberate. The dialog says what each one does in
+words — "Work cannot be booked on these days until the block is lifted" against
+"whoever books it is told about the block first" — rather than leaving "hard"
+and "soft" to be guessed at.
+
+A soft block beside a hard one **does not soften it**, and the message names the
+block: *"2026-12-25 is blocked: Christmas Day"*. An unexplained refusal is the
+kind people learn to click past.
+
+### Scope, range and hours
+
+A block can cover the company, one crew or one person; one day or a range; the
+whole day or a few hours. The hours clash only when they overlap, and a job with
+no time set is told about a timed block rather than quietly let through.
+
+### Lifting keeps the record
+
+A lifted block is switched off, not erased: a day that was blocked in March is
+part of why that month's schedule looked as it did. The route has no `DELETE
+FROM` at all, and a test asserts it.
+
+### Verified
+
+16 unit tests on the rules, `scratchpad/p14c-blocks-api.mjs` **17/17** over HTTP,
+and `scratchpad/p14-blocks-browser.mjs` **10/10** headed: a day is blocked from
+the month, the pill appears on it, hard and soft are drawn in different colours,
+the block is stored as a `scheduling_block` with no job behind it, and lifting it
+from the grid leaves `is_active = false` in the table. CRM **596/596**, API
+**705/719** — the same 14 `DATABASE_URL` failures. One Step 3 guard was updated,
+because the filter bar's `&&` became a ternary when the Block days button joined
+it on that row.
+
+### Worth keeping — two false passes in one test
+
+Both of these made the test *pass* while the product did nothing:
+
+- **The toast counts as page text.** The test waited for "ZZ Van serviced" to
+  appear on the page; the toast said exactly that, so it waited on the toast and
+  not on the grid. The block pills now carry `data-testid="calendar-block"`, and
+  the test reads only those.
+- **`String.replace` turns `$` into `# Project decisions and working context
+
+**Last updated:** 2026-09-21
+
+## How to use this file
+
+This is the running memory for work on this repo. It exists so that a lost chat, a new
+machine, or a fresh session can pick up without re-deriving anything.
+
+Read it before starting work. Update it whenever:
+
+- The user makes a decision
+- A recommendation is made and accepted or rejected
+- Work is parked, and why
+- We start waiting on the client for something, or an answer arrives
+
+Keep it factual. Everything here should trace to something actually verified in the repo, not
+assumed. Where something is unverified, say so explicitly.
+
+**Read this alongside `.agents/memory/project-architecture-map.md`.** The two divide cleanly
+and neither replaces the other: that file maps the repository as built — topology, runtime and
+data flows, library choices, verification baseline, technical risks. This file carries the
+decisions, the roadmap, and what we are waiting on people for. When they disagree about a
+technical fact, the architecture map was measured more recently; when they disagree about a
+decision or its reasoning, this file is the record.
+
+`.agents/memory/MEMORY.md` indexes the other agent-memory notes, several of which capture real
+traps (Radix Select pitfalls, advisory lock namespaces, the convert-core adapter pattern).
+Worth a look before touching those areas.
+
+---
+
+## Where things stand right now — read this first
+
+**As of 2026-10-05. All fourteen of Kyle's Testing Edits of 2026-10-01 are built and
+browser-verified** — phases 16 through 21 — along with a **usability sweep** of every
+screen they touched, which found and fixed 36 things before he sees any of it.
+
+**Everything is live on Sandbox 2** (bundle `index-CYXe_Ae1.js`, built 2026-10-05 07:32
+GMT): phases 16–21 verified **25/25** against the deployed app, and the four fixes that
+reading those screenshots turned up verified **8/8** after the republish that carried them.
+
+**The release message has gone to Kyle and Lute.** What we are waiting on them for is listed
+under "Waiting on the client" — eight items, none of which blocks Phase 13 or 14.
+
+**Phase 13 — sub-customers is live on Sandbox 2**, and **Gate Code and Access Notes are
+gone for good** — out of the code, republished, and the columns dropped on 2026-10-05,
+verified 9/9 against the deployed app afterwards.
+
+**Phase 14 — the calendar is under way.** Step 3 is done (filters, the §11.6 preferences
+behind them, and the job side drawer), and **Step 4's Move Entire Day** with it — all in the
+working tree, none republished. What is left of Step 4 is **scheduling blocks (#12)** and
+**fuller conflict validation (#34)**. Phase 15 go-live needs a date from Lute; Phase 12b
+email and A#9 still wait on his keys.
+
+Three things to put to Kyle with the republish, all recorded in their phases: whether a
+quote's validity should run from **delivery** (the assumption built) or from creation;
+whether appointment **durations** should offer 15 and 45 minutes as well; and which other
+profile fields are commercial-only.
+
+The calendar note below is older and still true as a description of the spec work.
+
+**As of 2026-09-11.** Everything below this section is detail; this is the state of play.
+
+**The work:** building the calendar described in the Corstead spec (v1.0, 31 Aug 2026). Of its
+34 V1 items, **6 are done, 10 partial, 18 not started**. Only 1 of the spec's 5 prototype tests
+passes. The sequencing plan is the Roadmap section.
+
+**What is in flight:**
+
+| | State |
+|---|---|
+| **Step 1 — the four calendar tables** | Committed (`a8a245e`) and **live on the Neon development branch** — 75 tables, constraints proven by test. Not on production, and the backfill migration has not run anywhere |
+| **Step 2 — Scheduling Queue and On Hold** | **Complete** — API committed (`e64476d`), three-tab UI built 2026-09-11 and uncommitted. None of it has run against a real database yet |
+| **Database move to Neon** | Recreated in `us-west-2` on 2026-09-11, schema pushed and constraints re-proven. Development is usable now; production is empty and untouched |
+| **Notify-before-send** | Parked deliberately. Investigated and planned, not built |
+
+**The immediate next actions, in order:**
+
+1. Point the Replit **development** environment at the Neon dev branch (`DATABASE_URL`), and
+   set `APP_MIGRATIONS_ENABLED = "true"` so the backfill migrations run there. Everything else
+   waits on this — the queue endpoints have never run against a real database
+2. Verify Step 2 end to end once the database is connected — the queue has never met a real
+   row. It unlocks two prototype tests
+3. Fix the migration gate to allow a production environment — required before any cutover
+4. Move Neon project ownership to Lute; he asked for it, and the account was created on our side
+
+**The single most important constraint:** Lute wants no interruption to Kyle's testing. Do not
+let the database move stall the feature build.
+
+**Do not** run `git commit` or `git push` — hand the user the message to paste.
+
+---
+## Phases 1–7 are deployed and verified on Sandbox 2 — 2026-09-25
+
+`a8c38c0` is pushed and republished. The deployed bundle
+(`/assets/index-Cgd1zUPe.js`) carries every Phase 1–7 marker and no longer carries
+`gateCode` at all. **Sandbox 2 now runs the same code as the working tree** — the
+gap recorded earlier, where it was still on pre-Phase-1 code, is closed.
+
+**The run:** `scratchpad/sandbox2-accept.mjs`, headed, against
+`https://sandbox-2-data-free-corsteadllc.replit.app` — 36 checks across all seven
+phases, scenarios and edge cases, signed in as `team_admin` and as `team_tech`, with
+a guest browser for the customer's own estimate link.
+
+**Result: 36/36.** Five reported as failures on the first pass; all five were faults
+in how the test asked, re-asked correctly in `scratchpad/sbx2-failures2.mjs` and all
+five passed. They are worth writing down because they will trip the next test author:
+
+| What looked broken | What was actually true |
+|---|---|
+| "Account type is not first on the form" | There is **no `/prospects/new` route** — the form is a dialog opened by **New Prospect** on `/prospects`. The test had been reading the nav sidebar. The dialog reads: Account type → Residential/Commercial → Contact information → Salutation → First name |
+| "Customer Since is not set to today" | The field is **`customerDate`**, not `customerSince`, in the API and in the column (`customer_date`). Sending `customerSince: "2001-01-01"` on create stores `2026-09-24`; a later PATCH cannot move it; the profile shows it read-only |
+| "A duplicate dropdown option is not refused" | It is: the second add returns **HTTP 409 `"ZZ Dup Probe" is already an option`** and no second row is written. The test read the page 1.2s later, by which time the toast had gone |
+| "Gate Code and Access Notes are still there" | **No screen asks for them** anywhere on the profile. The `access_notes` and `gate_code` **columns** are still on `properties`, and the API still answers with those keys — dropping them is **Phase 9**, as planned. Not a defect |
+
+**Verified on the deployed build, not localhost:** the five custom-field types and
+their dropdown choices (values survive a reload; a blank date stays blank, not
+"null"); a service typed while quoting joining the company-wide catalogue and
+landing as a priced line; the customer's secure estimate link opening without a
+sign-in and turning the estimate Viewed; Draft → Sent → Viewed, manual correction
+with a reason, Accepted refused (400), unknown status refused (400), missing
+estimate 404, field tech 403; one Communication & Activity tab with the estimate
+email and the profile's own changes, newest first, filters that lose nothing
+(1 email + 0 text + 4 changes = 5); the Overview's General Notes and created-by /
+last-updated-by; and the full delete — 400 without confirmation, a dialog that
+counts "1 job, 1 estimate, 1 invoice", a button that stays disabled until the name
+is typed, nothing left in the database, and an audit row naming who did it.
+
+**The database was returned to exactly what it was:** 1 customer (Lute Atieh),
+1 property, 0 quotes, 0 jobs, 0 invoices, 0 services, 0 custom fields, 0 catalogue
+options. The acceptance script's own cleanup crashed on
+`custom_field_definitions.name` — **the column is `label`** — so the leftovers were
+removed by hand (`scratchpad/sbx2-cleanup2.mjs`, `sbx2-cleanup3.mjs`), including
+dropdown choices orphaned under `profile_catalog_items.catalog_type =
+'custom_field_<id>'` once their definition is gone. **Deleting a custom field does
+not take its choices with it** — worth fixing when Phase 8 touches this area.
+
+**Still true, and Kyle should be told before he tests:** there is no email provider
+on the sandbox, so an estimate is never actually delivered — the estimate page shows
+the secure link with a **Copy secure link** button, and that is how to open the
+customer's view. The service catalogue, dropdown lists and custom fields are empty
+**by design**, because creating them is itself what Kyle asked to be able to do.
+Conversion (estimate → job) is **not built yet** — it is Phase 10 — so his lifecycle
+steps 05–08 will not complete.
+
+---
+
+﻿
+﻿
+** in the replacement string, so a patch
+  script writing `page.$eval` produced `page.$eval` — which then failed with
+  "Failed to find element", a message that sounds like a missing element rather
+  than a corrupted call.
+
+And once more: `innerText` applies CSS `text-transform`, so a case-sensitive
+comparison against an uppercased pill is always false — which reads as "the
+block is gone" when it never arrived.
+
+---
+
+## Phase 14, Step 4a — Move Entire Day, done in the working tree 2026-10-06
+
+Spec **V1 #11**, and the third of the five prototype tests (§18). Rain moves a
+day; the office should not reschedule twenty-five jobs one at a time.
+
+### Three things make it safe rather than merely quick
+
+1. **It refuses nothing silently.** Completed and invoiced work keeps its date —
+   the same `schedule-change-lock.ts` rule a single drag obeys, so a day move
+   cannot do what a drag would have refused — and every job left behind is
+   **named, with the reason**, in the confirmation before anything happens.
+2. **It can be asked what it would do.** `preview: true` returns the plan and
+   changes nothing. The route calls the planner **once**, so the confirmation
+   screen and the move cannot disagree; a test asserts there is only one call
+   site.
+3. **It tells nobody.** Phase 11's rule is that nothing reaches a customer
+   without somebody answering a prompt — and a prompt asked twenty-five times is
+   not an answer. The dialog says how many customers have work on the day and
+   states plainly that **nobody will be told automatically**.
+
+That last one is a decision, not an omission. Spec §8.6 asks for a batch review
+screen before messages are released, and that is **question 3 on the list
+waiting for the client**. Until it is answered, moving a day changes the
+schedule and tells no one, which is the reversible choice.
+
+### Every move is still a move
+
+One `activity_logs` row per job, `job_rescheduled`, with the note *"Moved with
+the whole day from … to …"* and the person who did it. A day move is not a
+back-door around the history somebody reads when a customer asks why.
+
+### Verified
+
+`scratchpad/p14b-move-day-api.mjs` **15/15** over HTTP and
+`scratchpad/p14-moveday-browser.mjs` **11/11** headed, against three jobs on one
+day with one of them invoiced: the preview names the invoiced job and changes
+nothing, the move puts two jobs on the next day, the invoiced one keeps its
+date, the grid redraws, **nothing is queued to any customer**, and the history
+gains one entry per job moved. Eight unit tests cover the planner, including
+that a preview and a move produce the same plan. CRM **590/590**, API
+**689/703** — the same 14 `DATABASE_URL` failures. Typechecks clean. The
+database is back to 0 jobs and 0 invoices.
+
+### Still to come in Step 4
+
+Scheduling blocks (#12, which is what `calendar_events` was created for and
+nothing yet reads) and fuller conflict validation (#34).
+
+---
+
+## Phase 14, Step 3 — calendar filters and the job drawer, done in the working tree 2026-10-05
+
+The roadmap's Step 3 — *"Filters + job side drawer"* (V1 #16, #17, #21, #24) —
+**both halves**, and with the first of them the **§11.6 blocker**, which the audit
+of 2026-09-04 described as *"Every filter and display setting resets on reload."*
+
+### The table had been waiting since Step 1
+
+`calendar_preferences` was created by `a8a245e` and **nothing had ever read or
+written it**. It now has `GET` and `PUT /api/calendar/preferences`:
+
+- **No capability beyond being signed in.** They are the person's own settings,
+  and a field technician is as entitled to remember their filters as anyone.
+- **No row is written until something changes.** Somebody who has never touched
+  the calendar gets the defaults and leaves no trace.
+- **A patch moves only what it names**, so a screen that knows about two
+  settings cannot reset the sixteen it has never heard of.
+- **Every rule mirrors a check constraint on the table.** A value the database
+  would refuse comes back as a 400 naming the setting, not a 500 from a
+  constraint nobody sees. A test reads the schema file and fails if the two
+  lists drift apart.
+
+### An empty filter means everything
+
+The one rule worth stating plainly: an untouched filter must never hide work.
+`selectedAssignments: []` means every assignment, not none — the difference
+between a calendar with a filter and a calendar that lies about what is booked.
+
+### The footers count what is on screen
+
+While a filter is on, the day totals and the month summary are recomputed from
+the visible cards instead of the server's whole-month figures. Leaving the
+server totals there would put eleven jobs under a cell showing three — the same
+class of fault the Quotes tiles had on 2026-10-05, found by reading a
+screenshot. When nothing is filtered the server's aggregates are used, as
+before: they cost the same whatever the month holds.
+
+The bar also says what it is hiding — *"2 jobs are hidden by these filters"* —
+rather than leaving an unexplained gap in the month.
+
+### Verified
+
+`scratchpad/p14a-api.mjs` **16/16** over HTTP and
+`scratchpad/p14-filters-browser.mjs` **15/15** headed, against five jobs across
+two crews and one unassigned: the bar offers only the assignments actually
+booked with a count each, choosing one narrows the grid *and* the month value
+from $450 to $325, finished work can be put away, and — the point of the whole
+thing — **the filters survive a reload**, read back from the row saved against
+that person. CRM **568/568**, API **681/695** (the same 14 `DATABASE_URL`
+failures). Typechecks clean. The database is back to 0 jobs, 0 crews and 0
+preference rows.
+
+### Worth keeping
+
+- **A crew needs a lead who is a real user** (`leadUserId`, a canonical id from
+  `/team-users/active`), and the lead is added to its own members.
+- **A job cannot be created as completed on a future date.** The product is
+  right; the test had to put finished work in the past.
+- **"Nothing booked this month" was a query in flight**, not a fault. The first
+  run screenshotted the empty state two seconds in. Wait for the month, not for
+  the clock — the fourth time this session a fixed sleep has lied.
+
+---
+
+### The job drawer — the other half of Step 3
+
+Clicking a card on the month used to leave the month: it navigated to
+`/jobs/:id`, and getting back meant the browser's back button and a reload of
+the grid. The office's question about a card is almost always the same one —
+who is it for, where, when, who is going, what is it worth, is it invoiced —
+and it should not cost the month to answer.
+
+**It opens with the answer already in it.** The card the person clicked is in
+memory, so the drawer paints from that immediately and the full job fills in the
+phone number, the street address and the notes a moment later. The merge is a
+pure function with one rule: **the detail wins only where it has an answer.** A
+half-loaded job must not blank out what the card already showed, and a null
+total is not a zero.
+
+`onOpenJob` keeps its meaning — it is what the drawer's own "Open the job"
+button calls — so every other caller of `MonthCalendar` is unaffected.
+
+**Money stays hidden** from a viewer the server already decided should not see
+it: the occurrence carries null for a field technician, and a total arriving on
+the detail does not reveal it.
+
+### Verified
+
+`scratchpad/p14-drawer-browser.mjs` **14/14** headed: the drawer opens over the
+month without the URL changing, names the customer, reads the time as *1:30 PM –
+3:00 PM*, says what the work is and who is going, shows the property's label
+first and then its full address once the job arrives, shows the value, closes on
+Escape, and opens the full record when asked. CRM **585/585** with 17 new unit
+tests and 7 new guards.
+
+### Worth keeping
+
+- **`@/` does not resolve under `node --test`.** A lib imported at runtime by a
+  unit test must use a relative path; the alias only survives where a type-only
+  import is erased. `calendar-filters.ts` got away with it, `job-drawer.ts` did
+  not.
+- The drawer test asked for the street address the instant it opened and failed.
+  Both readings were correct — the card knows the property's **name**, the job
+  knows its **address** — which is the behaviour, not a fault.
+
+---
+
+## Gate Code and Access Notes — gone, 2026-10-05
 
 Kyle (2026-09-23, #2): *"Remove entirely as built-in fields — the property form
 **and** their display on assigned jobs. Corstead must not prompt anyone to store
@@ -156,11 +625,12 @@ field. **Liability is the reason.**"*
 The screens and the write path went in Phase 8. This is the rest: the schema,
 the contract and the seed data.
 
-### The order matters, and the DROP is not done yet
+### The order mattered, and it is now done
 
-**The columns are still on the database.** The API deployed on Sandbox 2 selects
-both of them by name — Drizzle writes an explicit column list — so dropping them
-before that build is replaced would break **every property query Kyle makes**.
+**The columns are gone from the database**, dropped at 2026-10-05 after the
+republish that carried the code removal. Until then the API deployed on Sandbox 2
+selected both by name — Drizzle writes an explicit column list — so dropping them
+first would have broken **every property query Kyle makes**.
 
 So the sequence is: remove from the code → commit, push, **republish** → *then*
 drop. Only the first step is done. `scratchpad/p13b-drop-columns.mjs` is written
@@ -170,11 +640,23 @@ Its first version asked the wrong question. It read the deployed client bundle
 for `gateCode`, which has been clean since Phase 8 took the fields off the
 screens — so it answered "ready" while the deployed API would still have broken.
 It now signs in to the deployed API and reads an actual property: if the response
-still carries those keys, that build still selects the columns. Run today it says
-**"STILL answers with gateCode/accessNotes — it would break"** and stops, which
-is the correct answer and the reason the drop is not done.
+still carries those keys, that build still selects the columns. Run before the republish it said
+**"STILL answers with gateCode/accessNotes — it would break"** and stopped; run
+after it, it said the deployed API no longer answers with them and went ahead.
 
-**No data is lost by the drop**: 0 rows hold a value in either column.
+**No data was lost**: 0 rows held a value in either column.
+
+### Verified on Sandbox 2 after the drop
+
+`scratchpad/verify-after-drop.mjs` **9/9** against the deployed app: it signs in, the
+properties list answers with both properties and neither dropped key, a profile loads
+with its properties, jobs, quotes and invoices, a property can still be **created and
+edited**, and the jobs list — which shows property details — answers. `properties` now
+has 37 columns.
+
+One check in that script read the wrong key and reported *"0 properties"*: the list
+answers `{ data, page, pageSize, total, hasMore }`, not `{ properties }`. The deployed
+list really returns both. A test fault, caught by asking the database what it held.
 
 ### What changed
 
@@ -889,7 +1371,7 @@ is republished.
 | | Where it stands |
 |---|---|
 | **Republish** | **Does not wait for anything.** Three rounds are pushed and unseen, and Kyle keeps testing a stale build until it happens |
-| **Drop `properties.gate_code` and `access_notes`** | **Code removal done 2026-10-05** — schema, contract and seed data. The `DROP` itself waits for the republish that carries it; `scratchpad/p13b-drop-columns.mjs` checks the deployed API and refuses until then |
+| **Drop `properties.gate_code` and `access_notes`** | **Done 2026-10-05.** Code removal, republish, then the drop, verified 9/9 against the deployed app |
 | **A#9 — address a message to the contact that owns the channel** | Deliberately held for Phase 12b: it means making the sending path resolve recipients from contact channels, which is also what makes A#7's pause bite |
 | **Phase 13 — sub-customers** | **Done in the working tree, 2026-10-05.** Not republished; see its own section |
 | **Phase 14 — calendar** | Not started. The largest remaining piece |
@@ -1888,8 +2370,8 @@ expressed in that schema. These gate roughly half the remaining V1 list, and sho
 |---|---|---|
 | §11.2 | `schedule_entries` table | Schedule is inline on `jobs` (`scheduledDate`, `scheduledStartTime`, `scheduledEndTime`), so **one job = one date**. Blocks on-hold, multi-day jobs, daily value allocation (§7.19), unique-job counting (§9.2), move entire day, recurring exceptions |
 | §11.3 | Assignment link table | Only one `crewId` + one `assignedTechnicianUserId`. Blocks multiple assignments, crew subtotals, grouped display, separate crew lanes, the §9.4 "counts once" rule |
-| §11.4 | Shared calendar-event table | No home for estimate/prospect/personal appointments, scheduling blocks, holidays, birthdays. Spec is explicit these must not be fake jobs. A `tasks` table exists but is not wired to the calendar |
-| §11.6 | `calendar_preferences` | Every filter and display setting resets on reload. Spec lists 18 preferences to persist per user |
+| §11.4 | ~~Shared calendar-event table~~ **cleared 2026-10-06** | `calendar_events` was created in Step 1 and read by nothing. Scheduling blocks now live in it, drawn on the month and counted as no work at all. Estimate, prospect and personal appointments can follow the same path |
+| §11.6 | ~~`calendar_preferences`~~ **cleared 2026-10-05** | The table was created in Step 1 and read by nothing. It now backs `GET`/`PUT /api/calendar/preferences`, and the calendar's filters survive a reload |
 
 The spec's own warning (§17) applies here first: *"calculation rules must be defined before
 totals are coded."*
@@ -1908,8 +2390,8 @@ the rest of V1.
 |---|---|---|---|
 | 1 | **Data model — the four blocker tables** | foundation for #14, #15 | everything else |
 | 2 | Scheduling Queue + On Hold | #7, #8, #10, #25 | prototype test 1 |
-| 3 | Filters + job side drawer | #16, #17, #21, #24 | prototype test 4 |
-| 4 | Move Entire Day + scheduling blocks + fuller conflict validation | #11, #12, #34 | prototype test 3 |
+| 3 | ✅ **Done 2026-10-05** — filters (with §11.6 preferences) and the job side drawer | #16, #17, #21, #24 | prototype test 4 |
+| 4 | ✅ 2026-10-06 — Move Entire Day, scheduling blocks, and conflict validation on every path that books a day | #11, #12, #34 | prototype test 3 |
 | 5 | Bulk invoice creation with review | #26 | prototype test 5 |
 
 Then take it to Lute Atieh, with Kyle Stafford and Emberlynn reviewing. The spec is explicit
