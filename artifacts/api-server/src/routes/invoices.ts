@@ -18,6 +18,8 @@ import {
   messageLogsTable,
 } from "@workspace/db";
 import {
+  createInvoiceCore,
+  InvoiceValidationError,
   type InvoiceCreateAdapter,
 } from "../lib/invoice-core.js";
 import {
@@ -66,7 +68,13 @@ import {
 } from "../lib/account-relations.js";
 import { maskCommunicationDestination } from "../lib/communication-safety-store.js";
 import { normalizeCommunicationDestination } from "../lib/communication-safety-core.js";
-import { businessDateStr } from "../lib/date.ts";
+import { addDaysToDateOnly, businessDateStr, isDateOnly } from "../lib/date.ts";
+import {
+  centsToAmount,
+  describeBulkInvoices,
+  planBulkInvoices,
+  type BillableJob,
+} from "../lib/bulk-invoice.ts";
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -560,6 +568,139 @@ router.get("/invoices", async (req, res): Promise<void> => {
 });
 
 router.post("/invoices", createInvoicePostHandler(productionInvoiceCreateDependencies));
+
+/**
+ * POST /invoices/bulk — invoice a range of finished work in one go.
+ *
+ * Spec V1 #26, §13.1, and the fifth prototype test. `preview: true` answers
+ * what it would do and creates nothing; the planner is the same either way, so
+ * the review screen and the button cannot disagree.
+ *
+ * All or nothing. A range that is half billed is worse than one that is not
+ * billed yet: the office cannot see which half without opening every job.
+ */
+router.post("/invoices/bulk", async (req, res): Promise<void> => {
+  const body = (req.body ?? {}) as { from?: unknown; to?: unknown; jobIds?: unknown; preview?: unknown };
+  const from = typeof body.from === "string" ? body.from.trim() : "";
+  const to = typeof body.to === "string" ? body.to.trim() : "";
+  const selected = Array.isArray(body.jobIds) ? body.jobIds.map(Number).filter(Number.isInteger) : null;
+
+  try {
+    // Only what the planner needs. A job's own total is what is billed; the
+    // quote behind it, if any, has already been written into that total.
+    const rows = isDateOnly(from) && isDateOnly(to)
+      ? await db.execute(sql`
+        SELECT
+          jobs.id,
+          jobs.customer_id AS "customerId",
+          jobs.job_number AS "jobNumber",
+          jobs.scheduled_date AS "scheduledDate",
+          jobs.status,
+          jobs.service_type AS "serviceType",
+          jobs.total_amount AS "totalAmount",
+          jobs.property_id AS "propertyId",
+          COALESCE(
+            NULLIF(TRIM(CONCAT_WS(' ', cu.first_name, cu.last_name)), ''),
+            NULLIF(TRIM(cu.company_name), ''),
+            'Customer #' || jobs.customer_id
+          ) AS "customerLabel",
+          EXISTS (SELECT 1 FROM invoice_jobs ij WHERE ij.job_id = jobs.id) AS "hasInvoice"
+        FROM jobs
+        LEFT JOIN customers cu ON cu.id = jobs.customer_id
+        WHERE jobs.scheduled_date >= ${from} AND jobs.scheduled_date <= ${to}
+        ORDER BY jobs.customer_id, jobs.scheduled_date, jobs.id
+      `)
+      : { rows: [] as unknown[] };
+
+    const planned = planBulkInvoices({
+      from: body.from,
+      to: body.to,
+      jobs: (rows.rows as unknown[]).map((row) => row as BillableJob),
+      selected,
+    });
+    if (!planned.ok) { res.status(planned.status).json({ error: planned.error }); return; }
+    const { plan } = planned;
+
+    if (body.preview === true || plan.groups.length === 0) {
+      res.json({ ...plan, summary: describeBulkInvoices(plan), applied: false });
+      return;
+    }
+
+    const dueDate = addDaysToDateOnly(businessDateStr(), 30);
+    const numberBase = Date.now();
+    const created = await db.transaction(async (tx) => {
+      const adapter = createInvoiceAdapter(tx);
+      const planned = plan.groups.flatMap((group) => group.lines.map((line) => line.jobId));
+
+      // The plan was made before this transaction opened. Lock the jobs, then
+      // look again: somebody else reviewing the same week must not be able to
+      // bill the same work twice.
+      await adapter.acquireJobLocks([...planned].sort((a, b) => a - b));
+      const already = await tx.select({ jobId: invoiceJobsTable.jobId })
+        .from(invoiceJobsTable).where(inArray(invoiceJobsTable.jobId, planned));
+      if (already.length > 0) return { raced: already.map((row) => row.jobId) };
+
+      const invoices = [];
+      for (const [index, group] of plan.groups.entries()) {
+        const result = await createInvoiceCore({
+          customerId: group.customerId,
+          propertyId: group.propertyId,
+          jobIds: group.lines.map((line) => line.jobId),
+          lines: group.lines.map((line) => ({
+            jobId: line.jobId,
+            description: line.description,
+            quantity: "1",
+            unitPrice: centsToAmount(line.amountCents),
+          })),
+          dueDate,
+          invoiceNumber: `INV-${numberBase + index}`,
+        }, adapter);
+        await tx.insert(activityLogsTable).values({
+          entityType: "customer",
+          entityId: group.customerId,
+          action: "invoice_created",
+          toValue: result.invoice.invoiceNumber,
+          note: `Invoice ${result.invoice.invoiceNumber} created for $${Number(result.invoice.totalAmount).toFixed(2)}`
+            + ` from ${group.lines.length} ${group.lines.length === 1 ? "job" : "jobs"} (${plan.from} to ${plan.to})`,
+          performedBy: getPerformedBy(req),
+        });
+        invoices.push({
+          invoiceId: result.invoice.id,
+          invoiceNumber: result.invoice.invoiceNumber,
+          customerId: group.customerId,
+          customerLabel: group.customerLabel,
+          jobIds: group.lines.map((line) => line.jobId),
+          totalCents: group.totalCents,
+        });
+      }
+      return { invoices };
+    });
+
+    if ("raced" in created) {
+      res.status(409).json({
+        error: "Some of this work was invoiced while you were reviewing it. Refresh and try again.",
+        code: "already_invoiced",
+        jobIds: created.raced,
+      });
+      return;
+    }
+
+    res.status(201).json({
+      ...plan,
+      invoices: created.invoices,
+      summary: describeBulkInvoices(plan),
+      applied: true,
+    });
+  } catch (err) {
+    if (err instanceof InvoiceValidationError) {
+      // The core's own refusals, which name the field rather than the table.
+      res.status(400).json({ error: err.message, code: err.code });
+      return;
+    }
+    console.error(err);
+    res.status(500).json({ error: "Failed to create the invoices" });
+  }
+});
 
 const productionInvoiceCorrectionDependencies: InvoiceCorrectionRouteDependencies = {
   transaction: (callback) => db.transaction((tx) => callback({

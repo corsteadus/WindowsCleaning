@@ -1,4 +1,6 @@
 import { blockDropForOccurrence, readableBlockMessage, type BlockDrop } from "@/lib/calendar-block-conflicts";
+import { BulkInvoiceDialog } from "@/components/BulkInvoiceDialog";
+import { monthRange } from "@/lib/bulk-invoice-api";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { formatTimeOfDay } from "@/lib/time-of-day";
 import { CalendarFilterBar } from "@/components/CalendarFilterBar";
@@ -29,7 +31,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { AlertTriangle, CalendarClock, CalendarOff, RefreshCw } from "lucide-react";
+import { AlertTriangle, CalendarClock, CalendarOff, Receipt, RefreshCw } from "lucide-react";
 import { useAuth } from "@workspace/replit-auth-web";
 import {
   getListCrewsQueryKey, getListJobsQueryKey, useListCrews, useUpdateJob,
@@ -91,6 +93,8 @@ type MonthCalendarProps = {
   onOpenDay?: (date: string) => void;
   /** Whether this viewer may reschedule. Read-only viewers get no drag. */
   canMove: boolean;
+  /** V1 #26. Billing is its own capability, not the one that moves work. */
+  canInvoice?: boolean;
   /** Spec Step 3. Omitted means an unfiltered month, and no filter bar. */
   filters?: CalendarFilterState;
   onFiltersChange?: (next: CalendarFilterState) => void;
@@ -218,6 +222,8 @@ function DayCell({
   return (
     <div
       ref={setNodeRef}
+      data-testid="calendar-day"
+      data-date={day.date}
       className={`flex flex-col border-r border-b border-slate-200 min-h-[112px] p-1 transition-colors
         ${inMonth ? "bg-white" : "bg-slate-50/70"}
         ${isOver ? "bg-primary/10 ring-2 ring-inset ring-primary/50" : ""}
@@ -301,6 +307,7 @@ export function MonthCalendar({
   onOpenJob,
   onOpenDay,
   canMove,
+  canInvoice = false,
   filters = NO_CALENDAR_FILTERS,
   onFiltersChange,
   savingFilters,
@@ -314,6 +321,7 @@ export function MonthCalendar({
   const [openJob, setOpenJob] = useState<CalendarOccurrence | null>(null);
   const [movingDay, setMovingDay] = useState<string | null>(null);
   const [blockingDays, setBlockingDays] = useState(false);
+  const [invoicing, setInvoicing] = useState(false);
   // Only asked for while somebody is actually writing a block.
   const crewsQuery = useListCrews({
     query: { enabled: blockingDays, queryKey: getListCrewsQueryKey() },
@@ -624,6 +632,17 @@ export function MonthCalendar({
             Block days
           </button>
         )}
+        {canInvoice && (
+          <button
+            type="button"
+            onClick={() => setInvoicing(true)}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5
+                       text-xs font-semibold text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Receipt className="h-3.5 w-3.5" />
+            Create invoices
+          </button>
+        )}
       </div>
 
       {occurrencesQuery.data?.truncated && (
@@ -809,6 +828,15 @@ export function MonthCalendar({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* V1 #26: the month's finished work, billed in one go. The range it
+        offers is the month on screen, which is the question being asked. */}
+    <BulkInvoiceDialog
+      open={invoicing}
+      range={monthRange(year, month)}
+      onClose={() => setInvoicing(false)}
+      onCreated={refreshCalendar}
+    />
 
     {/* Step 3: the card's own drawer. It opens over the month rather than
         taking the person off it. */}

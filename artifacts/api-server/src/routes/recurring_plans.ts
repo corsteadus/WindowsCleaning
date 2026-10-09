@@ -1,3 +1,4 @@
+import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import { Router, type Request } from "express";
 import { db } from "@workspace/db";
 import { recurringPlansTable, customersTable, propertiesTable, jobsTable, activityLogsTable, crewsTable } from "@workspace/db/schema";
@@ -294,6 +295,14 @@ router.post("/recurring-plans/:id/generate-job", async (req, res) => {
           .for("update")).map((row) => row.id),
         lockActiveFieldTechUsers: async () => [],
       });
+      // A recurring plan does not get to book a day the office closed.
+      const refusal = await hardBlockRefusal(tx, {
+        date: nextRunDate,
+        crewId: plan.crewId ?? null,
+        startTime: plan.preferredTimeWindow ?? null,
+      });
+      if (refusal) return { kind: "dayBlocked" as const, message: refusal };
+
       const [job] = await tx.insert(jobsTable).values({
         customerId:         plan.customerId,
         propertyId:         plan.propertyId ?? null,
@@ -329,6 +338,10 @@ router.post("/recurring-plans/:id/generate-job", async (req, res) => {
       return { kind: "created" as const, job };
     });
 
+    if (result.kind === "dayBlocked") {
+      res.status(409).json({ error: result.message, code: "day_blocked" });
+      return;
+    }
     if (result.kind === "existing") {
       res.status(409).json({
         error: `A job already exists for this plan on ${nextRunDate} (Job #${result.existing.jobNumber})`,

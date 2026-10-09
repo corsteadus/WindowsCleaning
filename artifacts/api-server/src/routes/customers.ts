@@ -1,3 +1,4 @@
+import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import { Router, type IRouter, type Request } from "express";
 import { eq, ilike, or, desc, asc, sql, and, inArray, isNull } from "drizzle-orm";
 import {
@@ -328,6 +329,22 @@ router.post("/customers/with-initial-job", async (req, res): Promise<void> => {
     if (!idempotency) {
       res.status(400).json({ error: "Idempotency-Key is required", code: "idempotency_key_required" });
       return;
+    }
+
+    // The first job of a new customer is still a booking, so the same
+    // blocked days refuse it. Checked before the service opens its
+    // transaction, the way POST /jobs checks before its own.
+    if (initialJob?.scheduledDate) {
+      const refusal = await hardBlockRefusal(db, {
+        date: String(initialJob.scheduledDate),
+        crewId: initialJob.crewId ?? null,
+        startTime: initialJob.scheduledStartTime ?? null,
+        endTime: initialJob.scheduledEndTime ?? null,
+      });
+      if (refusal) {
+        res.status(409).json({ error: refusal, code: "day_blocked" });
+        return;
+      }
     }
 
     const serviceResult = await createCustomerWithInitialJobService<

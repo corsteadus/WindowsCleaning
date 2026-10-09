@@ -139,3 +139,38 @@ test("the day move knows who each job is for", () => {
   assert.match(calendar, /jobs\.crew_id AS "crewId"/);
   assert.match(calendar, /jobs\.assigned_technician_user_id AS "userId"/);
 });
+
+// ── Every other way a job can be booked ─────────────────────────────────────
+
+const estimates = read("../routes/estimates.ts");
+const recurring = read("../routes/recurring_plans.ts");
+const customers = read("../routes/customers.ts");
+
+test("every door onto a blocked day asks the same question", () => {
+  // Step 4c guarded three paths and left four. Three of the four are
+  // bookings a person makes from a screen, so they refuse the same way; the
+  // fourth is the overnight recurring engine, deliberately left alone.
+  assert.match(estimates, /hardBlockRefusal\(tx, \{/);
+  assert.match(recurring, /hardBlockRefusal\(tx, \{/);
+  assert.match(customers, /hardBlockRefusal\(db, \{/);
+  for (const source of [estimates, recurring, customers]) {
+    assert.match(source, /code: "day_blocked"/);
+  }
+});
+
+test("scheduling an accepted estimate checks every location it would book", () => {
+  // One estimate can become several jobs, one per address. Checking only the
+  // first would let the rest land on a closed day.
+  assert.match(estimates, /for \(const plan of plans\) \{/);
+  assert.match(estimates, /date: plan\.scheduledDate/);
+  // And it refuses before anything is written, releasing its claim.
+  assert.match(estimates, /await releaseIdempotencyKey\(tx, claim\.record\.id\);\s*\n?\s*return \{ kind: "dayBlocked"/);
+});
+
+test("the overnight recurring engine is left alone, on purpose", () => {
+  // A generator that silently skips a customer's service at 06:15, with
+  // nobody at a screen, is worse than one that books it. Recorded as a
+  // question for the client rather than decided here.
+  const engine = read("./recurring-plan-engine.ts");
+  assert.doesNotMatch(engine, /hardBlockRefusal/);
+});

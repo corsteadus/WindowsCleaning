@@ -59,3 +59,11 @@ test("what stays behind is named with its own reason", () => {
   assert.match(dialog, /if \(job\.reason === "blocked"\) return readableBlockMessage\(job\.message\);/);
   assert.match(dialog, /\{job\.label\} — \{skipReason\(job\)\}/);
 });
+
+test("a day cell says which day it is", () => {
+  // Not decoration: the browser tests aim drags at this, and aiming at a block
+  // pill instead dropped cards on days nobody chose, because a pill is
+  // re-rendered whenever the blocks are re-read.
+  assert.match(month, /data-testid="calendar-day"/);
+  assert.match(month, /data-date=\{day\.date\}/);
+});

@@ -897,6 +897,7 @@ export default function Schedule() {
           weekStartsOn={DEFAULT_WEEK_START}
           onOpenJob={(jobId) => navigate(`/jobs/${jobId}`)}
           canMove={canManageSchedule}
+          canInvoice={hasClientCapability(user, "invoices.manage")}
           filters={calendarFilters}
           onFiltersChange={changeCalendarFilters}
           savingFilters={savePreferences.isPending}

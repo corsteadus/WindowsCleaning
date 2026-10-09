@@ -47,13 +47,25 @@ under "Waiting on the client" — eight items, none of which blocks Phase 13 or 
 gone for good** — out of the code, republished, and the columns dropped on 2026-10-05,
 verified 9/9 against the deployed app afterwards.
 
-**Phase 14 — the calendar is under way.** Step 3 is done (filters, the §11.6 preferences
-behind them, and the job side drawer), and **Step 4 is complete**: Move Entire Day,
-scheduling blocks, and the conflict validation that turns a block from advice into a rule
-on every path that can book a day. All in the working tree, **none republished**. **Two of
-the four architectural blockers are cleared** (§11.6 and §11.4), both by using tables Step 1
-created and nothing had read. Next is **Step 5, bulk invoicing**, then Steps 6–13. Phase 15
-go-live needs a date from Lute; Phase 12b email and A#9 still wait on his keys.
+**Phase 14 — Phase A of the calendar is complete.** Steps 3, 4 and 5 are all done: filters
+with the §11.6 preferences behind them, the job side drawer, Move Entire Day, scheduling
+blocks, the conflict validation that turns a block from advice into a rule, and bulk
+invoicing with a review. **All five prototype tasks can now be done from the calendar**,
+which is what the approval gate is about — the spec allows no further calendar complexity
+until they are fast and need minimal training. **Two of the four architectural blockers are
+cleared** (§11.6 and §11.4), both by using tables Step 1 created and nothing had read.
+
+**None of Phase 14 is republished**, confirmed against the deployed API on 2026-10-09: all
+four pieces answer 404 there. Everything earlier is live. The republish is the next step —
+Kyle is reviewing right now, against a build three days behind.
+
+**Kyle's 8 October corrections are read and checked** (see below). Nothing he flagged is a
+defect in what is waiting to be published, but one of his items — **#15** — connects to it:
+the hard-block rule had only been put on three of the seven paths that create a job, and the
+estimate conversion was one of the four without it. That is now closed. After the republish:
+**#15 and #23 together**, then #7's "None", #3, #31. Phase 15 go-live needs a date from
+Lute; Phase 12b email and A#9 still wait on his keys, and six of Kyle's checklist items
+cannot be tested until they arrive.
 
 Three things to put to Kyle with the republish, all recorded in their phases: whether a
 quote's validity should run from **delivery** (the assumption built) or from creation;
@@ -150,6 +162,178 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 14, Step 4c — the other doors onto a blocked day, closed 2026-10-09
+
+Found while checking whether anything in Kyle's 8 October corrections touches
+the work waiting to be published. It does, and this is the link.
+
+### What was wrong
+
+Step 4c put the hard-block rule on three paths: `POST /jobs`, the reschedule,
+and the day move. **Seven places create a job.** The other four never asked,
+and one of them is the path Kyle's **#15** is about to unblock — so the day
+that screen starts working is the day an accepted estimate could be scheduled
+onto Christmas.
+
+The rule is now on every path a person books from:
+
+| Path | Before | Now |
+|---|---|---|
+| `POST /jobs` | guarded | guarded |
+| `PATCH /jobs/:id` | guarded | guarded |
+| `POST /calendar/move-day` | guarded | guarded |
+| `POST /quotes/:id/convert-and-schedule` | — | **refuses, per location** |
+| `POST /recurring-plans/:id/generate-job` | — | **refuses** |
+| `POST /customers/with-initial-job` | — | **refuses** |
+| the 06:15 recurring engine | — | **left alone, on purpose** |
+
+One estimate can become several jobs, one per address, so the conversion
+checks **every location it would book** and refuses before writing anything,
+releasing its idempotency claim on the way out.
+
+### The one left alone
+
+The overnight engine generates work at 06:15 with nobody at a screen. A
+generator that silently skips a customer's service is worse than one that
+books it on a day the office then has to move. That is a decision for the
+client, and it joins the question already open about that cron.
+
+### Verified
+
+`scratchpad/p14f-block-gaps-api.mjs` **13/13** over HTTP: each of the three
+refuses a hard-blocked day with the block named, each still books a clear one,
+and the refusal writes nothing. Three source guards added. API **742/756** —
+the same 14 `DATABASE_URL` failures. CRM 624/624. No migration.
+
+### Found on the way — what #15 actually is
+
+The conversion machinery is **not** broken. Walking it by hand showed the
+whole path working: finalize, preview, convert, one job created. What breaks
+it is that `conversion-preview` reports **no locations**, so the dialog builds
+no rows and its button can never enable — exactly Kyle's symptom.
+
+An estimate's locations come from `estimate_locations`, which is written by
+`POST /quotes/with-appointment`. **A quote created without an appointment has
+no location at all** — and "create a quote directly from the profile" is
+Kyle's own edit-list #16. So: fix the source of the location (line items'
+property, or the account's main service address), not the dialog.
+
+### Worth keeping — a shared database is not an empty one
+
+Three of the Step 5 test's assertions failed and nothing had regressed: the
+client started testing on Sandbox 2 on 8 October, and their completed job and
+draft invoice were being counted by assertions that read `count(*) FROM
+invoices`. Every count in that test is now scoped to the customers the run
+itself created. A test that counts a whole table in a shared database reports
+somebody else's work as your bug.
+
+And again, from the other side: a run killed mid-flight never reaches its
+cleanup, so its `ZZ` customer stays and the next run cannot create its own
+(the phone number collides). `scratchpad/cleanup-zz.mjs` clears the strays.
+
+---
+
+## Phase 14, Step 5 — bulk invoicing, done in the working tree 2026-10-07
+
+Spec **V1 #26** and **§13.1**, the fifth of the five prototype tests. With this
+**Phase A is complete**: the five tasks the approval gate is about can all be
+done from the calendar.
+
+### The shape is Move Entire Day's
+
+One planner, called from one place, answering both the review and the run —
+so the screen cannot promise one thing and the button do another. Everything
+in the range that will not be billed is named with the reason rather than
+quietly dropped: already invoiced, not marked complete, cancelled, or no
+amount on the job.
+
+`POST /invoices/bulk` with `preview: true` creates nothing.
+
+### One invoice per customer
+
+Three visits in a month is **one bill**, which is how the office posts it and
+how the customer expects to read it. Each line still names its job, so an
+invoice can always be taken back apart. Two jobs at two addresses still share
+one bill — the invoice carries no property rather than the wrong one.
+
+Ticking is **per job, not per customer**: a week often holds one visit the
+office wants to hold back, and the totals follow the ticks.
+
+### It cannot bill the same work twice
+
+Twice over, because the database does not stop it: `invoice_jobs` is unique on
+*(invoice, job)*, not on job, and deliberately — a reissue links the same job
+to its replacement invoice.
+
+1. Work already on an invoice never enters the plan.
+2. The plan is made before the transaction opens, so inside it the jobs are
+   locked and looked at again. Somebody else reviewing the same week gets a
+   409 naming the jobs rather than a second bill.
+
+A range is billed **whole or not at all**. A half-billed week cannot be seen
+without opening every job.
+
+### Decided here
+
+- **Work that is not marked complete is named, not billed.** §13.1 asks for a
+  warning; a job the crew has not finished turns into a phone call, and
+  marking it complete is one click away. Worth putting to Kyle if the office
+  ever wants to bill ahead of completion.
+- **Invoices are created as drafts** with a due date 30 days out, the same
+  convention the single-job path uses. Nothing is sent to anybody.
+
+### Verified
+
+17 unit tests on the planner and the route, 3 on what the screen writes,
+7 UI guards, `scratchpad/p14e-bulk-invoice-api.mjs` **22/22** over HTTP and
+`scratchpad/p14-bulk-invoice-browser.mjs` **16/16** headed. Nothing regressed:
+filters 15/15, move-day 11/11, conflicts 15/15 (see below). CRM **624/624**, API
+**739/753** — the same 14 `DATABASE_URL` failures. No migration.
+
+### Worth keeping — a month off by one
+
+The dialog opened on **September** while October was on screen. The calendar
+counts months from 0, as `Date` does; the range helper counted from 1. Nothing
+in the types could catch it, and the unit test agreed with the helper because
+it was written from the same wrong assumption. The browser caught it in one
+look, and the helper now takes the index the grid uses, documented and tested
+at both ends of the year.
+
+### Worth keeping — the drop that landed a row out, and the hour spent on it
+
+Drags in the Step 4c test sometimes land one row below the day they were
+aimed at, which reads as *"the dialog never opened"* rather than as a drop on
+the wrong day. **Not root-caused.** The obvious explanation was wrong and was
+measured away: at the moment of the drag `window.scrollY` is 0 and the
+document is exactly as tall as the viewport, so nothing is scrolling — not
+dnd-kit's auto-scroll, not the queue panel resizing above the grid.
+
+What the test does now: measures nothing until the card and the day cell have
+stopped moving, aims at the day cell (`data-testid="calendar-day"`) rather
+than at a block pill that is re-rendered whenever blocks are re-read, and
+**retries a missed drop out loud**, printing where the card actually landed.
+Two runs in three are clean; the third spends its retries and stops after ten
+checks. The behaviour itself is covered three ways over — unit, HTTP and
+several green browser runs — so this is a harness fault, and it is written
+down rather than left for somebody to rediscover.
+
+**And the one that wasted the most time:** a browser run that is killed never
+reaches its cleanup, so its `ZZ` customer stays in the shared database. The
+next run cannot create its own customer (the phone number collides), every
+later step fails strangely, and the failures look exactly like the drag bug
+above. `scratchpad/cleanup-zz.mjs` purges the strays; run it after stopping a
+test by hand.
+
+### Found on the way, not fixed
+
+`invoice_lines.invoice_id` has **no foreign key**, and the database currently
+holds **10 orphaned line rows from 21–24 September** pointing at invoices that
+no longer exist. Nothing reads them, so nothing is wrong today. Adding the key
+is a migration and deleting the rows is a data change in the branch Sandbox 2
+shares — both need saying out loud first.
+
+---
+
 ## Phase 14, Step 4c — conflict validation, done in the working tree 2026-10-06
 
 Spec **V1 #34**, with **#12** and **§7.15**. Step 4b drew blocked days on the
@@ -2392,7 +2576,7 @@ the rest of V1.
 | 2 | Scheduling Queue + On Hold | #7, #8, #10, #25 | prototype test 1 |
 | 3 | ✅ **Done 2026-10-05** — filters (with §11.6 preferences) and the job side drawer | #16, #17, #21, #24 | prototype test 4 |
 | 4 | ✅ 2026-10-06 — Move Entire Day, scheduling blocks, and conflict validation on every path that books a day | #11, #12, #34 | prototype test 3 |
-| 5 | Bulk invoice creation with review | #26 | prototype test 5 |
+| 5 | ✅ 2026-10-07 — bulk invoice creation with review, one bill per customer, no work billed twice | #26 | prototype test 5 |
 
 Then take it to Lute Atieh, with Kyle Stafford and Emberlynn reviewing. The spec is explicit
 that no further calendar complexity is approved until the five tasks are fast and need

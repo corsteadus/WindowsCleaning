@@ -1,3 +1,4 @@
+import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import { acceptedSnapshotFor, EstimateAcceptanceError } from "../lib/estimate-acceptance.ts";
 import { officeAcceptedNotice, officeEmailAddress } from "../lib/estimate-accepted-notice.ts";
 import { sendEmailTo } from "../lib/email.ts";
@@ -500,6 +501,23 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
            .for("update")).map((row) => row.id),
        });
 
+      // Spec V1 #12 and #34. Scheduling an accepted estimate is a booking
+      // like any other, so a day the office blocked off refuses it here too —
+      // otherwise the rule holds on the calendar and leaks on this screen.
+      for (const plan of plans) {
+        const refusal = await hardBlockRefusal(tx, {
+          date: plan.scheduledDate,
+          crewId: plan.crewId ?? null,
+          userId: plan.assignedUserIds?.[0] ?? null,
+          startTime: plan.scheduledStartTime ?? null,
+          endTime: plan.scheduledEndTime ?? null,
+        });
+        if (refusal) {
+          await releaseIdempotencyKey(tx, claim.record.id);
+          return { kind: "dayBlocked" as const, message: refusal };
+        }
+      }
+
       const actor = actorId(req);
       const now = new Date();
       if (customer.lifecycleStatus === "prospect" || customer.status === "prospect") {
@@ -588,6 +606,7 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
     if (result.kind === "acceptanceRequired") return res.status(409).json({ error: "Customer acceptance or a documented verbal acceptance is required" });
     if (result.kind === "alreadyAccepted") return res.status(400).json({ error: "Do not use a verbal override for an estimate already accepted by the customer" });
     if (result.kind === "accountRequired") return res.status(409).json({ error: "The estimate is not linked to a canonical customer account" });
+    if (result.kind === "dayBlocked") return res.status(409).json({ error: result.message, code: "day_blocked" });
     if (result.kind !== "created" && result.kind !== "existing") {
       return res.status(500).json({ error: "Unexpected conversion result" });
     }
