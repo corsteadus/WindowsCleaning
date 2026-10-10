@@ -10,9 +10,12 @@ const properties = readFileSync(new URL("./Properties.tsx", import.meta.url), "u
 test("Customer and Prospect detail share the profile details surface", () => {
   assert.match(detail, /ProfileDetailsTab/);
   assert.match(detail, /apiBase=\{apiBase\}/);
-  assert.match(profile, /"general"/);
-  assert.match(profile, /"billing"/);
-  assert.match(profile, /"estimates"/);
+  // The three purposes used to be spelled out here. Since Kyle #7 they live
+  // in lib/channel-routing.ts, which also holds the eight named choices and
+  // None — so the check is that this surface draws on that list rather than
+  // keeping a second copy that could fall out of step with the server.
+  assert.match(profile, /from "@\/lib\/channel-routing"/);
+  assert.match(profile, /ROUTING_CHOICES/);
   assert.match(profile, /general notes.*location notes.*estimate and job notes/i);
   for (const idField of ["profileTypeId", "profileGroupId", "paymentTermsId", "marketingSourceId"]) {
     assert.match(profile, new RegExp(`${idField}: null`));

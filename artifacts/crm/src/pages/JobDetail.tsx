@@ -44,6 +44,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useBackNavigation } from "@/hooks/use-back-navigation";
 import { format } from "date-fns";
 import { formatJobDateOnly, isJobScheduledInFuture } from "@/lib/job-date";
+import { jobServices } from "@/lib/job-services";
 import { PropertyPicker } from "@/components/PropertyPicker";
 import { nextIdSelectValue, nextOptionalSelectValue } from "@/lib/select-guards";
 import { useAuth } from "@workspace/replit-auth-web";
@@ -432,6 +433,9 @@ export default function JobDetail() {
   const anyNotesDirty = hasJobNotesChanges(
     appendOnlyNotes, notesDraft, techNotesDraft, job.notes, job.techNotes,
   );
+  // Kyle #31. The services live in a JSON column written by two different
+  // paths that spell the same idea differently; the lib reconciles them.
+  const services = jobServices((job as { lineItems?: unknown }).lineItems);
 
   // ── Property address text ─────────────────────────────────────────────────
   const propertyLine1 = jobProperty?.name
@@ -668,10 +672,46 @@ export default function JobDetail() {
           {/* ─── Left: Notes + Invoice + Quote ───────────────────────── */}
           <div className="lg:col-span-2 space-y-4">
 
+            {/* ─── SERVICES (Kyle #31) ─────────────────────────────────
+                 What the customer is receiving, in the words they were
+                 given on the estimate. Deliberately above the notes, and
+                 deliberately not mixed into them: Job Notes and Tech /
+                 Crew Notes are internal. */}
+            {services.length > 0 && (
+              <div data-testid="job-services" className="bg-white rounded-2xl border border-slate-100 p-5">
+                <h2 className="text-base font-bold text-slate-800">Services</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  What this customer is receiving. These descriptions came from the estimate
+                  and are written for them.
+                </p>
+                <div className="mt-4 space-y-3">
+                  {services.map((service, index) => (
+                    <div key={`${service.name}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-sm font-bold text-slate-900">{service.name}</p>
+                        <p className="shrink-0 text-sm font-bold text-slate-900">
+                          {formatCurrency(service.totalPrice)}
+                        </p>
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {service.quantity} × {formatCurrency(service.unitPrice)}
+                      </p>
+                      {service.description
+                        ? <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{service.description}</p>
+                        : <p className="mt-2 text-xs italic text-slate-400">
+                            No customer description was written for this service.
+                          </p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* NOTES SECTION */}
             <div className="bg-white rounded-2xl border border-slate-100 p-5">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-bold text-slate-800">Notes</h2>
+
                 {canManageJob && anyNotesDirty && (
                   <div className="flex gap-2">
                     <button
@@ -694,6 +734,14 @@ export default function JobDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Kyle #31: these two are operational and are not shown to the
+                  customer. Saying so on the screen is the point — it is what
+                  stops the promise to the customer being typed in here. */}
+              <p data-testid="internal-notes-warning" className="mb-3 text-xs text-slate-500">
+                Internal only. Neither of these is shown to the customer — what they were
+                promised belongs in the service descriptions above.
+              </p>
 
               <div className="space-y-3">
                 <div className="space-y-1.5">

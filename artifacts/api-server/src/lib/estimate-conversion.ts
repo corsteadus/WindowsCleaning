@@ -107,9 +107,14 @@ export function buildLocationJobPlans(
 }
 
 export function isAcceptedEstimate(status: string, hasAcceptedDecision: boolean): boolean {
-  // "approved" is retained only for imported/legacy converted quotes. New
-  // acceptance must be proven by a revision-bound public decision.
-  return status === "approved" || hasAcceptedDecision;
+  // Three ways an estimate is accepted, and all three are evidenced:
+  //   - the customer's own decision on the secure link (the strongest),
+  //   - "approved", retained only for imported and legacy converted quotes,
+  //   - "accepted" written by Correct Status, which since 2026-10-10 (Kyle's
+  //     #23) an authorised employee may set and which the route refuses
+  //     without a written reason.
+  // The third is what makes an over-the-phone acceptance schedulable at all.
+  return status === "approved" || status === "accepted" || hasAcceptedDecision;
 }
 
 export interface AcceptedEstimateJobAdapter<TJob> {

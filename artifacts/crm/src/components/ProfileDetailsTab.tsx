@@ -5,6 +5,10 @@ import { Mail, MapPin, Phone, Plus, Save, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
+import {
+  ROUTING_CHOICES, purposesForChoice, purposesOf, routingChoiceFor,
+  type ChannelPurpose,
+} from "@/lib/channel-routing";
 import { hasClientCapability } from "@/lib/rbac";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -35,7 +39,7 @@ function errorMessage(body: string): string {
   return body || "Request failed";
 }
 
-type ChannelPurpose = "general" | "billing" | "estimates";
+
 type Channel = { id: number; type: "email" | "phone"; label?: string | null; value: string; purposes?: ChannelPurpose[]; purpose?: ChannelPurpose | null; contactId?: number | null; sendingPaused?: boolean };
 type FieldValue = { id?: number; fieldId?: number; label?: string; name?: string; value: string; position?: number; fieldType?: string; choices?: string[] };
 // Kyle (2026-09-23, #6): the types a user may choose when creating a field.
@@ -297,7 +301,24 @@ function Field({ label, children, onManage }: { label: string; children: React.R
   </div>;
 }
 function SelectField({ label, value, options, onChange, onManage }: { label: string; value: string; options: string[]; onChange: (value: string) => void; onManage?: () => void }) { return <Field label={label} onManage={onManage}><select value={value} onChange={e => onChange(e.target.value)} className="input-lite"><option value="">Not set</option>{value && !options.includes(value) && <option value={value}>{value}</option>}{options.map(option => <option key={option} value={option}>{option}</option>)}</select></Field>; }
-function PurposePicker({ value, onChange }: { value: ChannelPurpose[]; onChange: (value: ChannelPurpose[]) => void }) { return <fieldset className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1" aria-label="Channel purposes">{(["general", "billing", "estimates"] as const).map(purpose => <label key={purpose} className="flex items-center gap-1 text-[10px] font-semibold capitalize text-slate-600"><input type="checkbox" checked={value.includes(purpose)} onChange={event => { const next = event.target.checked ? [...value, purpose] : value.filter(item => item !== purpose); if (next.length) onChange(next); }} className="accent-primary" />{purpose}</label>)}</fieldset>; }
+/**
+ * Kyle #7: one named choice out of eight, None included.
+ *
+ * This replaced three checkboxes whose handler read `if (next.length)
+ * onChange(next)` — so unticking the last one did nothing at all, and None
+ * was unreachable. A list of named options also matches what he asked for:
+ * "allow each email address to be assigned one of these options".
+ */
+function PurposePicker({ value, onChange }: { value: ChannelPurpose[]; onChange: (value: ChannelPurpose[]) => void }) {
+  return <select
+    aria-label="Channel purposes"
+    className="input-lite"
+    value={routingChoiceFor(value).key}
+    onChange={event => onChange(purposesForChoice(event.target.value))}
+  >
+    {ROUTING_CHOICES.map(choice => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
+  </select>;
+}
 /**
  * One phone number or email address on the profile.
  *
@@ -308,15 +329,10 @@ function PurposePicker({ value, onChange }: { value: ChannelPurpose[]; onChange:
 function ChannelRow({ channel, contacts, onSave, onDelete }: {
   channel: Channel; contacts: ContactOption[]; onSave: (channel: Channel) => void; onDelete: () => void;
 }) {
-  const normalized = {
-    ...channel,
-    purposes: channel.purposes?.length ? channel.purposes : ([channel.purpose ?? "general"] as ChannelPurpose[]),
-  };
-  const [draft, setDraft] = useState(normalized);
-  useEffect(() => setDraft({
-    ...channel,
-    purposes: channel.purposes?.length ? channel.purposes : [channel.purpose ?? "general"],
-  }), [channel]);
+  // `purposes: []` is None (#7), not "nothing came back" — the old reading
+  // fell through to "general" and showed the opposite of what was saved.
+  const [draft, setDraft] = useState({ ...channel, purposes: purposesOf(channel) });
+  useEffect(() => setDraft({ ...channel, purposes: purposesOf(channel) }), [channel]);
   const paused = Boolean(draft.sendingPaused);
 
   return (
@@ -350,7 +366,10 @@ function ChannelRow({ channel, contacts, onSave, onDelete }: {
             }} />
           No sending
         </label>
-        <button onClick={() => onSave(draft)} className="rounded-lg px-2 text-xs font-semibold text-primary hover:bg-primary/5">Save</button>
+        {/* One "Save" per channel row, and more elsewhere on the page — the
+            address is what tells them apart, for a screen reader as much as
+            for a test. */}
+        <button onClick={() => onSave(draft)} aria-label={`Save ${draft.value}`} className="rounded-lg px-2 text-xs font-semibold text-primary hover:bg-primary/5">Save</button>
         <button onClick={onDelete} className="rounded-lg px-2 text-red-500 hover:bg-red-50" aria-label="Delete channel">
           <Trash2 className="h-3.5 w-3.5" />
         </button>

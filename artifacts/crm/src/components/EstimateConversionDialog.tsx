@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { createIdempotencyKey } from "@/lib/idempotency";
 import { protectedFetch } from "@/lib/auth-scope";
 import { TimeSelect } from "@/components/TimeSelect";
+import { conversionBlockers } from "@/lib/conversion-readiness";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -54,6 +55,12 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
     queryKey: ["estimate-conversion-preview", quoteId],
     queryFn: () => api<Preview>(`/quotes/${quoteId}/conversion-preview`),
     enabled: open,
+    // Never schedule from a cached answer. Between one opening and the next
+    // the office may have corrected the status to Accepted, or edited the
+    // estimate — and a stale preview would tell them nobody has accepted it
+    // when somebody just did.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
   const crews = useQuery({
     queryKey: ["crews", "estimate-conversion"],
@@ -67,12 +74,20 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
   });
 
   useEffect(() => {
-    if (!preview.data || rows.length) return;
-    setRows(preview.data.snapshot.locations.map((location) => ({
-      propertyId: location.id, scheduledDate: "", scheduledStartTime: "09:00",
-      scheduledEndTime: "11:00", crewId: "", assignedUserId: "", jobNotes: "",
-    })));
-  }, [preview.data, rows.length]);
+    const locations = preview.data?.snapshot.locations;
+    if (!locations) return;
+    setRows((current) => {
+      // Keep what the office has already typed when the estimate is the same
+      // one, and start over when its locations have actually changed.
+      const sameLocations = current.length === locations.length
+        && locations.every((location) => current.some((row) => row.propertyId === location.id));
+      if (sameLocations) return current;
+      return locations.map((location) => ({
+        propertyId: location.id, scheduledDate: "", scheduledStartTime: "09:00",
+        scheduledEndTime: "11:00", crewId: "", assignedUserId: "", jobNotes: "",
+      }));
+    });
+  }, [preview.data]);
 
   const commit = useMutation({
     mutationFn: () => api<{ jobs: Array<{ id: number; jobNumber: string }> }>(
@@ -108,12 +123,27 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
 
   const update = (propertyId: number, patch: Partial<ScheduleRow>) =>
     setRows((current) => current.map((row) => row.propertyId === propertyId ? { ...row, ...patch } : row));
-  const ready = rows.length > 0 && rows.every((row) =>
-    row.scheduledDate && row.scheduledStartTime && row.scheduledEndTime,
-  ) && (!preview.data?.requiresVerbalAcceptance || (verbal && verbalNote.trim().length >= 10));
+  // Kyle #15: the button used to go quiet when it was disabled. One function
+  // now decides both whether it is enabled and what the screen says about it,
+  // so the two can never disagree.
+  const blockers = preview.data
+    ? conversionBlockers({
+      locationCount: preview.data.snapshot.locations.length,
+      rows,
+      requiresVerbalAcceptance: preview.data.requiresVerbalAcceptance,
+      verbalRecorded: verbal,
+      verbalNote,
+    })
+    : [];
+  const ready = !!preview.data && blockers.length === 0;
 
   return <>
-    <Button onClick={() => setOpen(true)} className="bg-emerald-600 hover:bg-emerald-700">
+    <Button onClick={() => {
+      // The query is mounted for the life of the page, so toggling `enabled`
+      // alone would serve whatever it read the first time.
+      queryClient.invalidateQueries({ queryKey: ["estimate-conversion-preview", quoteId] });
+      setOpen(true);
+    }} className="bg-emerald-600 hover:bg-emerald-700">
       <CalendarCheck2 className="mr-2 h-4 w-4" /> Convert to Customer & Schedule
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
@@ -121,9 +151,12 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
         <DialogHeader>
           <DialogTitle>Schedule accepted estimate</DialogTitle>
         </DialogHeader>
-        {preview.isLoading && <div className="py-12 text-center text-sm text-slate-500">Loading locked estimate snapshot…</div>}
-        {preview.isError && <div className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{(preview.error as Error).message}</div>}
-        {preview.data && <>
+        {/* isFetching, not isLoading: on a reopen the cached answer is already
+            rendered, and showing it while a fresh one is on the way told the
+            office nobody had accepted an estimate they had just accepted. */}
+        {preview.isFetching && <div className="py-12 text-center text-sm text-slate-500">Loading locked estimate snapshot…</div>}
+        {preview.isError && !preview.isFetching && <div className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{(preview.error as Error).message}</div>}
+        {preview.data && !preview.isFetching && <>
           <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
             <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0" />
             <div><p className="text-sm font-bold text-emerald-900">Revision {preview.data.revisionNumber} is the scheduling source</p><p className="text-xs text-emerald-700 mt-1">Services, quantities, and prices below are copied unchanged into each location job.</p></div>
@@ -154,9 +187,27 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
             })}
           </div>
         </>}
+        {preview.data && !preview.isFetching && blockers.length > 0 && (
+          <div data-testid="conversion-blockers" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-amber-900">
+              Before this can be scheduled
+            </p>
+            <ul className="mt-2 space-y-1 text-sm text-amber-900">
+              {blockers.map((blocker) => (
+                <li key={blocker} className="flex gap-2">
+                  <span aria-hidden="true">•</span><span>{blocker}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button disabled={!ready || commit.isPending || preview.isLoading} onClick={() => commit.mutate()}>
+          <Button
+            data-testid="conversion-submit"
+            disabled={!ready || commit.isPending || preview.isFetching}
+            onClick={() => commit.mutate()}
+          >
             {commit.isPending ? "Scheduling all locations…" : `Schedule ${rows.length || ""} ${rows.length === 1 ? "job" : "jobs"}`}
           </Button>
         </DialogFooter>

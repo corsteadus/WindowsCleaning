@@ -31,7 +31,10 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { CORRECTABLE_ESTIMATE_STATUSES, ESTIMATE_STATUS_LABELS, estimateStatusLabel } from "@/lib/estimate-status";
+import {
+  CORRECTABLE_ESTIMATE_STATUSES, CORRECTION_REASON_MIN_LENGTH, correctionRequiresReason,
+  ESTIMATE_STATUS_LABELS, estimateStatusLabel, startingCorrection,
+} from "@/lib/estimate-status";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { ServicePickerDialog } from "@/components/ServicePickerDialog";
 import { getListServicesQueryKey, useListServices } from "@workspace/api-client-react";
@@ -75,6 +78,8 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
   const [correcting, setCorrecting] = useState(false);
   const [correction, setCorrection] = useState("draft");
   const [correctionReason, setCorrectionReason] = useState("");
+  const reasonRequired = correctionRequiresReason(correction);
+  const reasonLongEnough = correctionReason.trim().length >= CORRECTION_REASON_MIN_LENGTH;
   const key = ["estimate-lifecycle", quote.id];
   const correctStatus = useMutation({
     mutationFn: () => estimateApi<any>(`/quotes/${quote.id}/status`, {
@@ -85,6 +90,9 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       setCorrecting(false);
       void refetch();
       queryClient.invalidateQueries({ queryKey: ["quotes"] });
+      // Correcting to Accepted is what unblocks the scheduling screen (#15),
+      // so that screen must not keep answering from what it read before.
+      queryClient.invalidateQueries({ queryKey: ["estimate-conversion-preview", quote.id] });
       toast({ title: `Status corrected to ${ESTIMATE_STATUS_LABELS[correction] ?? correction}` });
     },
     onError: (cause: unknown) => toast({
@@ -158,6 +166,12 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
     onError: (error: Error) => toast({ title: error.message, variant: "destructive" }),
   });
   const status = data?.status ?? quote.status;
+  // The server refuses a correction only when the customer themselves accepted
+  // on the secure link, and once a job exists the estimate is spent. An
+  // acceptance the office recorded by hand stays correctable, or a mistyped
+  // one could never be undone.
+  const customerAccepted = data?.publicLink?.decision === "accepted";
+  const canOfferCorrection = canCorrectStatus && !customerAccepted && status !== "accepted_scheduled";
   const locked = !!data?.locked;
   const appointment = data?.appointment;
   const appointmentFingerprint = appointment
@@ -221,8 +235,8 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
         <div><h2 className="font-bold text-slate-900">Estimate lifecycle</h2><p className="text-xs text-slate-500 mt-1">Appointment, finalization, delivery, customer activity, and decision history.</p></div>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">{estimateStatusLabel(status)}</span>
-          {canCorrectStatus && status !== "accepted" && status !== "accepted_scheduled" && (
-            <button type="button" onClick={() => { setCorrection(status); setCorrectionReason(""); setCorrecting(true); }} className="text-[11px] font-semibold text-primary hover:underline">Correct status</button>
+          {canOfferCorrection && (
+            <button type="button" onClick={() => { setCorrection(startingCorrection(status)); setCorrectionReason(""); setCorrecting(true); }} className="text-[11px] font-semibold text-primary hover:underline">Correct status</button>
           )}
         </div>
       </div>
@@ -270,18 +284,33 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       <Dialog open={correcting} onOpenChange={(open) => !open && setCorrecting(false)}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader><DialogTitle className="text-base">Correct the status</DialogTitle></DialogHeader>
-          <p className="text-xs text-slate-500">The correction is recorded in the activity history. An estimate becomes accepted only through the customer's own decision.</p>
+          <p className="text-xs text-slate-500">The correction is recorded in the activity history. A quote the customer has already accepted on their own link cannot be corrected.</p>
           <label className="block text-xs font-semibold text-slate-600">Status
             <select aria-label="Corrected status" value={correction} onChange={(e) => setCorrection(e.target.value)} className="input-lite mt-1 w-full">
               {CORRECTABLE_ESTIMATE_STATUSES.map((value) => <option key={value} value={value}>{ESTIMATE_STATUS_LABELS[value]}</option>)}
             </select>
           </label>
-          <label className="block text-xs font-semibold text-slate-600">Reason <span className="font-normal text-slate-400">(optional)</span>
-            <input aria-label="Correction reason" value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} className="input-lite mt-1 w-full" placeholder="e.g. customer declined by phone" />
+          {/* Kyle #23: Accepted is the one correction that commits the company
+              to work, so it carries its own evidence. */}
+          <label className="block text-xs font-semibold text-slate-600">Reason{" "}
+            <span className="font-normal text-slate-400">{reasonRequired ? "(required)" : "(optional)"}</span>
+            <input
+              aria-label="Correction reason"
+              value={correctionReason}
+              onChange={(e) => setCorrectionReason(e.target.value)}
+              className="input-lite mt-1 w-full"
+              placeholder={reasonRequired ? "Who accepted it, and how — e.g. Jane Doe accepted by phone" : "e.g. customer declined by phone"}
+            />
           </label>
+          {reasonRequired && !reasonLongEnough && (
+            <p data-testid="correction-reason-hint" className="text-xs text-amber-700">
+              Marking an estimate Accepted schedules real work, so say who accepted it and
+              how — at least {CORRECTION_REASON_MIN_LENGTH} characters.
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setCorrecting(false)} className="h-9 rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-600">Cancel</button>
-            <button type="button" onClick={() => correctStatus.mutate()} disabled={correctStatus.isPending} className="h-9 rounded-xl bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50">{correctStatus.isPending ? "Saving…" : "Save correction"}</button>
+            <button type="button" data-testid="save-correction" onClick={() => correctStatus.mutate()} disabled={correctStatus.isPending || (reasonRequired && !reasonLongEnough)} className="h-9 rounded-xl bg-primary px-3 text-sm font-semibold text-white disabled:opacity-50">{correctStatus.isPending ? "Saving…" : "Save correction"}</button>
           </div>
         </DialogContent>
       </Dialog>

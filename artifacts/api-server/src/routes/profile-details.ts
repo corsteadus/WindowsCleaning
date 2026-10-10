@@ -131,7 +131,10 @@ async function readChannels(customerId: number) {
       sendingPaused: Boolean(channel.sendingPausedAt),
       type: channel.channelType,
       purposes,
-      purpose: purposes[0] ?? "general",
+      // The older single-valued field. It must not invent "general" for a
+      // channel set to None (#7), or the screen reads back the opposite of
+      // what was saved.
+      purpose: purposes[0] ?? null,
     };
   });
 }
@@ -336,12 +339,15 @@ router.post(["/customers/:id/channels", "/prospects/:id/channels"], async (req, 
         isPrimary: bool(body.isPrimary),
         notes: text(body.notes),
       }).returning();
-      await tx.insert(contactChannelPurposesTable).values(
-        purposes.map((purpose) => ({ channelId: channel.id, purpose })),
-      );
+      // None (#7) means no rows at all, and an empty insert is an error.
+      if (purposes.length) {
+        await tx.insert(contactChannelPurposesTable).values(
+          purposes.map((purpose) => ({ channelId: channel.id, purpose })),
+        );
+      }
       return channel;
     });
-    res.status(201).json({ ...created, type: created.channelType, purposes, purpose: purposes[0] });
+    res.status(201).json({ ...created, type: created.channelType, purposes, purpose: purposes[0] ?? null });
   } catch (error) {
     respondError(res, error, "Failed to add contact channel");
   }
@@ -405,7 +411,10 @@ router.patch("/contact-channels/:id", async (req, res) => {
         if (replacement) {
           purposes = replacement;
           await tx.delete(contactChannelPurposesTable).where(eq(contactChannelPurposesTable.channelId, id));
-          await tx.insert(contactChannelPurposesTable).values(purposes.map((purpose) => ({ channelId: id, purpose })));
+          // None (#7) clears them and inserts nothing.
+          if (purposes.length) {
+            await tx.insert(contactChannelPurposesTable).values(purposes.map((purpose) => ({ channelId: id, purpose })));
+          }
         } else {
           purposes = (await tx.select({ purpose: contactChannelPurposesTable.purpose })
             .from(contactChannelPurposesTable)
@@ -419,7 +428,7 @@ router.patch("/contact-channels/:id", async (req, res) => {
     res.json({
       ...updated.channel, type: updated.channel.channelType,
       sendingPaused: Boolean(updated.channel.sendingPausedAt),
-      purposes: updated.purposes, purpose: updated.purposes[0],
+      purposes: updated.purposes, purpose: updated.purposes[0] ?? null,
     });
   } catch (error) {
     respondError(res, error, "Failed to update contact channel");

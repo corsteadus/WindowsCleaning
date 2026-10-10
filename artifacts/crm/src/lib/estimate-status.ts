@@ -34,8 +34,41 @@ export const ESTIMATE_STATUS_ORDER = [
   "draft", "sent", "viewed", "accepted", "declined", "expired",
 ] as const;
 
-/** What an authorised employee may correct a status to; never Accepted. */
-export const CORRECTABLE_ESTIMATE_STATUSES = ["draft", "sent", "viewed", "declined", "expired"] as const;
+/**
+ * What an authorised employee may correct a status to.
+ *
+ * Accepted joined the list on 2026-10-10 (Kyle's correction note #23). Most of
+ * this company's acceptances happen on the phone, and until the office could
+ * record one, an accepted estimate could never be turned into a job — his #15.
+ * The two derived shades, `scheduled` and `accepted_scheduled`, stay out: they
+ * describe facts (an appointment exists, a job was created), not opinions.
+ *
+ * Must stay in step with MANUALLY_CORRECTABLE_STATUSES on the server.
+ */
+export const CORRECTABLE_ESTIMATE_STATUSES = ["draft", "sent", "viewed", "accepted", "declined", "expired"] as const;
+
+/** Accepted commits the company to work, so it has to say why. */
+export function correctionRequiresReason(status: string): boolean {
+  return status === "accepted";
+}
+
+/** Matches CORRECTION_REASON_MIN_LENGTH on the server. */
+export const CORRECTION_REASON_MIN_LENGTH = 10;
+
+/**
+ * Which option the Correct Status dialog opens on.
+ *
+ * It cannot simply be the current status: `scheduled` and `accepted_scheduled`
+ * are derived and are not in the list, so the select would show one value
+ * while the form held another, and the save would come back refused. Both fold
+ * onto the plain status they already read as.
+ */
+export function startingCorrection(status: string): (typeof CORRECTABLE_ESTIMATE_STATUSES)[number] {
+  const group = estimateStatusGroup(status);
+  return (CORRECTABLE_ESTIMATE_STATUSES as readonly string[]).includes(group)
+    ? (group as (typeof CORRECTABLE_ESTIMATE_STATUSES)[number])
+    : "draft";
+}
 
 /**
  * The group a derived status belongs to — one of Kyle's six.

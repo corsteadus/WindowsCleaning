@@ -40,11 +40,19 @@ test("buildLocationJobPlans rejects partial schedules and unassigned multi-locat
   ]), /assigned to a location/);
 });
 
-test("accepted and legacy approved statuses are terminal acceptance", () => {
-  assert.equal(isAcceptedEstimate("accepted", false), false);
+// Until Kyle's #23 (2026-10-10) a bare "accepted" did not count, because the
+// only honest acceptance was the customer's own click. With Correct Status now
+// able to write it — and refusing to without a written reason — it does. That
+// reversal is what makes an acceptance taken on the phone schedulable, which
+// is the whole of his #15.
+test("every evidenced acceptance counts, and nothing else does", () => {
+  assert.equal(isAcceptedEstimate("accepted", false), true);
   assert.equal(isAcceptedEstimate("approved", false), true);
   assert.equal(isAcceptedEstimate("sent", true), true);
   assert.equal(isAcceptedEstimate("sent", false), false);
+  assert.equal(isAcceptedEstimate("draft", false), false);
+  assert.equal(isAcceptedEstimate("declined", false), false);
+  assert.equal(isAcceptedEstimate("expired", false), false);
 });
 
 test("accepted-estimate conversion persists actual appointment data as scheduled", async () => {

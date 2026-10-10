@@ -32,7 +32,10 @@ import {
 import { hasCapability } from "../lib/authorization.js";
 import { quotePurgeStatements } from "../lib/customer-purge.js";
 import { deriveQuoteStatuses } from "../lib/estimate-status-batch.js";
-import { isManuallyCorrectableStatus, MANUALLY_CORRECTABLE_STATUSES } from "../lib/estimate-lifecycle.js";
+import {
+  CORRECTION_REASON_MIN_LENGTH, correctionRequiresReason,
+  isManuallyCorrectableStatus, MANUALLY_CORRECTABLE_STATUSES,
+} from "../lib/estimate-lifecycle.js";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, normaliseQuoteTerms, QUOTE_VALIDITY_PRESETS } from "../lib/quote-settings.js";
@@ -880,8 +883,11 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
 
 // Delete quote + cascade line items
 // Random Edits #4: "Authorized employees may manually correct a status, but
-// that correction should be recorded in activity history." Acceptance is not
-// correctable — it can only come from the customer's own decision.
+// that correction should be recorded in activity history." Since Kyle's
+// correction note #23 (2026-10-10) that includes Accepted, because most of
+// this company's acceptances happen on the phone. Two things still hold: the
+// correction must name a reason, and a quote the customer has already accepted
+// on the secure link cannot be corrected at all.
 router.patch("/quotes/:id/status", async (req, res): Promise<void> => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -892,14 +898,24 @@ router.patch("/quotes/:id/status", async (req, res): Promise<void> => {
     const requested = (req.body as { status?: unknown }).status;
     if (!isManuallyCorrectableStatus(requested)) {
       res.status(400).json({
-        error: `Status must be one of ${MANUALLY_CORRECTABLE_STATUSES.join(", ")}. `
-          + "An estimate becomes accepted only through the customer's own decision.",
+        error: `Status must be one of ${MANUALLY_CORRECTABLE_STATUSES.join(", ")}.`,
         code: "status_not_correctable",
       });
       return;
     }
     const reason = typeof (req.body as { reason?: unknown }).reason === "string"
       ? String((req.body as { reason: string }).reason).trim() : "";
+    // Kyle #23. Accepted is the one correction that commits the company to
+    // work, so it carries its own evidence into the activity history — the
+    // same thing the verbal-acceptance box on the scheduling screen asks for.
+    if (correctionRequiresReason(requested) && reason.length < CORRECTION_REASON_MIN_LENGTH) {
+      res.status(400).json({
+        error: "Correcting an estimate to Accepted needs a reason of at least "
+          + `${CORRECTION_REASON_MIN_LENGTH} characters — who accepted it, and how.`,
+        code: "reason_required",
+      });
+      return;
+    }
 
     const outcome = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteAdvisoryLockKey(id)})`);

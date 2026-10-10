@@ -70,14 +70,38 @@ describe("estimate statuses", () => {
   assert.equal(deriveEstimateStatus({ legacyStatus: "declined", sentAt: "2026-09-01", now }), "declined");
   });
 
-  it("acceptance is not something an employee may type in", async () => {
+  // Kyle #23 reverses the earlier rule. The office may now record an
+  // acceptance that happened on the phone, because without it an accepted
+  // estimate can never become a job (his #15).
+  it("an employee may correct a status to Accepted, but not to a derived shade", async () => {
   const { MANUALLY_CORRECTABLE_STATUSES, isManuallyCorrectableStatus } = await import("./estimate-lifecycle.ts");
-  assert.deepEqual([...MANUALLY_CORRECTABLE_STATUSES], ["draft", "sent", "viewed", "declined", "expired"]);
-  assert.equal(isManuallyCorrectableStatus("accepted"), false);
+  assert.deepEqual([...MANUALLY_CORRECTABLE_STATUSES], ["draft", "sent", "viewed", "accepted", "declined", "expired"]);
+  assert.equal(isManuallyCorrectableStatus("accepted"), true);
+  // These two are derived from facts, never typed: "scheduled" means an
+  // appointment exists, "accepted_scheduled" means a job was created.
   assert.equal(isManuallyCorrectableStatus("accepted_scheduled"), false);
   assert.equal(isManuallyCorrectableStatus("scheduled"), false);
   assert.equal(isManuallyCorrectableStatus("nonsense"), false);
   for (const status of MANUALLY_CORRECTABLE_STATUSES) assert.equal(isManuallyCorrectableStatus(status), true);
+  });
+
+  it("only Accepted has to say why", async () => {
+  const { correctionRequiresReason, MANUALLY_CORRECTABLE_STATUSES } = await import("./estimate-lifecycle.ts");
+  assert.equal(correctionRequiresReason("accepted"), true);
+  for (const status of MANUALLY_CORRECTABLE_STATUSES.filter((s) => s !== "accepted")) {
+    assert.equal(correctionRequiresReason(status), false, `${status} should not demand a reason`);
+  }
+  });
+
+  it("a corrected acceptance is an acceptance the conversion screen honours", async () => {
+  const { isAcceptedEstimate } = await import("./estimate-conversion.ts");
+  // The whole point of #23: this is what unblocks #15.
+  assert.equal(isAcceptedEstimate("accepted", false), true);
+  assert.equal(isAcceptedEstimate("approved", false), true);
+  assert.equal(isAcceptedEstimate("draft", true), true);
+  assert.equal(isAcceptedEstimate("draft", false), false);
+  assert.equal(isAcceptedEstimate("sent", false), false);
+  assert.equal(isAcceptedEstimate("declined", false), false);
   });
 
   it("every status Kyle listed for V1 exists", async () => {

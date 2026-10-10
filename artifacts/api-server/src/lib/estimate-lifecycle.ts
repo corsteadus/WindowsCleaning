@@ -26,18 +26,40 @@ export const ESTIMATE_STATUSES: readonly EstimateDisplayStatus[] = [
 ];
 
 /**
- * What an authorised employee may set by hand. Acceptance is deliberately not
- * here: it can only come from the customer's own decision, so that an accepted
- * estimate always has a real acceptance behind it.
+ * What an authorised employee may set by hand.
+ *
+ * `accepted` was deliberately excluded until 2026-10-10, on the rule that an
+ * acceptance must be the customer's own. Kyle's correction note #23 reverses
+ * that, and the reason is sound: most of this company's work is accepted on
+ * the phone or at the door, and the customer-decision link needs an email
+ * provider that is not connected. Without this option an accepted job can
+ * never be scheduled at all — which is the whole of his #15.
+ *
+ * What the old rule was really protecting is the *evidence*, not the channel.
+ * So acceptance stays the one correction that must say why: see
+ * `correctionRequiresReason`. The customer's own decision still outranks it —
+ * the route refuses to correct a quote the customer has already accepted.
  */
 export const MANUALLY_CORRECTABLE_STATUSES: readonly EstimateDisplayStatus[] = [
-  "draft", "sent", "viewed", "declined", "expired",
+  "draft", "sent", "viewed", "accepted", "declined", "expired",
 ];
 
 export function isManuallyCorrectableStatus(value: unknown): value is EstimateDisplayStatus {
   return typeof value === "string"
     && (MANUALLY_CORRECTABLE_STATUSES as readonly string[]).includes(value);
 }
+
+/**
+ * Correcting an estimate to Accepted creates a commitment — it is what lets
+ * the office turn it into scheduled work — so it must carry its own evidence.
+ * Every other correction is housekeeping and may be made in silence.
+ */
+export function correctionRequiresReason(status: unknown): boolean {
+  return status === "accepted";
+}
+
+/** The shortest reason that is actually a reason rather than a keystroke. */
+export const CORRECTION_REASON_MIN_LENGTH = 10;
 
 function hasPassed(when: Date | string | null | undefined, now: Date): boolean {
   if (!when) return false;

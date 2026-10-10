@@ -9,6 +9,7 @@ import {
   ESTIMATE_STATUS_LABELS,
   estimateStatusGroup,
   estimateStatusOf,
+  startingCorrection,
 } from "../lib/estimate-status.ts";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
@@ -108,9 +109,47 @@ test("filtering and counting use the derived status too", () => {
   assert.doesNotMatch(quotes, /q\.status === "approved"/);
 });
 
-test("correcting a status is offered only to those allowed, and never on an accepted estimate", () => {
+// Kyle #23. The gate moved from "the status reads accepted" to "the customer
+// accepted it themselves", so an acceptance the office recorded by hand can
+// still be undone — the server allows exactly that, and the screen used to
+// not.
+test("correcting a status is offered only to those allowed, and never over the customer's own decision", () => {
   assert.match(quoteDetail, /hasClientCapability\(user, "quotes\.manage"\)/);
-  assert.match(quoteDetail, /\{canCorrectStatus && status !== "accepted" && status !== "accepted_scheduled" &&/);
+  assert.match(quoteDetail, /const customerAccepted = data\?\.publicLink\?\.decision === "accepted"/);
+  assert.match(quoteDetail, /canCorrectStatus && !customerAccepted && status !== "accepted_scheduled"/);
+  assert.match(quoteDetail, /\{canOfferCorrection && \(/);
+});
+
+test("the dialog opens on an option the list actually offers", () => {
+  // Opening on a derived status left the select showing one value and the
+  // form holding another, and the save came back refused.
+  assert.match(quoteDetail, /setCorrection\(startingCorrection\(status\)\)/);
+  assert.equal(startingCorrection("scheduled"), "draft");
+  assert.equal(startingCorrection("accepted_scheduled"), "accepted");
+  assert.equal(startingCorrection("nonsense"), "draft");
+  for (const status of CORRECTABLE_ESTIMATE_STATUSES) {
+    assert.equal(startingCorrection(status), status);
+  }
+});
+
+test("Accepted is the one correction that must say why", () => {
+  assert.match(quoteDetail, /const reasonRequired = correctionRequiresReason\(correction\)/);
+  assert.match(quoteDetail, /reasonLongEnough = correctionReason\.trim\(\)\.length >= CORRECTION_REASON_MIN_LENGTH/);
+  // The button has to be held, not just the hint shown.
+  assert.match(quoteDetail, /disabled=\{correctStatus\.isPending \|\| \(reasonRequired && !reasonLongEnough\)\}/);
+  assert.match(quoteDetail, /data-testid="correction-reason-hint"/);
+});
+
+test("the dialog no longer tells the office acceptance is impossible", () => {
+  assert.doesNotMatch(quoteDetail, /becomes accepted only through the customer's own decision/);
+});
+
+test("a correction wakes the scheduling screen that depends on it", () => {
+  // #23 is only useful because it unblocks #15, and that screen caches.
+  assert.match(
+    quoteDetail,
+    /invalidateQueries\(\{ queryKey: \["estimate-conversion-preview", quote\.id\] \}\)/,
+  );
 });
 
 test("the correction sends the status and reason to the server", () => {
@@ -118,8 +157,8 @@ test("the correction sends the status and reason to the server", () => {
   assert.match(quoteDetail, /body: JSON\.stringify\(\{ status: correction, reason: correctionReason \}\)/);
 });
 
-test("only correctable statuses are offered, acceptance excluded", () => {
-  assert.deepEqual([...CORRECTABLE_ESTIMATE_STATUSES], ["draft", "sent", "viewed", "declined", "expired"]);
+test("the six Kyle named are offered, Accepted among them", () => {
+  assert.deepEqual([...CORRECTABLE_ESTIMATE_STATUSES], ["draft", "sent", "viewed", "accepted", "declined", "expired"]);
   assert.match(quoteDetail, /CORRECTABLE_ESTIMATE_STATUSES\.map/);
-  assert.ok(!CORRECTABLE_ESTIMATE_STATUSES.includes("accepted" as never));
+  assert.ok(CORRECTABLE_ESTIMATE_STATUSES.includes("accepted" as never));
 });

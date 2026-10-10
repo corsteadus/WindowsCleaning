@@ -55,15 +55,19 @@ which is what the approval gate is about — the spec allows no further calendar
 until they are fast and need minimal training. **Two of the four architectural blockers are
 cleared** (§11.6 and §11.4), both by using tables Step 1 created and nothing had read.
 
-**None of Phase 14 is republished**, confirmed against the deployed API on 2026-10-09: all
-four pieces answer 404 there. Everything earlier is live. The republish is the next step —
-Kyle is reviewing right now, against a build three days behind.
+**Phase 14 is live on Sandbox 2 — republished 2026-10-09 and verified against the deployed
+app, not the bundle.** Routes: all four answer. Behaviour: a day blocked on the live build
+refuses a booking and names the block, Move Entire Day answers, bulk invoicing previews a
+month without creating anything, and the per-user preferences come back (6/6). Screens: the
+filter bar, **Block days**, **Create invoices**, the day's move control and the job drawer
+are all there and working (8/8). The one test block written during the check was lifted;
+nothing of the client's was touched.
 
 **Kyle's 8 October corrections are read and checked** (see below). Nothing he flagged is a
 defect in what is waiting to be published, but one of his items — **#15** — connects to it:
 the hard-block rule had only been put on three of the seven paths that create a job, and the
 estimate conversion was one of the four without it. That is now closed. After the republish:
-**#15 and #23 together**, then #7's "None", #3, #31. Phase 15 go-live needs a date from
+**#15 and #23 are done (2026-10-10, in the working tree)**; then #3 (waiting on Kyle's screenshot) and #6's typed deactivation cause, which needs an announced migration. #7, #15, #23 and #31 are done 2026-10-10. Phase 15 go-live needs a date from
 Lute; Phase 12b email and A#9 still wait on his keys, and six of Kyle's checklist items
 cannot be tested until they arrive.
 
@@ -162,7 +166,323 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
-## Phase 14, Step 4c — the other doors onto a blocked day, closed 2026-10-09
+## #31 — the customer-facing service description, closed 2026-10-10
+
+Kyle asked that every service line carry a Description of what the customer
+is receiving; that it exist on the quote **and on the job the quote becomes**;
+that it carry forward on conversion; and that it stay apart from Job Notes and
+Tech / Crew Notes, which are internal and are not for the customer.
+
+### Half of it already worked
+
+A quote line has had its own Description since his earlier edit-list #9, stored
+as `estimate_line_metadata.service_notes`, and `PublicEstimate.tsx` already
+shows it to the customer under the service. The conversion already carried it
+too — `persistAcceptedEstimateJobsCore` spreads the whole snapshot line into
+the job's `line_items`, `serviceNotes` included.
+
+### The two things that did not
+
+**The job screen never showed its services at all.** A job keeps them in
+`jobs.line_items`, a JSON string, and nothing read it. The description was
+arriving and being thrown away at the last step.
+
+**The same idea is spelled two ways, and `description` means opposite things
+on each path:**
+
+| Path | service name | customer-facing text |
+|---|---|---|
+| an accepted estimate converted | `description` | `serviceNotes` |
+| `POST /customers/with-initial-job` | `serviceName` | `description` |
+
+Renaming either rewrites history already sitting in that column, so
+`lib/job-services.ts` reads both and hands the rest of the app one shape.
+`serviceName` is the tell: where it exists, `description` is the customer's
+text; where it does not, `description` is the name and the customer's text
+came under `serviceNotes`. A test asserts the failure that would look like
+working software — the service's own title echoed into the description, so
+every line appears to have one.
+
+**No migration.** `line_items` is free text; nothing new is stored.
+
+### What the screen does now
+
+`JobDetail` grew a **Services** card above the notes: each service with its
+price, and underneath it the words the customer was given, or a plain
+“No customer description was written for this service” when there are none —
+silence there would read as though there were nothing to say.
+
+The Notes card below now states, on the screen, that both fields are internal
+and that what the customer was promised belongs in the descriptions above.
+That line is the point of #31 rather than decoration: it is what stops the
+promise being typed into the crew's notes.
+
+`line_items` is free text with years of imports in it, so the reader survives
+null, empty, malformed JSON, an object instead of an array, and junk mixed
+with good rows — a job screen that throws because one old row is odd is worse
+than one that shows no services.
+
+### Verified
+
+| | |
+|---|---|
+| `scratchpad/p31-walkthrough.mjs` | **11/11** headed, step by step — the description written on the estimate reaches the job's own record, the Services card shows it, and the description, the job note and the tech note are each in their own place |
+| CRM | **676/676**, pretest 10/10, profile-details 3/3, customer-hub 7/7, dashboard 1/1 |
+| API | **759/773** — the same 14 `DATABASE_URL` failures. Pretest 34/34, profile-details 10/10, customer-hub 46/48 (two of the same 14) |
+| Migration | **none** |
+
+A trap worth writing down: the first run of the browser check “proved” the job
+note and tech note were absent. They were not — they sit in textareas, whose
+content is a value and not page text, and `innerText()` does not see it. The
+check now reads the textarea values.
+
+### Not done, and deliberately
+
+Invoices are not named in #31 and were left alone. A job created by hand from
+`JobNew` has no estimate behind it, so it has no description to carry — the
+card simply does not appear.
+
+---
+
+
+## #7 — email routing by contact, closed 2026-10-10
+
+Kyle asked that each email address be assignable to one of eight choices:
+All Emails; General Emails; Billing; Estimates; General and Estimates;
+Billing and Estimates; General and Billing; **None**. And he was explicit that
+None is not a deactivation — it only means the address joins no routine
+category, and is separate from the unsubscribe, bounce and manual
+deactivation behaviour of his #6.
+
+### What was already there, and what was missing
+
+`contact_channel_purposes` has existed since the profile work, holding any
+subset of `general | billing | estimates`. Three purposes have **eight**
+subsets, so seven of Kyle's eight already worked. The missing one was the
+empty set, and it was refused twice over:
+
+| Where | What it did |
+|---|---|
+| `PurposePicker` | `if (next.length) onChange(next)` — unticking the last box did nothing at all, so None could not even be expressed |
+| `channelPurposePatch` | threw `At least one valid channel purpose is required` |
+| `readChannels` | `purpose: purposes[0] ?? "general"` — had None ever been stored, the screen would have read it back as General |
+
+**No migration.** The table already allows zero rows; nothing was asked to
+store anything new.
+
+### What changed
+
+`channelPurposePatch` returns `[]` instead of throwing, and `purpose: null`
+instead of inventing `"general"`. Both write paths skip the insert when the
+list is empty, because an empty `values()` is an error in Drizzle. Omitting
+the field still means "leave what is stored alone", which is exactly why None
+has to be an explicit empty array rather than an absence.
+
+On the screen the three checkboxes became one list of Kyle's eight named
+choices — which is also what he asked for, "assigned one of these options".
+Checkboxes could express all eight in principle, but None was only reachable
+by clearing the last tick, and that was the click being swallowed.
+`lib/channel-routing.ts` holds the names and the mapping, and a test asserts
+the list is the full power set rather than eight entries somebody counted by
+hand.
+
+One small thing found on the way: the row's **Save** button had no label, and
+the page carries several buttons reading "Save". It now says which address it
+saves — for a screen reader as much as for a test.
+
+### Verified
+
+| | |
+|---|---|
+| `scratchpad/p7-routing-api.mjs` | **21/21** over HTTP — each of the eight settable on create; None survives the round trip and reads back as None; nothing is written for it; None does **not** pause sending; an existing address moves to None and back; a patch about something else leaves routing alone; pausing and routing stay independent; an unknown purpose is dropped |
+| `scratchpad/p7-walkthrough.mjs` | **10/10** headed, step by step — the eight read exactly as Kyle wrote them, None selects, saves, and **still says None after a page reload** |
+| API | **759/773** — the same 14 `DATABASE_URL` failures. Pretest 34/34, profile-details 10/10 |
+| CRM | **663/663**, pretest 10/10, profile-details 3/3, customer-hub 7/7. Both typecheck clean |
+| Migration | **none** |
+
+`profile-details-core.test.ts` had never been registered in the api-server
+`test` script either — it only ran under `test:profile-details`. Registered,
+which is where the extra five come from.
+
+A guard in `profile-details-ui.test.ts` asserted that `ProfileDetailsTab.tsx`
+literally contained `"general"`, `"billing"` and `"estimates"`. Those moved
+into the shared lib, which is the improvement, so the guard now checks that
+the screen draws on that lib instead of keeping its own copy.
+
+### What #6 still needs, and why it has not started
+
+#6 wants a **typed** deactivation cause — Customer Unsubscribed, Email
+Bounced, Manually Deactivated — shown on the profile. Today there is only
+`sending_paused_reason`, free text, which cannot tell a system cause from
+somebody's note. That wants one additive column, and **a migration hits the
+branch Kyle is testing in immediately**, so it waits to be announced rather
+than being slipped in. The rest of #6 — the unsubscribe link in a sent email,
+and deactivating on a bounce — needs the provider that is still not connected.
+
+---
+
+
+## #15 and #23 — one bug, closed 2026-10-10
+
+Kyle filed them separately. #23 asked for **Accepted** in the Correct Status
+list. #15 reported that the scheduling button "remains inactive and cannot be
+clicked". They are the same bug seen from two ends, and neither can be fixed
+without the other.
+
+### What it actually was
+
+The first reading in this file (Step 4c, since marked wrong) said the estimate
+carried no location. Against Kyle's real rows that is false. Every quote on the
+sandbox — 62, 63 and 92 — has a `property_id`, an `estimate_locations` row, and
+a revision whose frozen snapshot carries one location. Asking the deployed API
+settled it:
+
+```
+quote 92 — accepted: false   requiresVerbalAcceptance: true   locations: 1
+```
+
+The screen had everything it needed except an **acceptance**. `ready` demanded
+`verbal && verbalNote.length >= 10`, the box asking for that sat in an amber
+panel well above the button, and the button itself said nothing. Kyle's other
+way to record an acceptance — the customer's own click on the secure link —
+needs the email provider that is still not connected. So he had no route at
+all, and a control that would not say what it wanted.
+
+### What changed
+
+**#23 — the missing door.** `accepted` joins `MANUALLY_CORRECTABLE_STATUSES`,
+reversing the earlier rule that acceptance may only be the customer's. The rule
+was protecting the *evidence*, not the channel, so the evidence is kept:
+`correctionRequiresReason` makes Accepted the one correction that must say why,
+at least 10 characters, and the reason goes into `activity_logs` with the
+before and after. `isAcceptedEstimate` now honours a corrected `accepted`,
+which is what makes it reach #15.
+
+Two guards stay. The derived shades `scheduled` and `accepted_scheduled` are
+still untypeable — they describe facts, not opinions. And a quote the customer
+accepted on their own link still answers **409**; the office cannot overrule
+them. What did get *looser*, deliberately: the Correct status button used to
+disappear whenever the status read accepted, so an office mistake could never
+be undone. It now hides only on the customer's own acceptance, which is exactly
+what the server refuses.
+
+**#15 — the button explains itself.** A new `lib/conversion-readiness.ts`
+returns the list of what is still missing; `ready` is that list being empty and
+the screen prints the same list above the button. One function, so the control
+and its explanation cannot drift into a button that is off for a reason nobody
+is shown. It also catches an end time before a start time, which the server
+refuses and the dialog used to let through as a 400.
+
+### Found only in the browser
+
+Correct the status to Accepted, reopen the scheduling screen, and it still said
+nobody had accepted it. The preview query is mounted for the life of the page,
+so toggling `enabled` served the first answer it ever got. Three things
+together: the correction invalidates `estimate-conversion-preview`, the dialog
+asks again on every open (`staleTime: 0`, `refetchOnMount: "always"`), and the
+dialog renders its loading state on `isFetching` rather than `isLoading` — so
+it shows nothing while it is replacing what it showed, instead of a stale
+answer that flickers into a correct one. The unit tests all passed throughout;
+only a real browser caught it.
+
+`rows` also used to be seeded once and never resynced, so a changed snapshot
+kept the old rows. It now rebuilds when the locations change and keeps what the
+office has typed when they have not.
+
+### Verified
+
+| | |
+|---|---|
+| `scratchpad/p15-23-api.mjs` | **17/17** over HTTP — no reason, a keystroke and a line of spaces all refused; a real reason accepted and logged; the preview flips to `accepted: true`; the job is created on the chosen day at the quoted price; a derived status still refused; an office correction undone; a customer-accepted quote answers 409 |
+| `scratchpad/p15-23-browser.mjs` | **17/17** headed — the dead button, the reasons it gives, Accepted in the list, Save held until a reason is written, and the button coming alive |
+| API | **754/768** — the same 14 `DATABASE_URL` failures, nothing new. Pretest 34/34 |
+| CRM | **648/648**, pretest 10/10. Both typecheck clean |
+| Migration | **none** |
+
+`estimate-lifecycle.test.ts` had never been registered in the api-server `test`
+script and so had never run in the full suite; it is registered now, which is
+where 12 of the extra tests come from.
+
+### Cleanup, and a trap in the old harnesses
+
+No ZZ rows remain; customers 124 and 125, quotes 62, 63 and 92, job 163 and
+invoice 40 are all untouched. Five ZZ crews had survived earlier runs because
+`DELETE FROM crews` was wrapped in `.catch(() => {})` and was failing on the
+`crew_members` foreign key, silently, every time. **Delete the members first,
+and do not swallow the error.** The `ZZ Live check` block of 2027-04-14 was
+also still in `calendar_events` — lifting a block keeps its record, by design —
+and has now been removed with the rest.
+
+### Still open from the same notes
+
+#7 (the eight email-routing choices, including **None**), #3 (where the custom
+field section sits — waiting on Kyle's screenshot), #31 (a customer-facing
+description per service line, carried into the job). #6 and the six blocked
+items wait on the Gmail App Password. File #3, the Prospect Checklist itself,
+has still not been sent.
+
+---
+
+
+## Email — the Gmail credential, tested 2026-10-10
+
+Kyle sent a password for Gmail and said to go ahead and connect. It was tested
+against `smtp.gmail.com` on both 587 (STARTTLS) and 465 (SSL) with
+`nodemailer.verify()`, which authenticates and stops — **no message was sent**.
+
+Google answers, on both ports:
+
+```
+534-5.7.9 Application-specific password required.
+```
+
+**That error is good news twice over.** It is not `535-5.7.8 Username and
+Password not accepted`, which is what a wrong address or a wrong password
+returns. Reaching the second-factor stage means `info@corstead.us` **is** the
+right account and the password **is** correct. What stops it is that the account
+has 2-Step Verification on, and Google has not accepted a plain account password
+over SMTP since it withdrew less-secure-app access. It needs either a 16-character
+**App Password** (`myaccount.google.com` → Security → 2-Step Verification → App
+passwords) or OAuth2. The App Password is the five-minute answer; OAuth2 is a
+build. **Asked Kyle for the App Password on 2026-10-10.**
+
+`lib/email.ts` already has the SMTP path, so nothing needs writing for the
+connection itself — `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
+`SMTP_USER=info@corstead.us`, `SMTP_PASS=<app password>`,
+`EMAIL_FROM_ADDRESS=info@corstead.us`, as Replit **Secrets**. The password
+arrived in a chat screenshot and must not reach the repo or a client report.
+
+### What the sandbox looks like underneath, checked the same day
+
+| | Reading | What it means |
+|---|---|---|
+| `communication_events` | 68 rows, **all `succeeded`**, none pending | Connecting a provider releases **no backlog**. The mock reported success on every one, so nothing retries |
+| `automation_rules` | **0 rows** | A `quote.sent` event still matches nothing. The App Password alone does not make an estimate email leave |
+| `email_templates` | **0 rows** | Same |
+| `email_logs`, `email_campaigns` | empty | Nothing half-finished |
+| Customer addresses | **2** | See the warning below |
+
+So the office acceptance notice (`lib/estimate-accepted-notice.ts`) starts working
+the moment the provider is configured — it calls `sendEmailTo` directly. The
+estimate and invoice chain still needs the rule, the template and the queue, as
+the "Email, corrected" section already says.
+
+**A warning worth acting on before the provider goes on.** The only two addresses
+in the sandbox are `kstaffinvest@gmail.com` on customer 124 (Kyle's own, fine) and
+**`lute@gmail.com` on customer 125** — the profile Lute created when he started
+testing on 2026-10-08. That is almost certainly a stranger's mailbox, not Lute's.
+With a real provider configured, the first thing anyone sends to customer 125
+reaches that stranger with Corstead's name on it. Ask Lute for the real address
+and correct the row **before** the Secrets go in, not after. Customer 125 is real
+client data, so it is corrected, never deleted.
+
+`scratchpad/gmail-verify.mjs` (takes the password as an argument so it is not in
+the file), `scratchpad/email-readiness.mjs`, `scratchpad/email-addresses.mjs`.
+
+---
+
+
+## Phase 14, Step 4c — the other doors onto a blocked day, closed 2026-10-09 (live)
 
 Found while checking whether anything in Kyle's 8 October corrections touches
 the work waiting to be published. It does, and this is the link.
@@ -205,18 +525,19 @@ refuses a hard-blocked day with the block named, each still books a clear one,
 and the refusal writes nothing. Three source guards added. API **742/756** —
 the same 14 `DATABASE_URL` failures. CRM 624/624. No migration.
 
-### Found on the way — what #15 actually is
+### Found on the way — a first reading of #15, since corrected
 
-The conversion machinery is **not** broken. Walking it by hand showed the
-whole path working: finalize, preview, convert, one job created. What breaks
-it is that `conversion-preview` reports **no locations**, so the dialog builds
-no rows and its button can never enable — exactly Kyle's symptom.
+**This section was wrong and is kept only so the mistake is not made twice.**
+It said `conversion-preview` reports no locations and that this is why Kyle's
+button never enables. The conclusion came from a quote I had created myself,
+from the profile, with no appointment — that quote genuinely has no location.
+Kyle's quotes are not that quote. See "#15 and #23" below, where the real
+cause is named against his actual data.
 
-An estimate's locations come from `estimate_locations`, which is written by
-`POST /quotes/with-appointment`. **A quote created without an appointment has
-no location at all** — and "create a quote directly from the profile" is
-Kyle's own edit-list #16. So: fix the source of the location (line items'
-property, or the account's main service address), not the dialog.
+What survives from it: a quote created without an appointment still has no
+`estimate_locations` row, because only `POST /quotes/with-appointment` writes
+one. That matters for his edit-list #16, "create a quote directly from the
+profile", and is a real gap — it is simply not what #15 was.
 
 ### Worth keeping — a shared database is not an empty one
 
@@ -3180,7 +3501,7 @@ first four were sent with the release message.
 
 | # | Ask | What it blocks |
 |---|---|---|
-| 6 | **Email provider keys.** He offered `info@corstead.us` for testing on 2026-10-02 but has not sent keys | **Phase 12b** — estimates and invoices cannot leave the system — and **A#9** with it |
+| 6 | **Email provider keys.** Answered in part on 2026-10-10: Gmail, with the account password for `info@corstead.us`. **Google refuses it** — the account has 2-Step Verification on, so SMTP needs a 16-character **App Password**. Asked for; see the section below | **Phase 12b** — estimates and invoices cannot leave the system — and **A#9** with it |
 | 7 | **Address autocomplete** (A#11 / B#2) — he owns the account and the billing, and asked for the cost to be checked first | That feature only |
 | 8 | **Neon ownership and the production branch** — he asked for ownership on our side to move to his, and production decisions are his | **Phase 15 go-live.** Needs a date from him more than an answer |
 
