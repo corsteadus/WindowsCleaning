@@ -21,6 +21,7 @@ import {
   communicationRetryDelaySeconds,
   communicationEventStatusFromDeliveryStatuses,
   eventAutomationTrigger,
+  interpolateTemplate,
 } from "./communication-event-core.js";
 import { parseCommunicationEventPayload } from "./communication-outbox.js";
 import type { CommunicationTx } from "./communication-outbox-types.js";
@@ -56,14 +57,9 @@ function today(): string {
   return businessDateStr();
 }
 
-function interpolate(
-  template: string,
-  vars: Record<string, string | number | null | undefined>,
-): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) =>
-    String(vars[key] ?? `{{${key}}}`),
-  );
-}
+// Moved to communication-event-core so the rule that decides what a customer
+// reads can be tested without a database.
+const interpolate = interpolateTemplate;
 
 async function claimEventIds(
   tx: CommunicationTx,

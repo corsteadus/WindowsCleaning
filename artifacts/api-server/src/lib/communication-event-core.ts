@@ -74,6 +74,33 @@ export function eventAutomationTrigger(eventType: CommunicationEventType): strin
   return eventType.replace(".", "_");
 }
 
+/**
+ * Fill an automation rule's subject and body.
+ *
+ * A placeholder with no value is removed, not left standing. It used to be
+ * left in place — which is fine while the provider is a mock that logs, and
+ * is not fine the moment a real one is connected: `{{amount}}` is exactly the
+ * kind of thing a customer would receive. And it is easy to hit, because
+ * `invoices` has no `amount` column at all; it has `totalAmount`.
+ *
+ * Whatever is left is tidied: a placeholder usually sits in a sentence, and
+ * removing it should not leave a double space or a space before the full
+ * stop.
+ */
+export function interpolateTemplate(
+  template: string,
+  vars: Record<string, string | number | null | undefined>,
+): string {
+  return template
+    .replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+      const value = vars[key];
+      return value === undefined || value === null ? "" : String(value);
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .replace(/>\s+</g, (match) => (match.includes("\n") ? match : "><"));
+}
+
 export function safeCommunicationPayloadSummary(payload: unknown): Record<string, unknown> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
   const allowed = new Set([

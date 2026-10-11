@@ -6,9 +6,42 @@ import {
   communicationEventStatusFromDeliveryStatuses,
   communicationRetryDelaySeconds,
   eventAutomationTrigger,
+  interpolateTemplate,
   safeCommunicationPayloadSummary,
   stableCommunicationValue,
 } from "./communication-event-core.ts";
+
+// A placeholder with no value used to be left standing. Harmless while the
+// provider was a mock that logged; a customer-facing defect the day Gmail was
+// connected (2026-10-10).
+test("a placeholder with no value is removed, never shown to a customer", () => {
+  assert.equal(
+    interpolateTemplate("Your invoice {{invoiceNumber}} for {{amount}} is ready.", {
+      invoiceNumber: "INV-1042",
+    }),
+    "Your invoice INV-1042 for is ready.",
+  );
+  // The one that matters most: `invoices` has no `amount` column — it has
+  // `totalAmount` — so this is the realistic mistake.
+  assert.doesNotMatch(
+    interpolateTemplate("Total: {{amount}}", {}),
+    /\{\{/,
+  );
+  assert.equal(interpolateTemplate("Hello {{customerName}},", { customerName: null }), "Hello,");
+  assert.equal(interpolateTemplate("Due {{dueDate}}.", { dueDate: undefined }), "Due.");
+});
+
+test("a filled placeholder is filled, including a number and a zero", () => {
+  assert.equal(interpolateTemplate("{{a}} and {{b}}", { a: "x", b: "y" }), "x and y");
+  assert.equal(interpolateTemplate("{{n}}", { n: 0 }), "0");
+  assert.equal(interpolateTemplate("{{n}}", { n: 12.5 }), "12.5");
+  assert.equal(interpolateTemplate("no placeholders here", {}), "no placeholders here");
+});
+
+test("removing a placeholder does not leave the sentence looking broken", () => {
+  assert.equal(interpolateTemplate("Paid on {{paymentDate}} .", {}), "Paid on.");
+  assert.equal(interpolateTemplate("<p>{{x}}</p><p>Hi</p>", {}), "<p></p><p>Hi</p>");
+});
 
 test("communication payload canonicalization is deterministic", () => {
   const first = { b: 2, nested: { z: true, a: 1 }, a: 1 };

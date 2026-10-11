@@ -166,6 +166,168 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Email — the rules, and a defect found writing them, 2026-10-11
+
+**The 2026-10-10 work is live on Sandbox 2, verified 18/18** against the
+deployed app: the bundle carries all four items' markers, and on the live
+API Accepted-without-a-reason answers `400 reason_required`, a correction
+unblocks the conversion, a channel saves as None and reads back `null`, and
+a customer description reaches the job. Nothing of the client's was touched.
+
+### Found writing the templates — a placeholder reaching a customer
+
+`interpolate` in the dispatcher left an unknown placeholder **standing**:
+
+```js
+template.replace(/\{\{(\w+)\}\}/g, (_, key) => String(vars[key] ?? `{{${key}}}`))
+```
+
+Harmless while the provider was a mock that logged. The day Gmail was
+connected it became a customer-facing defect, and an easy one to hit:
+`getContext` fills `amount` from the row's own `amount` column, and
+**`invoices` has no such column** — it has `totalAmount`. An invoice
+template saying “for {{amount}}” would have posted exactly that.
+
+Now `interpolateTemplate` in `communication-event-core.ts`, where it can be
+tested without a database: a placeholder with no value is removed, and the
+sentence is tidied after so nothing is left with a double space or a space
+before its full stop. Six assertions, including `{{amount}}` itself.
+
+### The rules, written inactive
+
+`automation_rules` held nothing, so no event matched anything. Five rules
+now exist, **all `active = false`** — `processEvent` reads only active ones,
+so none can fire until somebody switches it on from the Automations screen.
+
+| # | Name | Trigger | Uses |
+|---|---|---|---|
+| 1 | Estimate sent | `quote_sent` | `customerName`, `quoteNumber` |
+| 2 | Appointment booked | `appointment_scheduled` | `customerName`, `scheduledDate` |
+| 3 | Work completed | `job_completed` | `customerName`, `jobNumber` |
+| 4 | Invoice sent | `invoice_sent` | `customerName`, `invoiceNumber` |
+| 5 | Payment received | `payment_received` | `customerName`, `amount`, `paymentDate` |
+
+Rule 4 deliberately asks for **neither** `{{amount}}` (no such column on an
+invoice) **nor** `{{dueDate}}` (nullable). The wording is ours and is meant
+to be replaced the moment Kyle sends his — changing it is a minute's work,
+writing it was not.
+
+`customers` **has no `customer_type` column** — worth knowing, since the
+word appears all over the UI. A test profile exists for the first real send:
+**customer 297, “MAIL TEST / Do Not Contact”**, named so it cannot be
+mistaken for a customer.
+
+### Order that matters
+
+The `interpolateTemplate` fix is **not yet pushed**. It must be live before
+any rule is activated, or the first missing value is posted to a customer
+as `{{...}}`.
+
+### Who owns the mailbox
+
+Corrected 2026-10-11: `info@corstead.us` and its App Password are **Lute's**,
+not Kyle's. Anything about the mail connection goes to Lute. Kyle still owns
+the checklist items, the template wording, and File #3.
+
+---
+
+
+## Email — Gmail connected and proved, 2026-10-10
+
+Kyle sent the App Password the same day it was asked for. It authenticates
+against `smtp.gmail.com` on **587 and 465**, and — the part that matters —
+a real message went out through **the app's own `lib/email.ts`**, not through
+raw nodemailer. `detectProvider()` reported `smtp`, not `mock`, and Gmail
+returned a message id. The mock reports success too, so the provider it names
+is the only honest test.
+
+It was sent to `info@corstead.us`, the sending account's own inbox. No other
+address was touched.
+
+### Configuration, for whoever sets the Secrets
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=info@corstead.us
+SMTP_PASS=<the 16-character App Password>
+EMAIL_FROM_ADDRESS=info@corstead.us
+EMAIL_FROM_NAME=Superior Professional Window Cleaning
+OFFICE_EMAIL_ADDRESS=info@corstead.us
+PUBLIC_APP_URL=<the sandbox URL>
+```
+
+**Replit Secrets only.** The password arrived in a chat screenshot and must
+not reach the repo, a report, or this file.
+
+### The stranger's address, dealt with
+
+`lute@gmail.com` sits on customer 125, the profile Lute made while testing on
+8 October, and is almost certainly somebody else's mailbox. It is now on the
+system's own **suppression list** (`POST /communication-safety/suppressions`,
+channel `email`, reason `manual`, scope `global`). The dispatcher's
+`evaluateRecipientEligibility` returns **blocked** for it and **eligible** for
+`info@corstead.us`, so the guard bites rather than merely existing.
+
+The client's record was **not** edited — the address stays on the profile
+exactly as Lute typed it. Lift the suppression from the same screen once the
+real address is known.
+
+### What is proved, and what is not
+
+| | |
+|---|---|
+| the credential | **proved** — authenticates on both ports |
+| `lib/email.ts` over SMTP | **proved** — a real message delivered, provider `smtp` |
+| the suppression | **proved** — blocked at the dispatcher's own check |
+| the rule match | **read, not run.** `eventAutomationTrigger` is `eventType.replace(".", "_")`, so `quote.sent` looks for a rule whose `trigger_type` is `quote_sent`. The column is free text, so the four types named in the schema comment are not a limit |
+| event → rule → campaign → send | **not run end to end** |
+
+The last line is a gap and is worth saying plainly. Running it needs the
+queue turned on against the shared branch with a live mail provider, and the
+sandbox refused to start that worker. That refusal is right: it is precisely
+the combination that could post real mail to a real person. It wants a
+deliberate decision, not a side effect of a test.
+
+### Still missing before an estimate email can leave
+
+1. **The Secrets above**, on Replit.
+2. **`automation_rules` is empty.** Nothing matches any event. One row per
+   event the company wants to send on, out of `quote.sent`, `quote.accepted`,
+   `appointment.scheduled`, `appointment.changed`, `job.completed`,
+   `invoice.sent`, `payment.received`, `recurring_plan.due`.
+3. **`email_templates` is empty.** A rule can carry its own subject and body,
+   so a template is optional — but the wording is Kyle's to choose.
+4. **The queue is not running.** `BACKGROUND_PROCESSING_ENABLED=true` is not
+   enough on a sandbox: `shouldStartMutationWorkers` also requires `REPL_ID`
+   to be set **and to equal `APP_MIGRATION_SANDBOX_REPL_ID`**. Setting the
+   first and not the second leaves the scheduler silently off.
+5. **The real address for customer 125.**
+
+The office acceptance notice (`lib/estimate-accepted-notice.ts`) is the
+exception: it calls `sendEmailTo` directly, so it starts working on the
+Secrets alone, with no rule, template or queue.
+
+### A trap, found the hard way
+
+**Deleting a test customer does not take its queued communication events with
+it.** Today's runs left **20 pending `appointment.scheduled` events** pointing
+at quotes 99–110 and jobs 224–247, all long deleted. With no provider they sat
+there harmlessly; with Gmail connected and the queue on they are the first
+thing the dispatcher picks up. All 20 were confirmed orphaned — their quote or
+job no longer exists — and removed. The queue is back to 68 succeeded, none
+pending. **Every harness that creates an appointment must clear its events**,
+and the check before any republish is `communication_events` where status is
+not `succeeded`.
+
+`scratchpad/gmail-verify.mjs`, `email-live-test.mjs`, `suppress-stranger.mjs`,
+`clean-orphan-events.mjs`, `email-readiness.mjs`. None holds the password; it
+is passed as an argument.
+
+---
+
+
 ## #31 — the customer-facing service description, closed 2026-10-10
 
 Kyle asked that every service line carry a Description of what the customer
@@ -3501,7 +3663,7 @@ first four were sent with the release message.
 
 | # | Ask | What it blocks |
 |---|---|---|
-| 6 | **Email provider keys.** Answered in part on 2026-10-10: Gmail, with the account password for `info@corstead.us`. **Google refuses it** — the account has 2-Step Verification on, so SMTP needs a 16-character **App Password**. Asked for; see the section below | **Phase 12b** — estimates and invoices cannot leave the system — and **A#9** with it |
+| 6 | **Email provider keys — answered 2026-10-10.** Kyle sent the App Password; Gmail authenticates and the app's own send path delivers. What remains is not a key: automation rules, templates, and the queue actually running. See "Email — Gmail connected and proved" | **Phase 12b** is unblocked as far as the provider goes. **A#9** still waits on the sending path resolving recipients from contact channels |
 | 7 | **Address autocomplete** (A#11 / B#2) — he owns the account and the billing, and asked for the cost to be checked first | That feature only |
 | 8 | **Neon ownership and the production branch** — he asked for ownership on our side to move to his, and production decisions are his | **Phase 15 go-live.** Needs a date from him more than an answer |
 
