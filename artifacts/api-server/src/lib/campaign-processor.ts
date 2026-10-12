@@ -19,6 +19,7 @@ import { sendEmailTo, renderTemplate, type TemplateVars } from "./email";
 import { logger } from "./logger";
 import { evaluateRecipientEligibility } from "./communication-safety-store";
 import type { MessageClassification } from "./communication-safety-core";
+import { unsubscribeLink, unsubscribeSecret, withUnsubscribeFooter } from "./unsubscribe";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -111,7 +112,13 @@ async function processRecipient(
 ) {
   const vars = buildVars(recipient);
   const renderedSubject  = renderTemplate(campaign.subject,  vars);
-  const renderedBodyHtml = renderTemplate(campaign.bodyHtml, vars);
+  // Kyle #6: every customer-facing email carries a way out. The footer is
+  // added before the body is logged, so the record shows what was actually
+  // sent rather than what the template said.
+  const renderedBodyHtml = withUnsubscribeFooter(
+    renderTemplate(campaign.bodyHtml, vars),
+    unsubscribeLink(process.env.PUBLIC_APP_URL, recipient.email, unsubscribeSecret()),
+  );
   const recipientName    = `${recipient.firstName} ${recipient.lastName}`.trim();
 
   const gate = await db.transaction(async (tx) => {

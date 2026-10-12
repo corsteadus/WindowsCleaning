@@ -435,7 +435,14 @@ export function authorizeApiRequest(
   res: Response,
   next: NextFunction,
 ): void {
-  if (PUBLIC_PATHS.has(req.path) || req.path.startsWith("/public/estimates/")) {
+  // The customer's unsubscribe link is followed from their own inbox, with no
+  // session and no account (Kyle #6). Its own signed token is what authorises
+  // it; see lib/unsubscribe.ts.
+  if (
+    PUBLIC_PATHS.has(req.path)
+    || req.path.startsWith("/public/estimates/")
+    || req.path.startsWith("/public/unsubscribe/")
+  ) {
     next();
     return;
   }

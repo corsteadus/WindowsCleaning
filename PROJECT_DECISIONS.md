@@ -166,6 +166,160 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## #6 — unsubscribe, and why an address is off, 2026-10-12
+
+#6 asked for five things: an Unsubscribe link in every customer-facing
+email; unsubscribing keeps the address on the profile but stops sending;
+a bounce deactivates automatically; an authorised user can deactivate by
+hand; the reason is shown; and it can be turned back on. Four of those are
+now done, one was already done, and one cannot be done with Gmail.
+
+### No migration — the column already existed, in another table
+
+The plan recorded on 2026-10-10 was to add a typed `sending_paused_cause`
+to `contact_channels`, and to announce the migration first. **That was
+unnecessary.** `communication_suppressions.reason` is already constrained to
+exactly the set Kyle described:
+
+| Kyle's words | Stored as |
+|---|---|
+| Customer Unsubscribed | `marketing_unsubscribe` |
+| Email Bounced | `provider_permanent_failure` |
+| Manually Deactivated | `manual` |
+
+…along with `complaint` and `invalid`, plus `active`, `created_at`,
+`deactivated_at`, `source` and `actor`. Creating and lifting a suppression
+both have routes. **Nothing read any of it**, which is why it looked absent.
+
+### The link
+
+`lib/unsubscribe.ts` mints and reads a signed token, and
+`routes/unsubscribe.ts` serves the page. Two decisions worth keeping:
+
+**Nothing happens on a GET.** Spam filters, link checkers and corporate mail
+gateways follow every URL in a message before a human sees it. An
+unsubscribe that acted on the click would cut off customers who never
+touched it. The link opens a page with a button; only the button acts. A
+test asserts the GET handler never reaches `upsertSuppression`.
+
+**The token is signed.** An unsigned link naming the address would let
+anyone unsubscribe anyone else's customers by typing an email into a URL.
+It is `base64url(address).HMAC-SHA256(address)`, compared in constant time;
+swapping the address while keeping the signature is tested and refused.
+
+**The scope is `global`**, and the page says so to the customer:
+“That includes estimates, appointment reminders and invoices — not just
+general messages.” Anything narrower would be theatre, because every
+automation rule written so far is classified transactional, so a `marketing`
+suppression would block nothing we actually send.
+
+**A missing secret produces no link, never a forgeable one.** With no
+`UNSUBSCRIBE_SECRET` the footer carries a written instruction instead —
+silence is the one option #6 rules out. A secret under 16 characters counts
+as absent: it looks configured and is not.
+
+### What the office sees
+
+The profile said **“Durably suppressed for this channel”** — true, and of no
+use to anybody deciding what to do. It now reads *“Not receiving emails —
+Customer unsubscribed. Since 12/10/2026. The address stays on the profile;
+only sending is stopped.”*, with a **Turn email back on** link guarded by the
+same `communication.settings` capability the server checks. Lifting
+deactivates the suppression row rather than deleting it, so the history that
+it happened survives.
+
+`customerSafetySummary` now carries the suppression's reason, scope, date
+and source. The global one wins when an address has more than one, because
+that is the one that stops everything.
+
+### Not done, and it is not a matter of effort
+
+**A bounce cannot deactivate an address automatically on Gmail SMTP.** Gmail
+returns a bounce as an email to the sender; it has no webhook to call. The
+`provider_permanent_failure` reason exists and the screen already renders
+it, so the moment a provider that reports bounces is connected the rest
+works. `lib/email.ts` already supports **SendGrid** and **Mailgun**, both of
+which do. That is Lute's decision, not a build.
+
+### A new Secret is needed
+
+```
+UNSUBSCRIBE_SECRET = <32+ random characters>
+```
+
+Without it every email still carries a way out, but as written instructions
+rather than a link. Replit deployments carry their own environment — see the
+11 October entry — so it must be redeployed, not only saved.
+
+### Verified
+
+| | |
+|---|---|
+| `scratchpad/p6-unsubscribe-api.mjs` | **21/21** over HTTP — the link opens with no session; opening it unsubscribes nobody; confirming does; the reason, scope and source are right; the address stays on the profile; the sending path then answers 422 `hard_suppression`; a forged link is refused and Kyle's own address is untouched; an authorised user lifts it and the history survives |
+| `scratchpad/p6-walkthrough.mjs` | **14/14** headed — the customer's page and the office's, step by step |
+| `unsubscribe.test.ts` | 23 unit and source-guard tests |
+| CRM | **684/684**, pretest 10/10 |
+| API | **785/799** — the same 14 `DATABASE_URL` failures. Pretest 34/34 |
+| Migration | **none** |
+
+---
+
+
+## Email is live on Sandbox 2 — and lands in spam, 2026-10-11
+
+The Secrets are on the deployment and the published app sends for real:
+
+```
+POST /emails/send-one -> {"sent":1,"failed":0,"provider":"smtp"}
+```
+
+`provider` is the only honest check. Before the redeploy the same call
+answered **`mock`** while still reporting `sent: 1, failed: 0` and writing
+`status: "sent"` into `email_logs` — a send that looks successful in every
+record the office can see, and never left the building.
+
+**What the mock problem actually was:** Replit **deployments carry their own
+environment**. `sandbox-2-data-free-corsteadllc.replit.app` is a deployment,
+not the Repl, so adding Secrets to the Repl changed nothing until it was
+redeployed. The Repl's own secrets manager showed `SMTP_HOST` present the
+whole time.
+
+### The mail arrived — in the spam folder
+
+Gmail accepted it and filed it as spam: *“This message is similar to messages
+that were identified as spam in the past.”* **Nothing is wrong with the
+application** — it sent correctly, from the right address, with the right
+name. The domain's authentication is incomplete:
+
+| Record | State |
+|---|---|
+| SPF | **present** — `v=spf1 include:dc-aa8e722993._spfm.corstead.us ~all`, which resolves on to `include:_spf.google.com`, so Google is authorised |
+| DKIM | **present** — a valid RSA key on `google._domainkey.corstead.us` |
+| DMARC | **missing** — `_dmarc.corstead.us` has no TXT record at all |
+| MX | Google Workspace |
+
+DMARC is the gap. Without it a receiver has no policy to apply and no
+reporting address, and a domain that has only just started sending
+automated mail is exactly the pattern filters distrust.
+
+**The fix is one DNS record, and it belongs to Lute — the domain and the
+mailbox are his:**
+
+```
+_dmarc.corstead.us   TXT   v=DMARC1; p=none; rua=mailto:info@corstead.us
+```
+
+`p=none` is deliberate: it monitors and rejects nothing, so no legitimate
+mail can be lost while it beds in. Tightening to `p=quarantine` is a later
+decision once the reports show only Corstead's own senders.
+
+**This is a go-live blocker in practice, not in code.** Estimates and
+invoices that land in spam are the same as estimates and invoices that were
+never sent, and the system will report every one of them as delivered.
+
+---
+
+
 ## Email — the rules, and a defect found writing them, 2026-10-11
 
 **The 2026-10-10 work is live on Sandbox 2, verified 18/18** against the
@@ -473,7 +627,7 @@ the screen draws on that lib instead of keeping its own copy.
 
 ### What #6 still needs, and why it has not started
 
-#6 wants a **typed** deactivation cause — Customer Unsubscribed, Email
+~~#6 wants a **typed** deactivation cause~~ **(Superseded 2026-10-12: the typed reason already exists on `communication_suppressions`, and no migration was needed. The paragraph below is kept for the reasoning.)** #6 wants a typed deactivation cause — Customer Unsubscribed, Email
 Bounced, Manually Deactivated — shown on the profile. Today there is only
 `sending_paused_reason`, free text, which cannot tell a system cause from
 somebody's note. That wants one additive column, and **a migration hits the

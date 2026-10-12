@@ -13,6 +13,7 @@ import {
 import { useGetFinancialCapabilities } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { protectedFetch } from "@/lib/auth-scope";
+import { suppressionReasonLabel } from "@/lib/suppression-reason";
 
 type Channel = "email" | "sms";
 type ChannelSummary = {
@@ -25,6 +26,14 @@ type ChannelSummary = {
   consentAt?: string | null;
   reason?: string | null;
   hardSuppressed?: boolean;
+  /** Kyle #6: why this address was switched off, and when. */
+  suppression?: {
+    id: number;
+    reason: string;
+    scope: string;
+    since: string | null;
+    source: string | null;
+  } | null;
 };
 type SafetySummary = { customerId: number; channels: ChannelSummary[] };
 type HistoryEntry = {
@@ -80,6 +89,8 @@ export function CommunicationSafetyCard({
   const capabilities = capabilitiesQuery.data?.capabilities ?? [];
   const canView = capabilities.includes("communication.view");
   const canManage = capabilities.includes("communication.manage");
+  // Lifting a suppression is what the server guards with this one.
+  const canManageSettings = capabilities.includes("communication.settings");
   const [channel, setChannel] = useState<Channel>("email");
   const [destination, setDestination] = useState("");
   const [disclosureSnapshot, setDisclosureSnapshot] = useState("");
@@ -156,6 +167,29 @@ export function CommunicationSafetyCard({
       }),
   });
 
+  // Kyle #6: "allow an authorized user to reactivate the email address later
+  // if appropriate." The server only ever deactivates a suppression row —
+  // the history of it stays.
+  const reactivate = useMutation({
+    mutationFn: (suppressionId: number) =>
+      api(`/api/communication-safety/suppressions/${suppressionId}`, {
+        method: "PATCH",
+        headers: { "Idempotency-Key": `reactivate-${suppressionId}-${Date.now()}` },
+        body: JSON.stringify({ active: false }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["communication-safety", customerId] });
+      queryClient.invalidateQueries({ queryKey: ["communication-safety-history", customerId] });
+      toast({ title: "Sending turned back on for this address" });
+    },
+    onError: (error: Error) =>
+      toast({
+        title: "Could not turn sending back on",
+        description: error.message,
+        variant: "destructive",
+      }),
+  });
+
   if (!canView && !capabilitiesQuery.isLoading) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 flex items-start gap-3">
@@ -224,10 +258,33 @@ export function CommunicationSafetyCard({
                   <p className="text-sm font-semibold text-slate-800 mt-2">
                     {item.maskedDestination ?? "No destination on file"}
                   </p>
-                  {item.hardSuppressed && (
-                    <p className="text-[11px] text-rose-700 mt-1">
-                      Durably suppressed for this channel.
-                    </p>
+                  {/* Kyle #6: say which of his three reasons it was, and
+                      when — "durably suppressed" told the office nothing it
+                      could act on. */}
+                  {item.suppression && (
+                    <div data-testid={`suppression-${item.channel}`} className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2">
+                      <p className="text-[11px] font-bold text-rose-800">
+                        Not receiving {item.channel === "email" ? "emails" : "texts"} —{" "}
+                        {suppressionReasonLabel(item.suppression.reason)}
+                      </p>
+                      <p className="text-[11px] text-rose-700 mt-0.5">
+                        {item.suppression.since
+                          ? `Since ${new Date(item.suppression.since).toLocaleDateString()}. `
+                          : ""}
+                        The address stays on the profile; only sending is stopped.
+                      </p>
+                      {canManageSettings && (
+                        <button
+                          type="button"
+                          data-testid={`reactivate-${item.channel}`}
+                          onClick={() => reactivate.mutate(item.suppression!.id)}
+                          disabled={reactivate.isPending}
+                          className="mt-1.5 text-[11px] font-semibold text-rose-900 underline disabled:opacity-50"
+                        >
+                          {reactivate.isPending ? "Turning back on…" : `Turn ${item.channel} back on`}
+                        </button>
+                      )}
+                    </div>
                   )}
                   {item.consentAt && (
                     <p className="text-[11px] text-slate-400 mt-1">

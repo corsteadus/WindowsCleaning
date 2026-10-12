@@ -131,7 +131,7 @@ export async function readActiveSuppressions(
   tx: SafetyTransaction,
   channel: CommunicationChannel,
   destinationHash: string,
-): Promise<SuppressionState[]> {
+): Promise<ActiveSuppression[]> {
   const rows = await tx
     .select()
     .from(communicationSuppressionsTable)
@@ -148,8 +148,20 @@ export async function readActiveSuppressions(
     reason: row.reason as SuppressionState["reason"],
     scope: row.scope as SuppressionState["scope"],
     active: row.active,
+    // Carried for the profile screen (Kyle #6). The eligibility rules take a
+    // narrower shape and are unaffected by the extra fields.
+    id: row.id,
+    createdAt: row.createdAt,
+    source: row.source,
   }));
 }
+
+/** A suppression with the detail the office needs, not only the rule's view. */
+export type ActiveSuppression = SuppressionState & {
+  id: number;
+  createdAt: Date | null;
+  source: string | null;
+};
 
 export async function readQuietHours(
   tx: SafetyTransaction,
@@ -474,6 +486,25 @@ export async function deactivateSuppression(
   return row ?? null;
 }
 
+/**
+ * The one that stopped this address, in a shape a screen can read.
+ *
+ * `global` first: if an address is suppressed both globally and for one
+ * category, the global one is what the office needs to see, because it is the
+ * one that stops everything.
+ */
+function activeSuppressionSummary(suppressions: readonly ActiveSuppression[]) {
+  const chosen = suppressions.find((item) => item.scope === "global") ?? suppressions[0];
+  if (!chosen) return null;
+  return {
+    id: chosen.id,
+    reason: chosen.reason,
+    scope: chosen.scope,
+    since: chosen.createdAt?.toISOString() ?? null,
+    source: chosen.source,
+  };
+}
+
 export async function customerSafetySummary(
   tx: SafetyTransaction,
   customerId: number,
@@ -537,6 +568,10 @@ export async function customerSafetySummary(
       consentAt: preference?.smsConsentAt?.toISOString() ?? null,
       reason: preference?.lastReason ?? null,
       hardSuppressed: suppressions.some((item) => item.scope === "global"),
+      // Kyle #6: the office must be able to see that an address is switched
+      // off *and why*. The reason is already typed on the suppression row;
+      // nothing read it until now.
+      suppression: activeSuppressionSummary(suppressions),
     });
   }
   return { customerId, channels };
@@ -632,6 +667,10 @@ export async function contactSafetySummary(
       consentAt: preference?.smsConsentAt?.toISOString() ?? null,
       reason: preference?.lastReason ?? null,
       hardSuppressed: suppressions.some((item) => item.scope === "global"),
+      // Kyle #6: the office must be able to see that an address is switched
+      // off *and why*. The reason is already typed on the suppression row;
+      // nothing read it until now.
+      suppression: activeSuppressionSummary(suppressions),
     });
   }
   return { contactId, customerId: contact.customerId, channels };
