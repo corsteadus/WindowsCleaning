@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 const source = readFileSync(fileURLToPath(new URL("./ProfileDetailsTab.tsx", import.meta.url)), "utf8");
-const input = source.slice(source.indexOf("function CustomFieldInput("));
+// CustomFieldInput moved into its own file when Kyle's #3 put the same fields
+// on the Overview tab. These checks follow it; what they assert is unchanged.
+const input = readFileSync(fileURLToPath(new URL("./CustomFieldInput.tsx", import.meta.url)), "utf8");
 
 test("the five types Kyle named are offered when creating a field", () => {
   assert.match(source, /\["text", "Text"\], \["number", "Number"\], \["date", "Date"\], \["dropdown", "Dropdown"\], \["boolean", "Checkbox"\]/);

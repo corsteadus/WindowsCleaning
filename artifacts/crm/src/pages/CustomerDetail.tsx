@@ -30,6 +30,7 @@ import {
 import { FilesTab } from "@/components/FilesTab";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
 import { ProfileDetailsTab } from "@/components/ProfileDetailsTab";
+import { ProfileCustomFieldsCard } from "@/components/ProfileCustomFieldsCard";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -860,6 +861,7 @@ export default function CustomerDetail() {
               customer={customer}
               isEditing={isEditing}
               form={form}
+              apiBase={apiBase}
               canManage={canManageCustomer}
               onProfileLinkChanged={() =>
                 queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) })}
@@ -1449,12 +1451,13 @@ function Section({ title, icon: Icon, children }: {
 }
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ customer, isEditing, form, canManage, onProfileLinkChanged }: {
+function OverviewTab({ customer, isEditing, form, canManage, onProfileLinkChanged, apiBase }: {
   customer: CustomerDetail; isEditing: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   form: any;
   canManage: boolean;
   onProfileLinkChanged: () => void;
+  apiBase: string;
 }) {
   // Who last wrote a general note, and who created and last touched the
   // profile — both read from the recorded history (Random Edits #3, #6).
@@ -1491,6 +1494,13 @@ function OverviewTab({ customer, isEditing, form, canManage, onProfileLinkChange
             : "Job, estimate and location notes are kept with their own records."}
         </p>
       </Section>
+
+      {/* Kyle #3: the custom fields, on the tab a profile actually opens on.
+          They were already reaching every profile and saving correctly — on
+          Profile Details, one tab over, which is why he reported them as not
+          appearing at all. Same fields, same save; managing them stays where
+          it was. */}
+      <ProfileCustomFieldsCard customerId={customer.id} apiBase={apiBase} />
 
       {/* Who created it, and who touched it last */}
       <Section title="Record" icon={Activity}>

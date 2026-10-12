@@ -166,6 +166,98 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## #3 — the custom fields were there all along, one tab over, 2026-10-12
+
+**This item was recorded as “waiting on Kyle's screenshot” for four days.
+It should not have been.** Asking the system directly answered it in an
+hour, and the answer was not what the note assumed.
+
+### What he reported, and what is true
+
+> Custom fields can be created in Settings, but the fields are not
+> appearing on Prospect or Customer profiles.
+
+`scratchpad/p3-custom-fields-v2.mjs`, **11/11**: a field made in Settings
+reaches every customer **and** prospect profile, including profiles created
+before the field existed; a dropdown carries its choices; a value saves and
+reads back on both. None of it is broken.
+
+The browser said why he saw otherwise:
+
+| | Overview | Profile Details |
+|---|---|---|
+| customer | **not visible** | visible, editable |
+| prospect | **not visible** | visible, editable |
+
+A profile opens on **Overview**. The fields live on **Profile Details**, one
+tab across. He added a field, opened a profile, and concluded they had not
+arrived.
+
+**The same mistake was made twice in this session by the person testing it.**
+The #6 browser walkthrough failed on its first run for exactly this reason —
+the Communication Safety card sits on the Communication & Activity tab, and
+the test looked at Overview. A thing that is one tab away is, to the person
+looking, not there.
+
+### The fix
+
+`ProfileCustomFieldsCard` puts the same fields on Overview, with the same
+`PUT /{customers|prospects}/:id/custom-fields`. It deliberately does **not**
+offer creating, deleting or editing a dropdown's choices — managing fields
+stays in Settings and on Profile Details. Here you only fill them in, which
+is what #3 asks for: “available for users to enter or select a value
+directly on the profile”. Saving invalidates the other screen's query so the
+two cannot disagree, and the card renders nothing at all when the company
+has no custom fields.
+
+`CustomFieldInput` moved to its own file rather than being copied. Two
+copies would drift, and a dropdown that keeps an off-list value on one
+screen but clears it on the other is exactly the kind of difference nobody
+notices until a value goes missing. `custom-fields.test.ts` follows it; what
+it asserts is unchanged.
+
+There is precedent for this in the same file: *“General notes, on the
+Overview rather than buried in Profile Details.”*
+
+### Two probe mistakes worth writing down
+
+The first run reported four failures. **Three were mine**, and each would
+have been filed as a product bug by a less careful reading:
+
+- A **prospect is a `customers` row** with `lifecycle_status = 'prospect'`,
+  not a `leads` row. Passing a lead id gives a plain 404.
+- Values are saved with **`PUT /customers/:id/custom-fields`**, not a PATCH
+  on `profile-details`.
+- A dropdown's choices catalogue is reached at **`/catalogs/custom-field-<id>`**
+  — hyphens. The stored `catalog_type` is `custom_field_<id>` with
+  underscores, and mixing them up gives “Catalog not found”.
+
+Also true, and not a bug: **`POST /custom-fields/definitions` ignores a
+`choices` array.** Choices are a separate catalogue, added after the field,
+which is what the UI does.
+
+This is the second time in three days that a confident first reading of a
+client's report was wrong — see the #15 entry. The rule that worked both
+times: reproduce it against the client's own data before believing the
+diagnosis.
+
+### Verified
+
+| | |
+|---|---|
+| `scratchpad/p3-custom-fields-v2.mjs` | **11/11** over HTTP |
+| `scratchpad/p3-where-is-it.mjs` | the before/after on both profile types |
+| `scratchpad/p3-walkthrough.mjs` | **8/8** headed — fill both fields on Overview, save, reload, and Profile Details agrees |
+| CRM | **694/694**, pretest 10/10, profile-details 3/3, customer-hub 7/7 |
+| Migration | **none** |
+
+**With this, every item in Kyle's 8 October correction notes is done:**
+#3, #6 (bar bounces, which need a provider that reports them), #7, #15,
+#23 and #31.
+
+---
+
+
 ## #6 — unsubscribe, and why an address is off, 2026-10-12
 
 #6 asked for five things: an Unsubscribe link in every customer-facing

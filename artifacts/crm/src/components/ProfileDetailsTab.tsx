@@ -5,6 +5,7 @@ import { Mail, MapPin, Phone, Plus, Save, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
+import { CustomFieldInput, type CustomFieldValue } from "@/components/CustomFieldInput";
 import {
   ROUTING_CHOICES, purposesForChoice, purposesOf, routingChoiceFor,
   type ChannelPurpose,
@@ -41,7 +42,7 @@ function errorMessage(body: string): string {
 
 
 type Channel = { id: number; type: "email" | "phone"; label?: string | null; value: string; purposes?: ChannelPurpose[]; purpose?: ChannelPurpose | null; contactId?: number | null; sendingPaused?: boolean };
-type FieldValue = { id?: number; fieldId?: number; label?: string; name?: string; value: string; position?: number; fieldType?: string; choices?: string[] };
+type FieldValue = CustomFieldValue;
 // Kyle (2026-09-23, #6): the types a user may choose when creating a field.
 const FIELD_TYPES = [["text", "Text"], ["number", "Number"], ["date", "Date"], ["dropdown", "Dropdown"], ["boolean", "Checkbox"]] as const;
 type CatalogItem = { id?: number; value?: string; name?: string; label?: string; daysUntilDue?: number | null };
@@ -452,24 +453,5 @@ function CatalogManager({ slug, title, withDays = false, onClose }: { slug: stri
 }
 
 /** One custom field's value, drawn the way its type should be entered. */
-function CustomFieldInput({ field, onChange }: { field: FieldValue; onChange: (value: string) => void }) {
-  const value = field.value ?? "";
-  switch (field.fieldType) {
-    case "boolean":
-      return <input type="checkbox" aria-label={field.label ?? "Field"} checked={value === "true"} onChange={e => onChange(e.target.checked ? "true" : "false")} className="h-4 w-4 accent-primary" />;
-    case "number":
-      return <input type="number" aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
-    case "date":
-      return <input type="date" aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
-    case "multiline":
-      return <textarea aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} rows={2} className="input-lite" />;
-    case "dropdown":
-      return <select aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite">
-        <option value="">Not set</option>
-        {value && !(field.choices ?? []).includes(value) && <option value={value}>{value}</option>}
-        {(field.choices ?? []).map(choice => <option key={choice} value={choice}>{choice}</option>)}
-      </select>;
-    default:
-      return <input aria-label={field.label ?? "Field"} value={value} onChange={e => onChange(e.target.value)} className="input-lite" />;
-  }
-}
+// CustomFieldInput moved to its own file when Kyle's #3 put the same fields
+// on the Overview tab; two copies would have drifted.
