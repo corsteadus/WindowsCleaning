@@ -15,6 +15,7 @@ import {
 import { AccountRelationError, lockAccount, requireCustomer } from "../lib/account-relations.js";
 import { catalogSelectionInput, channelPurposePatch } from "../lib/profile-details-core.js";
 import { mirrorPatch, type MirrorChannel } from "../lib/contact-mirror.js";
+import { inProspectScope } from "../lib/profile-lists.ts";
 import { catalogAddPlan, catalogOptionCode } from "../lib/catalog-options.js";
 import {
   customFieldChoiceCatalog,
@@ -114,7 +115,7 @@ function channelPurposes(body: Record<string, unknown>): string[] {
 
 async function requireScopedAccount(executor: any, id: number, prospectOnly: boolean) {
   const customer = await requireCustomer(executor, id);
-  if (prospectOnly && customer.lifecycleStatus !== "prospect") {
+  if (prospectOnly && !inProspectScope(customer)) {
     throw new AccountRelationError(404, "Prospect not found");
   }
   return customer;

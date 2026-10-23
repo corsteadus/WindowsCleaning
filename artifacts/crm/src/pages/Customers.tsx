@@ -136,6 +136,7 @@ function useCustomers(
   accountType: string,
   lifecycleStatus: string,
   mode: "customers" | "prospects",
+  includeDeactivated: boolean,
   // Kyle #3: one custom field and one value, narrowing the list with everything else.
   customField: CustomFieldFilterState = NO_CUSTOM_FIELD_FILTER,
 ) {
@@ -144,11 +145,12 @@ function useCustomers(
   if (search) params.set("search", search);
   if (accountType) params.set("accountType", accountType);
   if (lifecycleStatus) params.set("lifecycleStatus", lifecycleStatus);
+  if (includeDeactivated) params.set("includeDeactivated", "true");
   const customFieldParams = customFieldFilterParams(customField);
   for (const [key, value] of Object.entries(customFieldParams)) params.set(key, value);
   return useQuery<CustomerPage>({
     queryKey: authScopedQueryKey(user, [
-      mode, "paginated", page, search, accountType, lifecycleStatus,
+      mode, "paginated", page, search, accountType, lifecycleStatus, includeDeactivated,
       customFieldParams.customFieldId ?? "", customFieldParams.customFieldValue ?? "",
     ]),
     queryFn: async () => {
@@ -1112,7 +1114,10 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
   const [page, setPage] = useState(1);
   const [accountType, setAccountType] = useState("");
   const [customField, setCustomField] = useState<CustomFieldFilterState>(NO_CUSTOM_FIELD_FILTER);
-  const [lifecycleStatus, setLifecycleStatus] = useState(isProspect ? "prospect" : "");
+  // Kyle (2026-10-24): prospects and customers are separate lists, and a
+  // deactivated profile is out of its list until asked for.
+  const lifecycleStatus = isProspect ? "prospect" : "customer";
+  const [includeDeactivated, setIncludeDeactivated] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   // A header search can change q while this route stays mounted.
@@ -1144,7 +1149,7 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
     return () => clearTimeout(t);
   }, [navigate, search, urlSearch]);
 
-  const { data, isLoading } = useCustomers(debouncedSearch, page, accountType, lifecycleStatus, mode, customField);
+  const { data, isLoading } = useCustomers(debouncedSearch, page, accountType, lifecycleStatus, mode, includeDeactivated, customField);
 
   const customers  = data?.customers ?? [];
   const total      = data?.total ?? 0;
@@ -1205,26 +1210,17 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
             {opt.label}
           </button>
         ))}
-        {!isProspect && <div className="w-px bg-slate-200 mx-1 self-stretch" />}
-        {!isProspect && [
-          { label: "All Lifecycle", value: "" },
-          { label: "Prospect", value: "prospect" },
-          { label: "Customer", value: "customer" },
-          { label: "Inactive", value: "inactive" },
-          { label: "Archived", value: "archived" },
-        ].map(opt => (
-          <button
-            key={opt.value}
-            onClick={() => { setLifecycleStatus(opt.value); setPage(1); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-              lifecycleStatus === opt.value
-                ? "bg-slate-800 text-white border-slate-800"
-                : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+        <div className="w-px bg-slate-200 mx-1 self-stretch" />
+        <label className="inline-flex items-center gap-2 px-2 text-xs font-semibold text-slate-600 cursor-pointer">
+          <input
+            type="checkbox"
+            data-testid="include-deactivated"
+            checked={includeDeactivated}
+            onChange={(event) => { setIncludeDeactivated(event.target.checked); setPage(1); }}
+            className="w-4 h-4 rounded accent-primary"
+          />
+          Include deactivated profiles
+        </label>
       </div>
 
       {/* Kyle #3: find a profile by what is in one of its custom fields. */}

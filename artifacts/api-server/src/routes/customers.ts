@@ -69,6 +69,7 @@ import {
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
 import { decideMainProfile, describeMainProfileChange } from "../lib/customer-hierarchy.ts";
 import { neighborsOf } from "../lib/profile-neighbors.ts";
+import { DEACTIVATED_LIFECYCLES, isDeactivated, listOf, resolvedLifecycle, type ProfileList } from "../lib/profile-lists.ts";
 import {
   IntakeError, estimateLocationIds, intakeFlatFields, parseIntake, parseIntakeEstimate,
   type IntakeEstimate, type IntakePlan,
@@ -93,6 +94,19 @@ import { createCustomerWithInitialJobService } from "../lib/customer-initial-job
 import { customerInitialJobDbDependencies } from "../lib/customer-initial-job-db-adapter.ts";
 import { canCreateCustomerWithInitialJob, hasCapability, isAssignmentScopedOperationalRole } from "../lib/authorization.ts";
 import { assignedJobCondition, redactAssignedJob } from "../lib/field-tech-scope.ts";
+
+/**
+ * A profile is in a list when it is active there, or — with includeDeactivated —
+ * deactivated from it (lib/profile-lists.ts).
+ */
+const profileListSql = sql<string>`coalesce(${customersTable.deactivatedFrom},
+  case when ${customersTable.customerDate} is null then 'prospect' else 'customer' end)`;
+function inProfileList(list: ProfileList, includeDeactivated: boolean) {
+  const active = eq(customersTable.lifecycleStatus, list);
+  return includeDeactivated
+    ? or(active, and(inArray(customersTable.lifecycleStatus, [...DEACTIVATED_LIFECYCLES]), sql`${profileListSql} = ${list}`))!
+    : active;
+}
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -150,6 +164,8 @@ router.get(["/customers", "/prospects"], async (req, res): Promise<void> => {
     search, status, lifecycleStatus, clientType, accountType, page, limit,
     // Kyle #3: find a profile by what is in one of its custom fields.
     customFieldId, customFieldValue,
+    // Kyle (2026-10-24): a list shows its deactivated profiles only on request.
+    includeDeactivated,
   } = req.query;
   const isProspectRoute = req.path === "/prospects";
   const effectiveLifecycleStatus = isProspectRoute ? "prospect" : lifecycleStatus;
@@ -213,7 +229,9 @@ router.get(["/customers", "/prospects"], async (req, res): Promise<void> => {
     // backfill. Filtering on the legacy status as an OR fallback can surface a
     // drifted row whose serializer correctly reports a different canonical
     // lifecycle (for example, status=prospect + lifecycle_status=customer).
-    conditions.push(eq(customersTable.lifecycleStatus, lifecycle));
+    conditions.push(lifecycle === "prospect" || lifecycle === "customer"
+      ? inProfileList(lifecycle, String(includeDeactivated ?? "") === "true")
+      : eq(customersTable.lifecycleStatus, lifecycle));
   }
 
   const requestedAccountType = accountType ?? clientType;
@@ -750,7 +768,7 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
   const id = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
   const target = isProspectRoute
-    ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
+    ? and(eq(customersTable.id, id), inProfileList("prospect", true))
     : eq(customersTable.id, id);
   const fieldTech = isAssignmentScopedOperationalRole(req.user?.role);
   const customer = fieldTech
@@ -1145,10 +1163,10 @@ router.patch(["/customers/:id", "/prospects/:id"], async (req, res): Promise<voi
   const id = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
   const body = isProspectRoute
-    ? { ...req.body, status: "prospect", lifecycleStatus: "prospect" }
+    ? (({ status: _status, lifecycleStatus: _lifecycle, ...rest }) => rest)(req.body ?? {})
     : req.body;
   const target = isProspectRoute
-    ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
+    ? and(eq(customersTable.id, id), inProfileList("prospect", true))
     : eq(customersTable.id, id);
   const normalized = normalizeCustomerFields(body, { partial: true });
   if (normalized.error) {
@@ -1253,7 +1271,7 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
   const id      = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
   const target = isProspectRoute
-    ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
+    ? and(eq(customersTable.id, id), inProfileList("prospect", true))
     : eq(customersTable.id, id);
   const {
     status,
@@ -1266,24 +1284,22 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
   };
   const performedBy = getPerformedBy(req);
 
-  const lifecycle = requestedLifecycleStatus !== undefined
+  const requestedLifecycle = requestedLifecycleStatus !== undefined
     ? parseLifecycleStatus(requestedLifecycleStatus)
     : lifecycleStatusFromLegacyStatus(status);
-  if (!lifecycle) {
+  if (!requestedLifecycle) {
     res.status(400).json({ error: "A supported status or lifecycleStatus is required" });
     return;
   }
   if (
     requestedLifecycleStatus !== undefined
     && status !== undefined
-    && lifecycleStatusFromLegacyStatus(status) !== lifecycle
+    && lifecycleStatusFromLegacyStatus(status) !== requestedLifecycle
   ) {
     res.status(400).json({ error: "status and lifecycleStatus do not agree" });
     return;
   }
-  const normalizedStatus = legacyStatusFromLifecycleStatus(lifecycle);
-
-  const deactivating = ["inactive", "archived"].includes(lifecycle);
+  const deactivating = isDeactivated(requestedLifecycle);
   if (deactivating && !reason?.trim()) {
     res.status(400).json({ error: "A reason is required when deactivating a customer" });
     return;
@@ -1293,8 +1309,12 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
     status: customersTable.status,
     lifecycleStatus: customersTable.lifecycleStatus,
     customerDate: customersTable.customerDate,
+    deactivatedFrom: customersTable.deactivatedFrom,
   }).from(customersTable).where(target);
   if (!current) { res.status(404).json({ error: "Customer not found" }); return; }
+  // Kyle (2026-10-24): reactivating returns a profile to its own list.
+  const lifecycle = resolvedLifecycle(current, requestedLifecycle, requestedLifecycleStatus !== undefined) as typeof requestedLifecycle;
+  const normalizedStatus = legacyStatusFromLifecycleStatus(lifecycle);
 
   const updatePayload: Record<string, unknown> = {
     status: normalizedStatus,
@@ -1316,11 +1336,14 @@ router.post(["/customers/:id/status", "/prospects/:id/status"], async (req, res)
     updatePayload.customerDate = customerSince;
   }
   if (deactivating) {
+    // Which list it returns to on reactivation.
+    updatePayload.deactivatedFrom   = listOf(current);
     updatePayload.deactivatedAt     = new Date();
     updatePayload.deactivationReason = reason?.trim() ?? null;
     updatePayload.deactivatedBy     = performedBy ?? null;
   } else {
     // Reactivating — clear deactivation fields
+    updatePayload.deactivatedFrom    = null;
     updatePayload.deactivatedAt      = null;
     updatePayload.deactivationReason = null;
     updatePayload.deactivatedBy      = null;
@@ -1356,7 +1379,7 @@ router.delete(["/customers/:id", "/prospects/:id"], async (req, res): Promise<vo
   const id = parseId(req.params.id);
   const isProspectRoute = req.path.startsWith("/prospects/");
   const target = isProspectRoute
-    ? and(eq(customersTable.id, id), eq(customersTable.lifecycleStatus, "prospect"))
+    ? and(eq(customersTable.id, id), inProfileList("prospect", true))
     : eq(customersTable.id, id);
 
   // This cannot be undone, so it is never the result of a stray DELETE.
@@ -1518,7 +1541,7 @@ const drizzleCustomerFieldTechRepository: CustomerFieldTechRepository = {
   },
   findCustomer: async (id, prospectOnly, userId) => (await db.select().from(customersTable).where(and(
     eq(customersTable.id, id),
-    ...(prospectOnly ? [eq(customersTable.lifecycleStatus, "prospect")] : []),
+    ...(prospectOnly ? [inProfileList("prospect", true)] : []),
     sql`EXISTS (
       SELECT 1 FROM ${jobsTable}
        WHERE ${jobsTable.customerId} = ${customersTable.id}

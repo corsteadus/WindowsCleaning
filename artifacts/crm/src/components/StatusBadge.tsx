@@ -28,6 +28,8 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string; dot:
   prospect:   { label: "Prospect",    bg: "bg-violet-50",  text: "text-violet-700",  dot: "bg-violet-500"  },
   inactive:    { label: "Inactive",    bg: "bg-slate-100",  text: "text-slate-500",   dot: "bg-slate-400"  },
   archived:   { label: "Archived",    bg: "bg-slate-100",  text: "text-slate-500",   dot: "bg-slate-400"  },
+  // A profile, whichever of inactive or archived it was stored as (Kyle, 2026-10-24).
+  deactivated: { label: "Deactivated", bg: "bg-slate-100",  text: "text-slate-500",   dot: "bg-slate-400"  },
   paused:      { label: "Paused",      bg: "bg-amber-50",   text: "text-amber-700",   dot: "bg-amber-400"  },
   // Leads
   new:         { label: "New",         bg: "bg-blue-50",    text: "text-blue-700",    dot: "bg-blue-400"   },

@@ -1566,8 +1566,10 @@ export interface QuoteLineItem {
   serviceId?: number | null;
   description: string;
   quantity: number;
-  unitPrice: number;
+  /** @nullable */
+  unitPrice: number | null;
   totalPrice: number;
+  pricePending?: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -1580,7 +1582,8 @@ export interface QuoteLineItemInput {
   /** @nullable */
   serviceNotes?: string | null;
   quantity: number;
-  unitPrice: number;
+  /** @nullable */
+  unitPrice: number | null;
 }
 
 /**

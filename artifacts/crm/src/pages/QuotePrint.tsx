@@ -12,7 +12,8 @@ interface LineItem {
   id: number;
   description: string;
   quantity: number;
-  unitPrice: number;
+  /** null while still to be quoted. */
+  unitPrice: number | null;
   totalPrice: number;
 }
 
@@ -163,8 +164,8 @@ export default function QuotePrint() {
             <tr key={li.id} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
               <td className="py-2.5 px-3 text-sm text-slate-800">{li.description}</td>
               <td className="py-2.5 px-3 text-sm text-center text-slate-600">{li.quantity}</td>
-              <td className="py-2.5 px-3 text-sm text-right text-slate-600">{formatCurrency(li.unitPrice)}</td>
-              <td className="py-2.5 px-3 text-sm text-right font-medium">{formatCurrency(li.totalPrice)}</td>
+              <td className="py-2.5 px-3 text-sm text-right text-slate-600">{li.unitPrice == null ? "To be quoted" : formatCurrency(li.unitPrice)}</td>
+              <td className="py-2.5 px-3 text-sm text-right font-medium">{li.unitPrice == null ? "—" : formatCurrency(li.totalPrice)}</td>
             </tr>
           ))}
         </tbody>

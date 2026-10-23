@@ -176,7 +176,7 @@ function LineItemCard({
               onChange={(e) => onUpdate(item.key, "unitPrice", e.target.value)}
               min="0"
               step="0.01"
-              placeholder="0.00"
+              placeholder="To be quoted"
               className="w-full h-10 pl-6 pr-3 text-sm rounded-xl border border-slate-200 bg-white text-slate-900
                          focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
             />
@@ -458,7 +458,8 @@ export default function QuoteNew() {
         // Kyle #9: the description written for this service on this quote.
         serviceNotes: li.serviceNotes.trim() || null,
         quantity: parseFloat(li.quantity) || 1,
-        unitPrice: parseFloat(li.unitPrice) || 0,
+        // Kyle (2026-10-24): blank is "to be quoted" and cannot be sent; $0 is a price.
+        unitPrice: li.unitPrice.trim() === "" ? null : parseFloat(li.unitPrice),
       })),
     };
     submissionStartedRef.current = true;

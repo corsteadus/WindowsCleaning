@@ -57,3 +57,4 @@ export * from "./communication_safety.ts";
 export * from "./application_migrations.ts";
 export * from "./customer_import_provenance.ts";
 export * from "./profile_details.ts";
+export * from "./profile_notes.ts";

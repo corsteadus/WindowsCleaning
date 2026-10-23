@@ -147,13 +147,15 @@ export function intakeFlatFields(plan: IntakePlan): Record<string, string | null
  * The estimate booked on the same screen — piece B2, Kyle's Video 3. Each
  * line names its location by position: 0 is the main address, 1 and 2 the
  * extra locations of the same intake, which do not exist until the profile
- * is written. A blank price is 0, "to be quoted" (lib/estimate-pricing.ts).
+ * is written. A blank price is null, "to be quoted"; $0 is a price (Kyle,
+ * 2026-10-24; lib/estimate-pricing.ts).
  */
 export interface IntakeEstimateLine {
   serviceId: number | null;
   description: string;
   quantity: number;
-  unitPrice: number;
+  /** null while still to be quoted. */
+  unitPrice: number | null;
   location: number;
   serviceNotes: string | null;
 }
@@ -179,8 +181,8 @@ export function parseIntakeEstimate(
     if (!description) continue;
     const quantity = row.quantity === "" || row.quantity == null ? 1 : Number(row.quantity);
     if (!(quantity > 0)) throw new IntakeError(`${description}: quantity must be more than 0`);
-    const unitPrice = row.unitPrice === "" || row.unitPrice == null ? 0 : Number(row.unitPrice);
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new IntakeError(`${description}: the price is not a number`);
+    const unitPrice = row.unitPrice === "" || row.unitPrice == null ? null : Number(row.unitPrice);
+    if (unitPrice !== null && (!Number.isFinite(unitPrice) || unitPrice < 0)) throw new IntakeError(`${description}: the price is not a number`);
     const location = row.location == null || row.location === "" ? 0 : Number(row.location);
     const exists = location === 0 ? available.main : Number.isInteger(location) && location >= 1 && location <= available.extraLocations;
     if (!exists) {

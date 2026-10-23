@@ -116,9 +116,10 @@ describe("the estimate on the Add form — Kyle's Video 3", () => {
     assert.equal(parseIntakeEstimate(undefined, both), null);
   });
 
-  it("a blank price is 0, \"to be quoted\"; quantity defaults to 1", () => {
-    const estimate = parseIntakeEstimate({ lines: [{ description: "Window cleaning", unitPrice: "" }] }, both)!;
-    assert.deepEqual([estimate.lines[0].unitPrice, estimate.lines[0].quantity, estimate.lines[0].location], [0, 1, 0]);
+  it("a blank price stays blank, \"to be quoted\"; $0 is a price (Kyle, 2026-10-24); quantity defaults to 1", () => {
+    const estimate = parseIntakeEstimate({ lines: [{ description: "Window cleaning", unitPrice: "" }, { description: "Screens", unitPrice: 0 }] }, both)!;
+    assert.deepEqual([estimate.lines[0].unitPrice, estimate.lines[0].quantity, estimate.lines[0].location], [null, 1, 0]);
+    assert.equal(estimate.lines[1].unitPrice, 0);
   });
 
   it("each line names its location; one that is not on the form is refused", () => {

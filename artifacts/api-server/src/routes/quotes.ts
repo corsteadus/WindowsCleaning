@@ -40,6 +40,7 @@ import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, normaliseQuoteTerms, QUOTE_VALIDITY_PRESETS } from "../lib/quote-settings.js";
 import { readQuoteSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
+import { priceOf, shownPrice } from "../lib/estimate-pricing.ts";
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -211,23 +212,33 @@ function serializeQuote(q: typeof quotesTable.$inferSelect) {
  */
 async function saveLineServiceNotes(
   tx: { insert: typeof db.insert; delete: typeof db.delete },
-  entries: ReadonlyArray<{ lineItemId: number; serviceNotes: string | null; propertyId?: number | null }>,
+  entries: ReadonlyArray<{ lineItemId: number; serviceNotes: string | null; propertyId?: number | null; isUpsell?: boolean }>,
 ): Promise<void> {
   for (const entry of entries) {
     await tx.delete(estimateLineMetadataTable)
       .where(eq(estimateLineMetadataTable.lineItemId, entry.lineItemId));
-    if (!entry.serviceNotes && !entry.propertyId) continue;
-    await tx.insert(estimateLineMetadataTable)
-      .values({ lineItemId: entry.lineItemId, serviceNotes: entry.serviceNotes, propertyId: entry.propertyId ?? null });
+    if (!entry.serviceNotes && !entry.propertyId && !entry.isUpsell) continue;
+    await tx.insert(estimateLineMetadataTable).values({
+      lineItemId: entry.lineItemId, serviceNotes: entry.serviceNotes,
+      propertyId: entry.propertyId ?? null, isUpsell: entry.isUpsell ?? false,
+    });
   }
+}
+
+/** A sender's line price, or a 400 (lib/estimate-pricing.ts). */
+function linePrice(value: unknown) {
+  const price = priceOf(value);
+  if ("error" in price) throw new AccountRelationError(400, price.error);
+  return price;
 }
 
 function serializeLineItem(li: typeof quoteLineItemsTable.$inferSelect) {
   return {
     ...li,
     quantity: Number(li.quantity),
-    unitPrice: Number(li.unitPrice),
+    unitPrice: shownPrice(li),
     totalPrice: Number(li.totalPrice),
+    pricePending: li.pricePending,
     createdAt: li.createdAt.toISOString(),
     updatedAt: li.updatedAt.toISOString(),
   };
@@ -356,7 +367,8 @@ type QuoteCreateBody = {
     serviceId?: number;
     description: string;
     quantity: number;
-    unitPrice: number;
+    /** null or blank: still to be quoted (lib/estimate-pricing.ts). */
+    unitPrice: number | null;
     /** The job location for this line (Kyle, Video 3); checked against the account. */
     propertyId?: number | null;
   }>;
@@ -380,7 +392,8 @@ export async function createQuoteTx(
   if (requestedPropertyId !== null) {
     await requireActivePropertyForCustomer(tx, requestedCustomerId!, requestedPropertyId);
   }
-  const subtotal = lineItemsInput.reduce((sum, li) => sum + li.quantity * li.unitPrice, 0);
+  const prices = lineItemsInput.map((li) => linePrice(li.unitPrice));
+  const subtotal = lineItemsInput.reduce((sum, li, i) => sum + li.quantity * prices[i].unitPrice, 0);
   // Kyle #11: nobody types a Valid Until date. It is calculated from the
   // company's validity setting, and an explicit date is only honoured if one
   // is sent (an import, or a caller correcting a single quote).
@@ -410,8 +423,9 @@ export async function createQuoteTx(
         serviceId: li.serviceId ? Number(li.serviceId) : null,
         description: li.description,
         quantity: String(li.quantity),
-        unitPrice: String(li.unitPrice),
-        totalPrice: String(li.quantity * li.unitPrice),
+        unitPrice: String(prices[i].unitPrice),
+        totalPrice: String(li.quantity * prices[i].unitPrice),
+        pricePending: prices[i].pricePending,
         sortOrder: i,
       })),
     ).returning();
@@ -867,9 +881,25 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
 
       if (body.lineItems !== undefined) {
         const lineItemsInput: Array<{
-          serviceId?: number; description: string; quantity: number; unitPrice: number;
-          serviceNotes?: string | null;
+          serviceId?: number; description: string; quantity: number; unitPrice: number | null;
+          serviceNotes?: string | null; propertyId?: number | null; isUpsell?: boolean;
         }> = body.lineItems;
+        const prices = lineItemsInput.map((li) => linePrice(li.unitPrice));
+        // Editing replaces the lines. A line's location and upsell flag, and
+        // its description when not sent, are carried over by position, as
+        // Finalize does — found 2026-10-24: every edit dropped each line's
+        // location.
+        const previousLines = await tx.select({ id: quoteLineItemsTable.id }).from(quoteLineItemsTable)
+          .where(eq(quoteLineItemsTable.quoteId, id)).orderBy(asc(quoteLineItemsTable.sortOrder));
+        const previousMeta = previousLines.length
+          ? await tx.select().from(estimateLineMetadataTable)
+            .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.map((line) => line.id)))
+          : [];
+        const previousByPosition = previousLines.map((line) => previousMeta.find((meta) => meta.lineItemId === line.id) ?? null);
+        if (previousLines.length) {
+          await tx.delete(estimateLineMetadataTable)
+            .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.map((line) => line.id)));
+        }
         await tx.delete(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
         if (lineItemsInput.length > 0) {
           const rewritten = await tx.insert(quoteLineItemsTable).values(lineItemsInput.map((li, i) => ({
@@ -877,14 +907,21 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
             serviceId: li.serviceId ? Number(li.serviceId) : null,
             description: li.description,
             quantity: String(li.quantity),
-            unitPrice: String(li.unitPrice),
-            totalPrice: String(Number(li.quantity) * Number(li.unitPrice)),
+            unitPrice: String(prices[i].unitPrice),
+            totalPrice: String(Number(li.quantity) * prices[i].unitPrice),
+            pricePending: prices[i].pricePending,
             sortOrder: i,
           }))).returning();
-          await saveLineServiceNotes(tx, rewritten.map((row, i) => ({
-            lineItemId: row.id,
-            serviceNotes: lineItemsInput[i].serviceNotes?.trim() || null,
-          })));
+          await saveLineServiceNotes(tx, rewritten.map((row, i) => {
+            const sent = lineItemsInput[i];
+            const previous = previousByPosition[i];
+            return {
+              lineItemId: row.id,
+              serviceNotes: sent.serviceNotes === undefined ? previous?.serviceNotes ?? null : sent.serviceNotes?.trim() || null,
+              propertyId: sent.propertyId === undefined ? previous?.propertyId ?? null : normalizeOptionalPropertyId(sent.propertyId),
+              isUpsell: sent.isUpsell === undefined ? previous?.isUpsell ?? false : !!sent.isUpsell,
+            };
+          }));
         }
         const items = await tx.select().from(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
         const subtotal = items.reduce((sum, li) => sum + Number(li.totalPrice), 0);
@@ -1174,7 +1211,8 @@ router.post("/quotes/:id/line-items", async (req, res): Promise<void> => {
     const quoteId = parseInt(req.params.id, 10);
     const body = req.body;
     const qty = Number(body.quantity) || 1;
-    const price = Number(body.unitPrice) || 0;
+    const price = priceOf(body.unitPrice);
+    if ("error" in price) { res.status(400).json({ error: price.error }); return; }
     const li = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteAdvisoryLockKey(quoteId)})`);
       const [quote] = await tx.select({ status: quotesTable.status }).from(quotesTable).where(eq(quotesTable.id, quoteId)).limit(1);
@@ -1182,7 +1220,8 @@ router.post("/quotes/:id/line-items", async (req, res): Promise<void> => {
       if (isTerminalEstimateStatus(quote.status)) return "locked" as const;
       const [created] = await tx.insert(quoteLineItemsTable).values({
         quoteId, serviceId: body.serviceId ? Number(body.serviceId) : null, description: body.description,
-        quantity: String(qty), unitPrice: String(price), totalPrice: String(qty * price), sortOrder: body.sortOrder ?? 0,
+        quantity: String(qty), unitPrice: String(price.unitPrice), totalPrice: String(qty * price.unitPrice),
+        pricePending: price.pricePending, sortOrder: body.sortOrder ?? 0,
       }).returning();
       await saveLineServiceNotes(tx, [{
         lineItemId: created.id,
@@ -1205,14 +1244,16 @@ router.patch("/quotes/:id/line-items/:liId", async (req, res): Promise<void> => 
     const liId = parseInt(req.params.liId, 10);
     const body = req.body;
     const qty = Number(body.quantity);
-    const price = Number(body.unitPrice);
+    const price = priceOf(body.unitPrice);
+    if ("error" in price) { res.status(400).json({ error: price.error }); return; }
     const li = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteAdvisoryLockKey(quoteId)})`);
       const [quote] = await tx.select({ status: quotesTable.status }).from(quotesTable).where(eq(quotesTable.id, quoteId)).limit(1);
       if (!quote) return "not_found" as const;
       if (isTerminalEstimateStatus(quote.status)) return "locked" as const;
       const [updated] = await tx.update(quoteLineItemsTable).set({
-        description: body.description, quantity: String(qty), unitPrice: String(price), totalPrice: String(qty * price),
+        description: body.description, quantity: String(qty), unitPrice: String(price.unitPrice), totalPrice: String(qty * price.unitPrice),
+        pricePending: price.pricePending,
       }).where(and(eq(quoteLineItemsTable.id, liId), eq(quoteLineItemsTable.quoteId, quoteId))).returning();
       if (updated) await recalcQuoteTotalsTx(tx, quoteId);
       return updated ?? null;

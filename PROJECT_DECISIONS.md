@@ -166,6 +166,87 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Kyle's answers of 2026-10-24, built — blank vs $0, and one "Deactivated"
+
+**Built and tested in the working tree; waits on the republish.** CRM 756/756, API 858
+(the same 14 `DATABASE_URL` failures). Migration `kyle-answers-2026-10-24-v1` — and
+`profile-note-entries-v1` from piece C — were **dry-run against the shared database inside
+a transaction and rolled back**: both apply and verify cleanly; nothing was kept.
+
+**The new code needs both migrations before it serves.** It reads `price_pending`,
+`deactivated_from` and `profile_note_entries`. The startup gate applies them before the
+server listens, **only when `APP_MIGRATIONS_ENABLED=true`** (and the Sandbox identity
+Secrets) — so check that Secret before republishing. The old code is unaffected by the new
+columns, so the migrations may safely run first.
+
+**Blank vs $0.** `quote_line_items.price_pending`. Every writer reads the sender's price
+through `priceOf` (`lib/estimate-pricing.ts`): null, blank or missing is pending; any
+number, 0 included, is a price. Every reader gives a pending line back as `unitPrice: null`
+(the quote read, the finalized snapshot), so edits and Finalize keep it pending. `/deliver`
+refuses only pending lines; **$0 now sends**. The estimate page, its edit form, print and
+the public page show "To be quoted". Existing $0 lines stay $0 (nothing recorded which were
+blanks). `openapi.yaml` updated, and the generated client/zod types hand-edited to match
+(`unitPrice: number | null`, `pricePending`); **regenerate with pnpm** when next possible.
+
+**Found and fixed on the way:** editing an estimate (`PATCH /quotes`) dropped every line's
+location and upsell flag — the same fault Finalize had. It now carries them over.
+
+**One Deactivated.** Archive is gone from the profile menu; Deactivate is offered to a
+prospect as well as a customer, and both stored values show as **Deactivated**. A profile
+remembers its list on deactivation (`customers.deactivated_from`; for profiles deactivated
+earlier, from whether they have a customer-since date). **Reactivate returns it to that
+list** — it used to turn a prospect into a customer — and editing a deactivated prospect no
+longer reactivates it. Every `/prospects/:id` route serves a deactivated prospect. The
+Customers list shows customers only (the lifecycle chips that mixed in prospects are gone);
+each list has **Include deactivated profiles**; Residential/Commercial stays.
+
+---
+
+## Kyle's answers to the open redesign questions, 2026-10-24
+
+| | Kyle | Where we stand |
+|---|---|---|
+| Fax | With the other phones | **As built** (piece A, B1) |
+| Non-Profit, Tax Exempt | Under the collapsed More Details | **As built** |
+| Previous/Next | Prospects and customers are **separate lists**; within each, residential (last name) and commercial (company) in **one** alphabetical sequence; arrows follow it; filter Residential/Commercial in search | Arrows **as built**. The Customers list still mixes in prospects under "All Lifecycle" — **to change** |
+| Archived vs Deactivated | **The same thing; call it Deactivated.** Off the active list and the arrows; kept with its history; found by search with **"Include Deactivated Profiles"**; can be reactivated to its list. Separate from permanent delete | **To change.** Two actions exist (Deactivate, Archive) and two statuses. Found while checking: **reactivating a deactivated prospect makes it a customer** (`status: "active"` maps to `customer`), and a deactivated prospect shows under the Customers list's Inactive filter. Nothing records which list a deactivated profile came from |
+| Clicking an email | Corstead's own composer, logged in Communication & Activity | **As built** |
+| Blank vs $0 | **Blank = not priced, cannot be sent. $0.00 = a valid price, can be sent.** No separate Free option | **Reverses the 2026-10-23 decision.** Today blank and $0 are both stored as 0 (`NOT NULL DEFAULT 0`), and `/deliver` refuses any $0 line. Telling them apart needs a stored "not priced yet" mark — a column, so an announced migration |
+| Screenshots | He is reviewing them; feedback to come; more videos coming | Waiting |
+
+---
+
+## Profile redesign, piece C — dated, signed notes, 2026-10-23
+
+**Code built and tested; the migration has NOT run anywhere.** Kyle's answer: "Specific
+and callback notes: each entry dated and signed; existing notes preserved."
+
+**What changes on the profile.** Specific notes and Callback notes become logs: newest
+first, each entry with **who wrote it and when**. A new note is typed in the box above
+the log and saved by the page's one **Update** (the bar says "a new note"). An entry can
+be **archived**, with a confirmation, never edited: a signed note stays as written.
+General notes and Directions stay single boxes. Technicians cannot read these notes
+(403, like Previous/Next); Kyle listed what they see, and these are not on it.
+
+**Storage.** A new table, `profile_note_entries` (`lib/db/src/schema/profile_notes.ts`),
+created by the versioned migration **`profile-note-entries-v1`**, registered last in
+`REQUIRED_MIGRATIONS`, so the Sandbox startup gate applies it. **Additive only:** each
+profile's current specific and callback text is copied in as its first entry (marked
+"before dated notes", dated at the profile's last save, unsigned); `customers.specific_notes`
+and `customers.callback_notes` are **not touched**, and the page stops writing them. The
+migration refuses to run outside Sandbox or over a table it did not make; its rollback
+refuses once anyone has written a note. Profile delete erases the notes.
+Routes: `GET/POST /customers/:id/notes` (and `/prospects`), `DELETE …/notes/:noteId`.
+
+**Before the migration has run** (between a deploy and the gate, or with the gate off)
+the page shows the old text **read-only** and everything else keeps saving — checked
+5/5 against the shared database, where the table does not exist yet.
+
+**What the migration will carry over today: nothing.** The shared database has 4
+profiles and none has specific or callback text (checked read-only, 2026-10-23).
+
+---
+
 ## Profile redesign, piece B2 — the estimate on the Add Prospect form, 2026-10-23
 
 **Built and browser-verified locally (16/16; the estimate page's own booking re-checked

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { customerLifecycleDisplayStatus } from "./customer-lifecycle-display.ts";
+import { customerLifecycleDisplayStatus, isDeactivatedProfile } from "./customer-lifecycle-display.ts";
 
 describe("customer lifecycle display", () => {
   it("renders Prospect consistently for list cards and detail headers", () => {
@@ -16,3 +16,10 @@ describe("customer lifecycle display", () => {
     );
   });
 });
+// Kyle, 2026-10-24: "Archived and Deactivated should mean the same thing."
+describe("Deactivated", () => it("inactive and archived are both shown as Deactivated", () => {
+  assert.equal(customerLifecycleDisplayStatus({ lifecycleStatus: "inactive" }), "deactivated");
+  assert.equal(customerLifecycleDisplayStatus({ lifecycleStatus: "archived" }), "deactivated");
+  assert.equal(isDeactivatedProfile({ lifecycleStatus: "prospect" }), false);
+  assert.equal(isDeactivatedProfile({ lifecycleStatus: null, status: "inactive" }), true);
+}));

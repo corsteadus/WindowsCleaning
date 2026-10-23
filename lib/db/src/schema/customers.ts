@@ -62,6 +62,9 @@ export const customersTable = pgTable("customers", {
   deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
   deactivationReason: text("deactivation_reason"),
   deactivatedBy: text("deactivated_by"),
+  // Kyle (2026-10-24): a deactivated profile returns to its own list —
+  // "prospect" or "customer". Added by migrations/kyle-answers-2026-10-24-v1.ts.
+  deactivatedFrom: text("deactivated_from"),
   // Import tracking
   importSource: text("import_source"),
   importExternalId: text("import_external_id"),

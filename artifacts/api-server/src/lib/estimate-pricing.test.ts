@@ -3,17 +3,36 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { unpricedLines, unpricedRefusal } from "./estimate-pricing.ts";
+import { priceOf, shownPrice, unpricedLines, unpricedRefusal } from "./estimate-pricing.ts";
 
-describe("an estimate is never sent at $0 — B2, 2026-10-23", () => {
-  it("names every line still to be quoted", () => {
-    assert.deepEqual(unpricedLines([
-      { description: "Windows", unitPrice: 250 }, { description: "Gutters", unitPrice: 0 }, { description: "", unitPrice: "0" },
-    ]), ["Gutters", "Line 3"]);
+// Kyle, 2026-10-24: "Blank price … cannot be sent. $0.00: this is a valid price."
+describe("blank is not priced; $0 is a price", () => {
+  it("a blank, null or missing price is pending; 0 and more are prices", () => {
+    for (const blank of [null, undefined, "", "  "]) assert.deepEqual(priceOf(blank), { unitPrice: 0, pricePending: true });
+    assert.deepEqual(priceOf(0), { unitPrice: 0, pricePending: false });
+    assert.deepEqual(priceOf("0.00"), { unitPrice: 0, pricePending: false });
+    assert.deepEqual(priceOf(250), { unitPrice: 250, pricePending: false });
+    assert.ok("error" in priceOf(-1));
+    assert.ok("error" in priceOf("abc"));
   });
 
-  it("refuses in words, and lets a fully priced estimate go", () => {
-    assert.equal(unpricedRefusal([{ description: "Gutters", unitPrice: 0 }]), "Add a price before sending: Gutters");
+  it("a pending line reads back as null, so a round trip keeps it pending", () => {
+    assert.equal(shownPrice({ unitPrice: "0.00", pricePending: true }), null);
+    assert.equal(shownPrice({ unitPrice: "0.00", pricePending: false }), 0);
+  });
+
+  it("names every line still to be quoted, and lets $0 through", () => {
+    assert.deepEqual(unpricedLines([
+      { description: "Windows", unitPrice: 250 }, { description: "Screens", unitPrice: 0 },
+      { description: "Gutters", unitPrice: null }, { description: "", unitPrice: 0, pricePending: true },
+    ]), ["Gutters", "Line 4"]);
+  });
+});
+
+describe("an estimate is never sent with a service still to be quoted", () => {
+  it("refuses in words, and lets a priced estimate go — $0 included", () => {
+    assert.equal(unpricedRefusal([{ description: "Gutters", unitPrice: null }]), "Add a price before sending: Gutters");
+    assert.equal(unpricedRefusal([{ description: "Screens", unitPrice: 0 }]), null);
     assert.equal(unpricedRefusal([{ description: "Windows", unitPrice: "250.00" }]), null);
     assert.match(unpricedRefusal([])!, /Add a service/);
   });

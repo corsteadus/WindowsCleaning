@@ -12,12 +12,19 @@ const line = (patch: Partial<EstimateLineDraft> = {}): EstimateLineDraft => ({
 const both = { main: true, locations: 1 };
 
 describe("the estimate on the Add Prospect form — Kyle's Video 3", () => {
-  it("a blank price is sent as 0, \"to be quoted\"", () => {
-    const estimate = buildEstimate([line()], BLANK_APPOINTMENT);
+  // Kyle, 2026-10-24: blank is not priced and cannot be sent; $0.00 is a price.
+  it("a blank price is sent as null, \"to be quoted\"; 0 is sent as 0", () => {
+    const estimate = buildEstimate([line(), line({ key: "b", unitPrice: "0" })], BLANK_APPOINTMENT);
     assert.deepEqual(estimate.lines[0], {
-      serviceId: 3, description: "Window cleaning", quantity: 1, unitPrice: 0, location: 0, serviceNotes: null,
+      serviceId: 3, description: "Window cleaning", quantity: 1, unitPrice: null, location: 0, serviceNotes: null,
     });
+    assert.equal(estimate.lines[1].unitPrice, 0);
     assert.equal(estimate.appointment, null);
+  });
+
+  it("an estimate with a $0 service can be emailed; one with a blank cannot", () => {
+    assert.equal(emailBlocker([line({ unitPrice: "0" })], "a@b.co"), null);
+    assert.match(emailBlocker([line({ unitPrice: "" })], "a@b.co")!, /price Window cleaning/);
   });
 
   it("each line keeps its location and its customer-visible description", () => {

@@ -4,8 +4,9 @@
  * or none; and, optionally, the estimator and time. The server writes it in
  * the same transaction as the prospect (api-server lib/intake.ts).
  *
- * A blank price is "to be quoted" and is sent as 0; an estimate with one is
- * never emailed (api-server lib/estimate-pricing.ts).
+ * Kyle (2026-10-24): a blank price is "to be quoted" — sent as null, and an
+ * estimate with one is never emailed. $0.00 is a real price and can be sent
+ * (api-server lib/estimate-pricing.ts).
  */
 import { chicagoAppointmentStartsAt } from "./chicago-time.ts";
 
@@ -31,7 +32,7 @@ export interface EstimateAppointmentDraft {
 export const BLANK_APPOINTMENT: EstimateAppointmentDraft = { date: "", time: "", duration: "60", assignedUserId: "", appointmentNotes: "" };
 
 const clean = (value: string | null | undefined) => (value ?? "").trim();
-const priced = (line: EstimateLineDraft) => Number(clean(line.unitPrice)) > 0;
+const priced = (line: EstimateLineDraft) => clean(line.unitPrice) !== "" && Number(line.unitPrice) >= 0;
 const filled = (line: EstimateLineDraft) => Boolean(clean(line.description));
 
 /** Nothing about the appointment was touched: the estimate is saved unscheduled. */
@@ -72,8 +73,8 @@ export function buildEstimate(lines: readonly EstimateLineDraft[], appointment: 
       serviceId: line.serviceId,
       description: clean(line.description),
       quantity: clean(line.quantity) === "" ? 1 : Number(line.quantity),
-      // Blank is "to be quoted".
-      unitPrice: clean(line.unitPrice) === "" ? 0 : Number(line.unitPrice),
+      // Blank is "to be quoted"; 0 is a price.
+      unitPrice: clean(line.unitPrice) === "" ? null : Number(line.unitPrice),
       location: line.location,
       serviceNotes: clean(line.serviceNotes) || null,
     })),

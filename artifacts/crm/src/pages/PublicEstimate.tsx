@@ -4,7 +4,7 @@ import { useParams } from "wouter";
 import { formatCurrency } from "@/lib/utils";
 
 type Line = {
-  id: number; description: string; quantity: number; unitPrice: number; totalPrice: number;
+  id: number; description: string; quantity: number; unitPrice: number | null; totalPrice: number;
   isUpsell?: boolean; serviceNotes?: string | null;
 };
 type Snapshot = {
@@ -154,7 +154,7 @@ export default function PublicEstimate() {
                       {line.isUpsell && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">UPSELL</span>}
                       {settled && !on && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">NOT ACCEPTED</span>}
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{line.quantity} × {formatCurrency(line.unitPrice)}</p>
+                    <p className="mt-1 text-xs text-slate-500">{line.quantity} × {line.unitPrice == null ? "to be quoted" : formatCurrency(line.unitPrice)}</p>
                     {line.serviceNotes && <p className="mt-1 text-sm text-slate-600">{line.serviceNotes}</p>}
                   </div>
                   <p className={`font-bold ${settled && !on ? "line-through text-slate-400" : ""}`}>{formatCurrency(line.totalPrice)}</p>

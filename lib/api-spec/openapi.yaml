@@ -5531,10 +5531,13 @@ components:
           type: string
         quantity:
           type: number
+        # Kyle (2026-10-24): null while the line is still to be quoted; $0 is a price.
         unitPrice:
-          type: number
+          type: ["number", "null"]
         totalPrice:
           type: number
+        pricePending:
+          type: boolean
         sortOrder:
           type: integer
         createdAt:
@@ -5566,8 +5569,9 @@ components:
           type: ["string", "null"]
         quantity:
           type: number
+        # Blank (null) is still to be quoted and cannot be sent; 0 is a price.
         unitPrice:
-          type: number
+          type: ["number", "null"]
       required:
         - description
         - quantity

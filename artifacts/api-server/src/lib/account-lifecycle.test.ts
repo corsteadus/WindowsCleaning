@@ -47,10 +47,13 @@ describe("account lifecycle normalization", () => {
   });
 
   it("filters Prospect by the canonical field used by list/detail serialization", () => {
+    // Since 2026-10-24 a prospect or customer list may also take in its own
+    // deactivated profiles; both branches still filter on lifecycle_status.
     assert.match(
       customerRouteSource,
-      /conditions\.push\(eq\(customersTable\.lifecycleStatus, lifecycle\)\)/,
+      /conditions\.push\(lifecycle === "prospect" \|\| lifecycle === "customer"\s*\? inProfileList\(lifecycle, [\s\S]{0,80}?\)\s*: eq\(customersTable\.lifecycleStatus, lifecycle\)\)/,
     );
+    assert.match(customerRouteSource, /const active = eq\(customersTable\.lifecycleStatus, list\);/);
     assert.doesNotMatch(customerRouteSource, /eq\(customersTable\.status, legacyStatus\)/);
   });
 });

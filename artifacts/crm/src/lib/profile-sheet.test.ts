@@ -233,3 +233,18 @@ describe("the one Update button", () => {
     assert.equal(unsavedSummary({ account: true, addresses: true, people: true }), "Unsaved changes: details and addresses");
   });
 });
+
+// Piece C (2026-10-23): specific and callback notes are dated, signed entries.
+describe("a note being written is part of the one Update", () => {
+  it("runs last, after the profile itself is saved", () => {
+    assert.deepEqual(updateSteps({ notes: true, account: true }), ["account", "notes"]);
+  });
+
+  it("says so in the bar", () => {
+    assert.equal(unsavedSummary({ notes: true }), "Unsaved changes: a new note");
+  });
+
+  it("the old single boxes are no longer written from the page", () => {
+    assert.deepEqual(Object.keys(accountPatch({}, { specificNotes: "x", callbackNotes: "y" } as never)), []);
+  });
+});

@@ -421,6 +421,7 @@ function LineItemEditCard({
               onChange={(e) => onUpdate(item.key, "unitPrice", e.target.value)}
               min="0"
               step="0.01"
+              placeholder="To be quoted"
               className="w-full h-10 pl-6 pr-3 text-sm rounded-xl border border-slate-200 bg-white
                          focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
             />
@@ -505,7 +506,8 @@ export default function QuoteDetail() {
         description: li.description,
         serviceNotes: (li as { serviceNotes?: string | null }).serviceNotes ?? "",
         quantity: String(li.quantity),
-        unitPrice: String(li.unitPrice),
+        // A line still to be quoted reads back as null, and stays blank.
+        unitPrice: li.unitPrice == null ? "" : String(li.unitPrice),
       }))
     );
     setEditing(true);
@@ -549,7 +551,7 @@ export default function QuoteDetail() {
           // quietly deleting what was written in the builder.
           serviceNotes: li.serviceNotes.trim() || null,
           quantity: parseFloat(li.quantity) || 1,
-          unitPrice: parseFloat(li.unitPrice) || 0,
+          unitPrice: li.unitPrice.trim() === "" ? null : parseFloat(li.unitPrice),
         })),
       },
     });
@@ -801,8 +803,8 @@ export default function QuoteDetail() {
                           <p className="text-sm font-semibold text-slate-900">{li.description}</p>
                         </div>
                         <div className="col-span-2 text-sm text-slate-600 text-center self-center">{li.quantity}</div>
-                        <div className="col-span-2 text-sm text-slate-600 text-right self-center">{formatCurrency(Number(li.unitPrice))}</div>
-                        <div className="col-span-2 text-sm font-bold text-slate-900 text-right self-center">{formatCurrency(Number(li.totalPrice))}</div>
+                        <div className="col-span-2 text-sm text-slate-600 text-right self-center">{li.unitPrice == null ? <span className="font-semibold text-amber-700">To be quoted</span> : formatCurrency(Number(li.unitPrice))}</div>
+                        <div className="col-span-2 text-sm font-bold text-slate-900 text-right self-center">{li.unitPrice == null ? "—" : formatCurrency(Number(li.totalPrice))}</div>
                       </div>
                     ))}
                   </div>

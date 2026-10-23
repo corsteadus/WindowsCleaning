@@ -207,6 +207,15 @@ export function ProfileSheet({
     queryKey: detailsKey,
     queryFn: () => apiFetch<Settings>(`${apiBase}/${customer.id}/profile-details`),
   });
+  // Piece C: specific and callback notes are dated, signed entries. A note
+  // being written is part of the page's one Update, like everything else.
+  const notesKey = authScopedQueryKey(user, ["profile-notes", apiBase, customer.id]);
+  const notes = useQuery<NoteEntry[]>({
+    queryKey: notesKey,
+    queryFn: () => apiFetch<NoteEntry[]>(`${apiBase}/${customer.id}/notes`),
+    retry: false,
+  });
+  const [noteDrafts, setNoteDrafts] = useState<Record<NoteKind, string>>({ specific: "", callback: "" });
   const catalogs = useQuery<Record<string, string[]>>({
     queryKey: authScopedQueryKey(user, ["profile-sheet-catalogs"]),
     queryFn: async () => {
@@ -251,9 +260,10 @@ export function ProfileSheet({
       contact: contact.ops.length > 0,
       addresses: addresses.ops.length > 0,
       customFields: !sameFields(initial.customFields, draft.customFields),
+      notes: NOTE_KINDS.some((kind) => noteDrafts[kind].trim() !== ""),
     };
     return { contact, account, addresses, dirty, any: updateSteps(dirty).length > 0 };
-  }, [initial, draft]);
+  }, [initial, draft, noteDrafts]);
 
   const isDirty = Boolean(plan?.any);
   useEffect(() => {
@@ -350,6 +360,13 @@ export function ProfileSheet({
                 });
               }
             }
+          } else if (step === "notes") {
+            for (const kind of NOTE_KINDS) {
+              const body = noteDrafts[kind].trim();
+              if (!body) continue;
+              await apiFetch(`${apiBase}/${customer.id}/notes`, { method: "POST", body: JSON.stringify({ kind, body }) });
+              setNoteDrafts((current) => ({ ...current, [kind]: "" }));
+            }
           } else if (step === "customFields") {
             await apiFetch(`${apiBase}/${customer.id}/custom-fields`, {
               method: "PUT",
@@ -367,7 +384,11 @@ export function ProfileSheet({
       // Both halves of the page refresh before it unlocks. Unlocking between
       // them would let an edit start on a half-old page, and its Update would
       // write the old values back.
-      await Promise.all([queryClient.invalidateQueries({ queryKey: detailsKey }), onSaved()]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: detailsKey }),
+        queryClient.invalidateQueries({ queryKey: notesKey }),
+        onSaved(),
+      ]);
       setSaving(false);
     }
     if (failed.length) {
@@ -378,7 +399,18 @@ export function ProfileSheet({
     }
   }
 
-  const discard = () => { dirtyRef.current = false; setDraft(initial); setProblems([]); };
+  const discard = () => {
+    dirtyRef.current = false; setDraft(initial); setProblems([]); setNoteDrafts({ specific: "", callback: "" });
+  };
+  const archiveNote = async (note: NoteEntry) => {
+    if (!window.confirm("Archive this note? It stops showing here; it is not edited or erased from the record.")) return;
+    try {
+      await apiFetch(`${apiBase}/${customer.id}/notes/${note.id}`, { method: "DELETE" });
+      await queryClient.invalidateQueries({ queryKey: notesKey });
+    } catch (error) {
+      toast({ title: "The note was not archived", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
+    }
+  };
 
   const noteChange = lastNoteChange((customer.activityLogs ?? []) as never);
   const stewardship = profileStewardship((customer.activityLogs ?? []) as never, {
@@ -520,8 +552,19 @@ export function ProfileSheet({
             hint={noteChange ? `Last changed by ${noteChange.performedBy ?? "someone"}, ${when(noteChange.createdAt)}` : undefined} />
           <Area label="Directions" value={draft.account.directions} onChange={(v) => setAccount("directions", v)} disabled={!canManage}
             hint="The crew sees these on the job." />
-          <Area label="Specific notes" value={draft.account.specificNotes} onChange={(v) => setAccount("specificNotes", v)} disabled={!canManage} />
-          <Area label="Callback notes" value={draft.account.callbackNotes} onChange={(v) => setAccount("callbackNotes", v)} disabled={!canManage} />
+        </div>
+        <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
+          {NOTE_KINDS.map((kind) => (
+            <NoteLog
+              key={kind} kind={kind} canManage={canManage}
+              entries={(notes.data ?? []).filter((note) => note.kind === kind)}
+              unavailable={notes.isError}
+              legacy={kind === "specific" ? customer.specificNotes : customer.callbackNotes}
+              draft={noteDrafts[kind]}
+              onDraft={(value) => setNoteDrafts((current) => ({ ...current, [kind]: value }))}
+              onArchive={archiveNote}
+            />
+          ))}
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
           Internal only — none of these notes is shown to the customer. Job, estimate and location notes are kept with their own records.
@@ -665,6 +708,61 @@ function Text({ label, value, onChange, disabled, placeholder }: {
       <input aria-label={label} className="input-lite mt-1 w-full" value={value ?? ""} placeholder={placeholder}
         disabled={disabled} onChange={(e) => onChange(e.target.value)} />
     </label>
+  );
+}
+
+const NOTE_KINDS = ["specific", "callback"] as const;
+type NoteKind = (typeof NOTE_KINDS)[number];
+interface NoteEntry { id: number; kind: NoteKind; body: string; createdAt: string; createdBy: string | null; carriedOver: boolean }
+const NOTE_LABELS: Record<NoteKind, { title: string; placeholder: string }> = {
+  specific: { title: "Specific notes", placeholder: "Add a specific note, e.g. dog in the back yard" },
+  callback: { title: "Callback notes", placeholder: "Add a callback note, e.g. called, left a voicemail" },
+};
+
+/** A dated, signed log: newest first, each entry with who wrote it and when. */
+function NoteLog({ kind, entries, unavailable, legacy, draft, onDraft, onArchive, canManage }: {
+  kind: NoteKind; entries: NoteEntry[]; unavailable: boolean; legacy?: string | null;
+  draft: string; onDraft: (value: string) => void; onArchive: (note: NoteEntry) => void; canManage: boolean;
+}) {
+  const label = NOTE_LABELS[kind];
+  const stamp = (iso: string) => new Date(iso).toLocaleString("en-US", {
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+  });
+  return (
+    <div data-testid={`note-log-${kind}`}>
+      <span className="field-label">{label.title}</span>
+      {unavailable ? (
+        // Before the notes table exists the old single box is shown as it was.
+        <p className="mt-1 whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{legacy?.trim() || "—"}</p>
+      ) : (
+        <>
+          {canManage && (
+            <>
+              <textarea aria-label={`New ${label.title.toLowerCase().replace(/s$/, "")}`} rows={2} className="input-lite mt-1 w-full resize-y"
+                placeholder={label.placeholder} value={draft} onChange={(event) => onDraft(event.target.value)} />
+              <span className="block text-[11px] text-slate-400">Saved with Update, dated and signed with your name.</span>
+            </>
+          )}
+          <ul className="mt-2 space-y-2" aria-label={label.title}>
+            {entries.length === 0 && <li className="text-xs text-slate-400">No {label.title.toLowerCase()} yet.</li>}
+            {entries.map((note) => (
+              <li key={note.id} data-testid="note-entry" className="group rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+                <p className="whitespace-pre-wrap text-sm text-slate-800">{note.body}</p>
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+                  <span>{note.carriedOver ? `Before dated notes · last saved ${stamp(note.createdAt)}` : `${note.createdBy ?? "Someone"} · ${stamp(note.createdAt)}`}</span>
+                  {canManage && (
+                    <button type="button" onClick={() => onArchive(note)} aria-label={`Archive note: ${note.body.slice(0, 40)}`}
+                      className="ml-auto font-semibold text-slate-400 opacity-0 hover:text-red-600 group-hover:opacity-100 focus:opacity-100">
+                      Archive
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }
 

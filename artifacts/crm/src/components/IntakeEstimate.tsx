@@ -30,7 +30,9 @@ export function IntakeEstimate({
 }) {
   const update = (key: string, patch: Partial<EstimateLineDraft>) =>
     onLines(lines.map((line) => (line.key === key ? { ...line, ...patch } : line)));
-  const toBeQuoted = lines.filter((line) => line.description.trim() && !(Number(line.unitPrice) > 0)).length;
+  // Blank is "to be quoted"; $0 is a price (Kyle, 2026-10-24).
+  const toBeQuoted = lines.filter((line) => line.description.trim() && line.unitPrice.trim() === "").length;
+  const anyPriced = lines.some((line) => line.description.trim() && line.unitPrice.trim() !== "");
   const total = estimateTotal(lines);
   const set = (patch: Partial<EstimateAppointmentDraft>) => onAppointment({ ...appointment, ...patch });
 
@@ -97,8 +99,8 @@ export function IntakeEstimate({
             <Plus className="h-3.5 w-3.5" /> Add another service
           </button>
           <span data-testid="intake-estimate-total" className="text-xs font-semibold text-slate-600">
-            {total > 0 ? `$${total.toFixed(2)}` : "No price yet"}
-            {toBeQuoted > 0 && total > 0 && ` · ${toBeQuoted} to be quoted`}
+            {anyPriced ? `$${total.toFixed(2)}` : "No price yet"}
+            {toBeQuoted > 0 && anyPriced && ` · ${toBeQuoted} to be quoted`}
           </span>
         </div>
       </div>

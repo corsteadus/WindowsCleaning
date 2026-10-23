@@ -80,6 +80,7 @@ export const CUSTOMER_PURGE_ORDER: readonly PurgeStep[] = [
   { table: "communication_preferences", where: "customer_id = :id" },
   { table: "custom_field_values", where: "customer_id = :id" },
   { table: "account_profile_settings", where: "customer_id = :id" },
+  { table: "profile_note_entries", where: "customer_id = :id", note: "dated, signed notes (piece C)" },
   { table: "customer_import_provenance", where: "customer_id = :id" },
   { table: "property_account_relationships", where: "customer_id = :id" },
   { table: "properties", where: "customer_id = :id" },

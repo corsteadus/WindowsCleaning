@@ -290,7 +290,10 @@ export function addressPlan(before: readonly AddressRow[], after: readonly Addre
 export const ACCOUNT_FIELDS = [
   "salutation", "firstName", "lastName", "companyName",
   "county", "subdivision", "birthday",
-  "notes", "directions", "specificNotes", "callbackNotes",
+  // Specific and callback notes are dated, signed entries since piece C
+  // (2026-10-23), added through their own step; the old columns are no
+  // longer written from here.
+  "notes", "directions",
   "tags", "starRating", "prospectDate",
   // Older single-value fields, superseded by naming each number but kept, and
   // still editable under More Details: nothing that worked is taken away.
@@ -317,7 +320,7 @@ export function accountPatch(
 
 // ─── The whole Update ─────────────────────────────────────────────────────────
 
-export type UpdateStep = "people" | "account" | "settings" | "contact" | "addresses" | "customFields";
+export type UpdateStep = "people" | "account" | "settings" | "contact" | "addresses" | "customFields" | "notes";
 
 /**
  * The order the Update runs in. People first, because a phone may belong to a
@@ -326,7 +329,7 @@ export type UpdateStep = "people" | "account" | "settings" | "contact" | "addres
  * steps with something to do.
  */
 export function updateSteps(dirty: Partial<Record<UpdateStep, boolean>>): UpdateStep[] {
-  const order: UpdateStep[] = ["people", "account", "settings", "contact", "addresses", "customFields"];
+  const order: UpdateStep[] = ["people", "account", "settings", "contact", "addresses", "customFields", "notes"];
   return order.filter((step) => dirty[step]);
 }
 
@@ -335,6 +338,7 @@ export function unsavedSummary(dirty: Partial<Record<UpdateStep, boolean>>): str
   const names: Record<UpdateStep, string> = {
     people: "contacts", account: "details", settings: "account settings",
     contact: "phones and emails", addresses: "addresses", customFields: "custom fields",
+    notes: "a new note",
   };
   const changed = updateSteps(dirty).filter((step) => step !== "people").map((step) => names[step]);
   if (!changed.length) return "No unsaved changes";

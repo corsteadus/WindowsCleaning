@@ -4,7 +4,7 @@ import { useBackNavigation } from "@/hooks/use-back-navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { customerLifecycleDisplayStatus } from "@/lib/customer-lifecycle-display";
+import { customerLifecycleDisplayStatus, isDeactivatedProfile } from "@/lib/customer-lifecycle-display";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@workspace/replit-auth-web";
 import { hasClientCapability } from "@/lib/rbac";
@@ -562,13 +562,12 @@ export default function CustomerDetail() {
                   </button>
                   {actionsOpen && (
                     <div className="absolute right-0 top-11 z-40 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg" onMouseLeave={() => setActionsOpen(false)}>
-                      {(customer.lifecycleStatus === "customer" || customer.status === "active") && (
+                      {/* Kyle (2026-10-24): Archive and Deactivate are one act, for a
+                          prospect as well as a customer; Reactivate returns it to its list. */}
+                      {!isDeactivatedProfile(customer) && (
                         <MenuItem icon={PowerOff} label="Deactivate" onClick={() => { setActionsOpen(false); setStatusIntent("inactive"); }} />
                       )}
-                      {customer.lifecycleStatus !== "archived" && (
-                        <MenuItem icon={Archive} label="Archive" onClick={() => { setActionsOpen(false); setStatusIntent("archived"); }} />
-                      )}
-                      {(customer.lifecycleStatus === "inactive" || customer.lifecycleStatus === "archived" || customer.status === "inactive") && (
+                      {isDeactivatedProfile(customer) && (
                         <MenuItem icon={Power} label="Reactivate" onClick={() => { setActionsOpen(false); statusMutation.mutate({ status: "active" }); }} />
                       )}
                       <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setActionsOpen(false); setDeleteError(null); setDeleteOpen(true); }} />
@@ -668,20 +667,19 @@ export default function CustomerDetail() {
           <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl p-6 max-w-md w-full space-y-4">
               <h2 className="text-lg font-bold text-slate-900">
-                {statusIntent === "archived" ? "Archive this profile" : "Deactivate Customer"}
+                {`Deactivate ${entityLabel}`}
               </h2>
               <p className="text-sm text-slate-500">
-                Please give a reason for {statusIntent === "archived" ? "archiving" : "deactivating"}{" "}
+                Please give a reason for deactivating{" "}
                 <span className="font-semibold text-slate-700">{fullName}</span>.
                 It is written to the activity history.
               </p>
-              {statusIntent === "archived" && (
-                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  Archiving keeps everything. The profile stays searchable, is marked
-                  <span className="font-semibold"> Archived</span>, and can be brought back at any time.
-                  Nothing is deleted.
-                </p>
-              )}
+              <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                Deactivating keeps everything — information and history. The profile leaves the
+                {isProspectRoute ? " prospect" : " customer"} list and the Previous/Next arrows, is found with
+                <span className="font-semibold"> Include deactivated profiles</span>, and can be reactivated at any time.
+                Nothing is deleted; that is Delete, separately.
+              </p>
               <textarea
                 value={deactivateReason}
                 onChange={e => setDeactivateReason(e.target.value)}
@@ -699,11 +697,9 @@ export default function CustomerDetail() {
                 <button
                   onClick={() => statusMutation.mutate({ status: statusIntent, reason: deactivateReason })}
                   disabled={statusMutation.isPending || !deactivateReason.trim()}
-                  className={`px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-50 ${
-                    statusIntent === "archived" ? "bg-slate-700 hover:bg-slate-800" : "bg-orange-500 hover:bg-orange-600"
-                  }`}
+                  className="px-4 py-2 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-50 bg-orange-500 hover:bg-orange-600"
                 >
-                  {statusMutation.isPending ? "Saving…" : statusIntent === "archived" ? "Archive profile" : "Confirm Deactivation"}
+                  {statusMutation.isPending ? "Saving…" : "Confirm Deactivation"}
                 </button>
               </div>
             </div>

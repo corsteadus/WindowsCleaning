@@ -39,7 +39,7 @@ import { businessDateStr } from "../lib/date.ts";
 import { normaliseValidityDays, quoteExpiryFor } from "../lib/quote-settings.ts";
 import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
-import { unpricedRefusal, type PricedLine } from "../lib/estimate-pricing.ts";
+import { priceOf, shownPrice, unpricedRefusal, type PricedLine } from "../lib/estimate-pricing.ts";
 
 const router: IRouter = Router();
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -73,7 +73,8 @@ async function quoteSnapshot(tx: any, quoteId: number) {
     },
     lineItems: lines.map((line: any) => ({
       id: line.id, serviceId: line.serviceId, description: line.description,
-      quantity: Number(line.quantity), unitPrice: Number(line.unitPrice), totalPrice: Number(line.totalPrice),
+      quantity: Number(line.quantity), unitPrice: shownPrice(line), totalPrice: Number(line.totalPrice),
+      pricePending: Boolean(line.pricePending),
       propertyId: metadataByLine.get(line.id)?.propertyId ?? null,
       isUpsell: metadataByLine.get(line.id)?.isUpsell ?? false,
       serviceNotes: metadataByLine.get(line.id)?.serviceNotes ?? null,
@@ -669,9 +670,13 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
     await tx.delete(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, quoteId));
     const inserted = await tx.insert(quoteLineItemsTable).values(lines.map((line: any, sortOrder: number) => {
       const quantity = Number(line.quantity);
-      const unitPrice = Number(line.unitPrice);
-      if (!(quantity > 0) || unitPrice < 0) throw Object.assign(new Error("Invalid quantity or price"), { status: 400 });
-      return { quoteId, serviceId: numericId(line.serviceId), description: String(line.description ?? "").trim(), quantity: String(quantity), unitPrice: String(unitPrice), totalPrice: String(quantity * unitPrice), sortOrder };
+      const price = priceOf(line.unitPrice);
+      if (!(quantity > 0) || "error" in price) throw Object.assign(new Error("Invalid quantity or price"), { status: 400 });
+      return {
+        quoteId, serviceId: numericId(line.serviceId), description: String(line.description ?? "").trim(),
+        quantity: String(quantity), unitPrice: String(price.unitPrice), totalPrice: String(quantity * price.unitPrice),
+        pricePending: price.pricePending, sortOrder,
+      };
     })).returning();
     const subtotal = inserted.reduce((sum, item) => sum + Number(item.totalPrice), 0);
     await tx.update(quotesTable).set({
