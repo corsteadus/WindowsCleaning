@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./CustomerDetail.tsx", import.meta.url), "u
 
 test("customer detail exposes contacts alongside properties", () => {
   assert.match(source, /id: "contacts",\s+label: "Contacts"/);
-  assert.match(source, /activeTab === "contacts"/);
+  assert.match(source, /activeView === "contacts"/);
   assert.match(source, /contacts: Contact\[\]/);
 });
 

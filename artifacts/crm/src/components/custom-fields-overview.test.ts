@@ -10,14 +10,18 @@ const card = read("./ProfileCustomFieldsCard.tsx");
 const input = read("./CustomFieldInput.tsx");
 const details = read("./ProfileDetailsTab.tsx");
 const detail = read("../pages/CustomerDetail.tsx");
+const sheet = read("./ProfileSheet.tsx");
 
 describe("custom fields on the tab a profile opens on — Kyle #3", () => {
   // His report was that the fields "are not appearing on Prospect or Customer
   // profiles". They were — on Profile Details. A profile opens on Overview,
-  // which showed nothing of them.
-  it("the Overview tab renders them", () => {
-    assert.match(detail, /import \{ ProfileCustomFieldsCard \}/);
-    assert.match(detail, /<ProfileCustomFieldsCard customerId=\{customer\.id\} apiBase=\{apiBase\} \/>/);
+  // which showed nothing of them. Since the 2026-10-21 redesign it opens on
+  // the one profile page, and the fields are on it.
+  it("the page a profile opens on renders them", () => {
+    assert.match(detail, /useState<View>\("profile"\)/);
+    assert.match(detail, /activeView === "profile" && \(\s*<ProfileSheet/);
+    assert.match(sheet, /<CustomFieldInput field=\{field\}/);
+    assert.match(sheet, /\$\{apiBase\}\/\$\{customer\.id\}\/custom-fields`, \{\s*method: "PUT"/);
   });
 
   it("it works for a prospect as well as a customer", () => {

@@ -35,8 +35,8 @@ test("job workflow controls use canonical capability checks while field work rem
   assert.match(jobs, /showAmount && <span/);
   assert.match(customer, /function ReadOnlyContacts/);
   assert.match(customer, /function ReadOnlyProperties/);
-  assert.match(customer, /tab\.id !== "files" \|\| canManageCustomer/);
-  assert.match(customer, /tab\.id !== "activity" \|\| canManageCustomer/);
+  assert.match(customer, /view\.id !== "files" \|\| canManageCustomer/);
+  assert.match(customer, /view\.id !== "activity" \|\| canManageCustomer/);
   assert.match(app, /queryClient\.clear\(\)/);
   assert.match(app, /location === "\/"/);
 });

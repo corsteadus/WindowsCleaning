@@ -14,6 +14,7 @@ import {
 } from "@workspace/db";
 import { AccountRelationError, lockAccount, requireCustomer } from "../lib/account-relations.js";
 import { catalogSelectionInput, channelPurposePatch } from "../lib/profile-details-core.js";
+import { mirrorPatch, type MirrorChannel } from "../lib/contact-mirror.js";
 import { catalogAddPlan, catalogOptionCode } from "../lib/catalog-options.js";
 import {
   customFieldChoiceCatalog,
@@ -23,6 +24,34 @@ import {
 
 const router: IRouter = Router();
 const CHANNEL_TYPES = new Set(["email", "phone"]);
+
+/**
+ * Copy the account's channels onto its old flat phone and email columns, in
+ * the same transaction as the change. The channels are the source since the
+ * profile redesign (2026-10-21); sending, search, the duplicate check and the
+ * import still read the flat columns, and this keeps them true without any of
+ * those having to change. `removed` is the row as it was before an edit or a
+ * delete, so a number the office removed does not linger. See
+ * lib/contact-mirror.ts.
+ */
+async function mirrorChannelsOntoCustomer(tx: any, customerId: number, removed?: MirrorChannel | null) {
+  const channels = await tx.select().from(contactChannelsTable)
+    .where(and(eq(contactChannelsTable.customerId, customerId), isNull(contactChannelsTable.archivedAt)));
+  const [customer] = await tx.select({
+    homePhone: customersTable.homePhone,
+    workPhone: customersTable.workPhone,
+    cellPhone: customersTable.cellPhone,
+    altPhone: customersTable.altPhone,
+    fax: customersTable.fax,
+    email: customersTable.email,
+  }).from(customersTable).where(eq(customersTable.id, customerId));
+  if (!customer) return;
+  const patch = mirrorPatch({ channels, customer, removed: removed ?? null });
+  if (Object.keys(patch).length) {
+    await tx.update(customersTable).set({ ...patch, updatedAt: new Date() })
+      .where(eq(customersTable.id, customerId));
+  }
+}
 const CATALOG_TYPES: Record<string, string> = {
   "profile-types": "profile_type",
   "profile-groups": "profile_group",
@@ -345,6 +374,7 @@ router.post(["/customers/:id/channels", "/prospects/:id/channels"], async (req, 
           purposes.map((purpose) => ({ channelId: channel.id, purpose })),
         );
       }
+      await mirrorChannelsOntoCustomer(tx, customerId);
       return channel;
     });
     res.status(201).json({ ...created, type: created.channelType, purposes, purpose: purposes[0] ?? null });
@@ -423,6 +453,9 @@ router.patch("/contact-channels/:id", async (req, res) => {
       } catch (error) {
         throw new AccountRelationError(400, error instanceof Error ? error.message : "Invalid channel purposes");
       }
+      // `current` is the row before the edit: if its label moved off a slot, or
+      // its number changed, the old value must not stay on the flat column.
+      await mirrorChannelsOntoCustomer(tx, current.customerId, current);
       return { channel, purposes };
     });
     res.json({
@@ -438,13 +471,17 @@ router.patch("/contact-channels/:id", async (req, res) => {
 router.delete("/contact-channels/:id", async (req, res) => {
   try {
     const id = parseId(req.params.id);
-    const [current] = await db.select().from(contactChannelsTable).where(eq(contactChannelsTable.id, id));
-    if (!current) throw new AccountRelationError(404, "Contact channel not found");
-    await db.update(contactChannelsTable).set({
-      archivedAt: new Date(),
-      archivedBy: actor(req),
-      updatedAt: new Date(),
-    }).where(eq(contactChannelsTable.id, id));
+    await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(contactChannelsTable).where(eq(contactChannelsTable.id, id));
+      if (!current) throw new AccountRelationError(404, "Contact channel not found");
+      await lockAccount(tx, current.customerId);
+      await tx.update(contactChannelsTable).set({
+        archivedAt: new Date(),
+        archivedBy: actor(req),
+        updatedAt: new Date(),
+      }).where(eq(contactChannelsTable.id, id));
+      await mirrorChannelsOntoCustomer(tx, current.customerId, current);
+    });
     res.status(204).send();
   } catch (error) {
     respondError(res, error, "Failed to archive contact channel");

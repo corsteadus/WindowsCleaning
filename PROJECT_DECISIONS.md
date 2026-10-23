@@ -166,6 +166,456 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Profile redesign, piece B2 — the estimate on the Add Prospect form, 2026-10-23
+
+**Built and browser-verified locally (16/16; the estimate page's own booking re-checked
+4/4 over HTTP). Not committed, not pushed — waits with A and B1 for Kyle. No migration.**
+
+**What it does (Kyle, Video 3).** The Add Prospect form has an **Estimate** section, on by
+default ("Book an estimate now"): services from the catalogue, each with quantity, a price
+**or none**, **which location** (Main or a named one from the same form) and the
+customer-visible description (#31); then, optionally, date, start time, duration and the
+estimator ("between 3 and 4" = 3 pm for an hour, Chicago time). **Create Prospect & Save
+Estimate** opens the new prospect. **Save and email estimate** is offered only when every
+service is priced and there is an email; it finalizes and sends, and opens the estimate.
+
+**How it is saved.** `estimate` travels beside `intake`; the server writes the prospect,
+its intake, then the estimate (and appointment) **in the same transaction**, using the
+very code the estimate page books with — `createQuoteTx` / `createScheduledQuoteTx` /
+`parseQuoteAppointment`, extracted from `POST /quotes/with-appointment` (which still
+behaves the same). Line locations are given by position and mapped to the properties as
+they are created.
+
+**Decision — a blank price is $0, "to be quoted"** (Toheed, 2026-10-23; no migration).
+The column is `NOT NULL DEFAULT 0`, so a blank was already stored as 0, and **nothing
+stopped a $0 estimate being finalized and emailed**. Now `POST /quotes/:id/deliver`
+refuses any estimate with a $0 line (400 `estimate_unpriced`, naming the lines), checked
+against the finalized snapshot. **To confirm with Kyle:** a deliberately free line cannot
+be sent either.
+
+**Bug found and fixed — Finalize wiped the service descriptions (#31).** The estimate
+page sent no `serviceNotes` to Finalize, and Finalize replaces the lines, so **every
+estimate finalized from the estimate page lost its customer-visible descriptions**, and
+every line was put at the quote's main location. Proven by probe before the fix (`LOST`)
+and after (`KEPT`). Fixed on the server (a line's description, location and upsell flag
+are carried over when the sender leaves them out) and on the page (it sends them). **This
+is live on Sandbox 2 until the republish**; estimates finalized there may already have
+lost descriptions.
+
+**Sending is "queued", not "emailed".** `/deliver` records the request and raises
+`quote.sent`; the email itself goes out through the **"Estimate sent" automation, which
+is still inactive**. The form says "queued for email", as the estimate page does. For
+Kyle's Save-and-email to reach a customer, that rule must be switched on.
+
+**Seen, not touched:** 5 estimate appointments and 5 estimate locations from 21–22
+September point at quotes that no longer exist (before profile delete existed), and 11
+line-description rows at deleted lines (left by the old Finalize). Harmless; delete only
+with approval.
+
+---
+
+## Profile redesign, piece B1 — the Add form, built in the working tree, 2026-10-22
+
+**Built and browser-verified locally (23/23, plus 6/6 over HTTP for the initial-job
+path). Not committed, not pushed, waiting with piece A for Kyle's approval. No
+migration.** Built from Kyle's answers of 2026-10-21 while waiting on his reply.
+
+**The form now reads like the profile page:** account type, Name, Contact information
+(the six phones each with **whose number it is**; as many emails as needed, each with
+its person and routing), Service address (**Main** plus **up to two more named
+locations**, County / Subdivision / Birthday, **How did they hear about us?** from the
+managed list), Notes (General **and Directions**), and **More details** collapsed
+(Non-profit, CC fee, Tax exempt, tags, stars, alt contact, alt phone type). A person
+named once — Lauren — can be picked again on the next phone or email. Nothing that
+was on the old form was dropped; the free-text "How did they hear" gave way to the
+dropdown, as Kyle asked. Initial Job, the estimate checkbox and the duplicate check are
+unchanged.
+
+**How it is saved:** the extras travel as `intake` beside the ordinary fields and are
+written **in the same transaction** as the profile, on both create paths (`POST
+/customers`, `/prospects`, and `/customers/with-initial-job`), after the main property
+so extra locations list after it. Phones and emails become contact channels (the
+source since piece A); named people become contacts, one per distinct name; extra
+locations become owned properties; the marketing source is written both ways, as
+Profile Details does. The flat phone and email columns are derived from the intake
+**before** the duplicate check, so the check sees exactly what is saved. An incomplete
+location or a half-named person is caught on the form, and refused by the server
+(400 `invalid_intake`) before anything is written. `lib/intake.ts`,
+`lib/intake-writer.ts`; the form's logic is `crm/src/lib/intake-form.ts`.
+
+**Follow-up:** `intake` is not yet in the OpenAPI spec; the client passes it past the
+generated types. Regenerate the client (needs pnpm) when the spec is next touched.
+
+**Not in this piece — B2, the estimate on the same screen** (services, estimator, time,
+blank price, Save and email). It needs one transaction for profile + estimate +
+appointment, and the blank-price path is untested. Next.
+
+---
+
+## Profile redesign, piece A — built in the working tree, 2026-10-21
+
+**Built, tested and browser-verified locally (33/33). Not committed, not pushed, not on
+Sandbox 2.** Toheed chose to build the real page instead of a mock-up, show Kyle
+screenshots or a recording, and publish only after Kyle approves. **No migration.**
+
+**What the profile is now.** One page instead of twelve tabs. In order: Name
+(residential/commercial switch), Contact information (the six phones, each with whose
+number it is and a call link; every email with its person, routing, a send button and
+**Pause sending**), Service address (Main first, named extra locations, Maps link, then
+County, Subdivision, Birthday and the marketing-source dropdown), Notes (General,
+Directions, Specific, Callback), Custom fields, and **More details** collapsed (type,
+group, payment terms, Non-profit / Tax exempt / No card fee, tags, stars, prospect date,
+alt contact, Customer since, Linked profiles, created / last updated by). Always editable;
+**one sticky Update button** saying what is unsaved, with Discard. The page is locked
+while it saves, and leaving with unsaved edits asks first (arrows, Back, Jump To, tab
+close).
+
+**Header**, sticky: Back, **Previous / Next arrows**, name and badges, New Estimate,
+Schedule Job, Send Email, and **More** (Deactivate, Archive, Reactivate, Delete).
+**Jump To** rail: Estimates, Jobs, Invoices, Payments, Communication & Activity, Files,
+Contacts, Locations — the old full views, unchanged. The statistics row and the
+default-property banner are gone (Kyle: no statistics on the profile).
+
+**How it is wired.**
+
+- **Contact channels are the source; the old flat columns are a mirror.** Every channel
+  create / edit / delete rewrites `customers.homePhone … fax, email` in the same
+  transaction (`lib/contact-mirror.ts`), so sending, search, the duplicate check, import
+  and the crew read the same facts without changing. An older profile's numbers that never
+  became channels are shown in their slots and left alone.
+- **An older profile's own email is never replaced** by adding a second address — found in
+  the walkthrough, fixed on both sides, tested.
+- **Send Email** accepts any active email channel of that profile, and nothing else.
+- **Previous / Next**: `GET /customers/:id/neighbors` (and `/prospects/…`), same lifecycle
+  only, so archived and inactive are skipped; residential by last name, commercial by
+  company; one interleaved list. Technicians get 403.
+- Catalog options and custom-field definitions are managed in **Settings** (they already
+  were). `ProfileDetailsTab` and `ProfileCustomFieldsCard` are no longer rendered; kept
+  until Kyle approves, then delete.
+
+**Defaults built that Kyle has not confirmed** (each a one-line change): Fax in the
+phones; Non-profit / Tax exempt in More details with badges by the name; one interleaved
+Previous/Next list; email opens Corstead's Send Email. A phone with a label outside the
+six (e.g. "Office") is listed read-only on the page, with no screen to edit it now that
+Profile Details is gone; **none exist** on the shared database (checked 2026-10-21).
+
+**Next:** screenshots / recording to Kyle → on approval commit, push, republish, verify on
+Sandbox 2. Then piece B (the Add form), then C (dated, signed notes — additive migration,
+announce first).
+
+---
+
+## Profile redesign — Kyle's answers to the combined questions, 2026-10-21
+
+All twelve were answered. **Still nothing built.** He approved a clickable mock-up
+before any code, and said he will record **three to five more videos** (hoped for
+the same day) “before we finalize the full layout”. **So the mock-up waits for
+those videos**; drawing it now means redrawing it.
+
+### Decisions
+
+| | Decision |
+|---|---|
+| Sales tax | **Wanted, optional, never on by default**, on an **invoice**. **Tax Exempt stays** |
+| Previous/Next | **Active profiles only.** Prospects through prospects, customers through customers. **Archived excluded.** Residential sorted by **last name**, commercial by **company name**, prospect or customer alike |
+| Technicians | See the customer information tied to **their assigned work**: phones, service addresses, directions, job notes. Later, **Admin-switchable** permissions for job pricing and invoicing |
+| More Details (collapsed) | Profile Type, Payment Terms, Linked Profiles, who created the record, **Tags**, and other rarely used account settings |
+| Phones | **Home, Work, Cell, second Cell, Alt, Fax**, each able to say whose number it is |
+| Job locations | **Up to three named** at creation; **unlimited** afterwards |
+| Marketing source | A **customisable dropdown**, not free text |
+| Estimate at creation | On the **same screen**: services, estimator, schedule. **Blank price allowed.** Once priced: **Save and email the estimate**. He wrote “assuming we're understanding the workflow the same way”, so the mock-up has to prove it |
+| Notes | Specific and callback notes: **each entry dated and signed; existing notes preserved** |
+| **Fax, County, Subdivision, Birthday** | **Visible in the main section**, toward the bottom of the customer-information block. **Not** under More Details. This **overrides** the earlier suggestion |
+| Clickable contact | Phone to call, email to send, address to open in maps |
+| Left out this round | Range pricing, calendar colour-coding by customer type, appointment times on emailed estimates |
+
+### Two answers are new features, not layout
+
+Neither belongs inside the redesign, and each touches rules that must not be
+rushed.
+
+**Optional sales tax on invoices.** Money code: invoice totals, payment
+allocation, reconciliation, and the bulk-invoice planner. Corstead has no tax rate
+anywhere; `taxAmount` is stored per invoice and per line and defaults to 0. Open:
+where the rate lives (one company rate, or by county — he mentioned county earlier),
+whole invoice or per service, and what happens when a Tax Exempt customer is
+invoiced. Proposed default to confirm: one company rate, a per-invoice tick, and a
+block or warning for a Tax Exempt customer.
+
+**Admin-switchable permissions.** Corstead has roles mapped to capabilities; whether
+an Admin can switch a capability on or off **per role or per person** from a screen
+is **to be verified**, and if not, it is a new settings screen and probably a new
+table (an additive migration, announced first).
+
+### Small ambiguities to put back to him
+
+1. **Fax** is listed among the phones (#5) **and** among the fields to place at the
+   bottom (#10). Which?
+2. **Tax Exempt and Non-Profit.** On The Customer Factor, Non-Profit sits at the very
+   top. Visible beside the name, or under More Details?
+3. **Previous/Next order.** Residential and commercial **interleaved in one
+   alphabetical list** (last name or company name, whichever applies), or residential
+   first and then commercial? And are **deactivated** profiles skipped, as well as
+   archived?
+4. **“Email clickable to send”.** Through **Corstead's own Send Email** (logged in the
+   history, honours unsubscribes) or the computer's mail program (`mailto:`, which
+   does neither)? Recommended: Corstead's. **A phone number cannot offer “text”**:
+   there is no SMS provider.
+5. **Existing free-text marketing values.** The Add form writes `howHeard` (text);
+   Profile Details writes a catalogue id; and the legacy customer import writes
+   text. The dropdown must not lose what was imported.
+
+### Work, in the order I would do it
+
+| | Piece | Migration |
+|---|---|---|
+| A | Shared profile form and layout; sticky Update; Previous/Next; Jump To; clickable contact | none expected |
+| B | Add form: three named locations, six phones with names, marketing dropdown, estimate block, Save and email | none expected |
+| C | Dated, signed notes | **additive**, announced first |
+| D | Optional sales tax on invoices | to be scoped; **separate phase** |
+| E | Admin-switchable technician permissions | to be scoped; **separate phase** |
+
+Waiting on the new videos, then a mock-up for approval.
+
+---
+
+
+## Profile redesign — Video 3, scheduling the estimate at intake, 2026-10-20
+
+Source: `Video 3 Summary - Creating New Prospect Finalize.pdf`. Same caveat as
+Video 2: a walkthrough of The Customer Factor, “not an automatic approval of
+every feature for Corstead”. The transcript is built from narration supplied in
+chat and was not checked against the recording. **Nothing built.**
+
+### What it shows
+
+On the **same screen** as the prospect's details: pick a service from the preloaded
+list; quantity and price (or a range); the job location **per service line**
+(main address, or a saved one such as “Mom's house”); an estimator and a time
+window (“between 3 and 4”); a second service for another address; and **customer-
+visible detail notes** per line. Then **Save** (profile created, estimate on the
+schedule) or **email the estimate now** if a price was quoted on the phone.
+Afterwards the saved profile **looks like the form it was entered on** and is
+edited in place with one Update button, which he suggests could float.
+
+### Two things this changes
+
+**1. The Add form's “Schedule the estimate next” probably did not mean what we built.**
+His own checklist item (File 2, #15) was *“schedule the estimate during the same
+setup process”*. What exists is a checkbox that, after saving, sends you to the
+estimate page. Video 3 shows he meant the services, estimator and time on the
+same form. Treat the earlier reading as incomplete, not as done.
+
+**2. He likes that the profile resembles the add screen.** That points to **one
+shared form** for creating and for editing, with the intake extras shown only on
+creation. Today they are two unrelated layouts (`NewCustomerForm` in
+`Customers.tsx`; the tabbed `CustomerDetail`). One form learnt once is also the
+training answer Video 1 asked for.
+
+### Against what exists
+
+| Video 3 | Corstead today |
+|---|---|
+| Quantity × price, flat price | **Has it** on quote lines |
+| Job location per service line, several locations in one estimate | **Has it** (line-level property; one job per location on conversion) |
+| Customer-visible detail note per service | **Has it** — item #31's service Description, shown to the customer |
+| Assigned employee hidden from the customer | **Matches** — the public estimate page shows no assignee and no appointment |
+| Estimator and time window | **Has it** (assignee, start, duration), but on the estimate page, not the Add form |
+| Services and times **on the Add form** | **No** — a checkbox only |
+| **Range price** ($350–$500) | **No.** He says Superior does not use it |
+| Estimate with **no price** (about **99%** of his intake) | Blank price is coerced to 0 in the quote code; **the whole path is unverified** and must be tested before any claim |
+| Save, **or email the estimate immediately** | **No** single action: create, finalize, then deliver. And the Estimate-sent automation is still off |
+| **Dated** notes and callback notes **with who wrote them** | **No.** `specific_notes` and `callback_notes` are single text boxes. Only the whole-record audit shows who changed what |
+| Directions editable on the profile | Has a `directions` box |
+| Job locations opened, edited and added from the profile | **Has it** (Properties tab) |
+| Second email for the spouse, with her name | **Has it** (named contact channels) |
+| Floating Update button | **Decided** in Kyle's Video 1 answers: one Update, always visible |
+
+### Cost to flag honestly
+
+This is **not a layout change.** One-screen intake means creating the prospect, its
+locations, the estimate lines and the appointment together. Today those are two
+atomic calls (create the customer; then `quotes/with-appointment`). Chaining them
+risks a prospect that exists with no estimate if the second fails, unless the work
+is made one transaction. It also has to respect blocked days, the duplicate-check
+panel and the estimator rules. Dated notes with an author need an **additive
+migration** (a notes-entries table), which is announced first: it lands on the
+branch Kyle is testing in.
+
+### To put to Kyle, with a default so he can answer “yes”
+
+1. Services, estimator and time **on the Add form** itself, in a section that is
+   collapsed unless he ticks “schedule the estimate”? Default yes.
+2. A **blank price** is allowed and means “to be quoted”, and such an estimate is
+   not emailed until it has a price? Default yes.
+3. **Range pricing**: park it? Default yes.
+4. A second button, **Save and email estimate**, once a price is entered? Default yes.
+5. Specific and callback notes become **dated entries with the author's name**;
+   the existing text becomes the first entry? Default yes.
+6. Should the emailed estimate show the **appointment date and time**? He is unsure
+   himself. Default no, as today.
+
+**Suggested order of work, once the videos are in:** the shared profile form and
+layout first (Videos 1–2), then the intake estimate block (Video 3), then dated
+notes, because each is easier on top of the last and only the last needs a migration.
+
+---
+
+
+## Profile redesign — Video 2, the Add Prospect intake, 2026-10-20
+
+Source: `Video 2 Summary - Creating New Prospect Profile Info.pdf` (summary +
+cleaned transcript). **Its own implementation note governs how to read it:**
+*“This video is a feature and layout reference. It does not, by itself,
+finalize every demonstrated field as a Corstead V1 requirement.”* It shows
+how The Customer Factor takes a new prospect on a live call. **Nothing built.**
+
+### Where a second summary says more than the source does
+
+A condensed version pasted into the chat uses “must” language and adds things.
+The PDF and transcript are the source; these are **not** requirements:
+
+| The pasted summary says | The source says |
+|---|---|
+| Calendar **colour-coding** by customer type | Not mentioned. Only that The Customer Factor's calendar can be **filtered** by type |
+| Types and tags “fully searchable across **all** system modules” | Not said |
+| Types and tags as a requirement | “We do not use that for our company”; the PDF: *“this company does not currently rely on that field”* |
+| Lead source “to measure advertising effectiveness” | Only “click Facebook. It is that simple” |
+| Notes: dated notes and callback notes | Four kinds: dated, callback, general, and **directions** — the last is what “the crew sees”. The pasted version drops it |
+| “Up to 3 **or more** job locations during initial creation” | Up to **three** at creation; more can be added **after** |
+| Sales tax “automatically bypassed” | “The system does not charge sales tax for that customer” (see below: Corstead calculates none) |
+
+**The transcript is speech-to-text, and its names are wrong.** “Luke Tia” is
+Lute Atieh, “Loot called today” is “Lute called today”, and “Corested.us” is
+corstead.us. Do not use them as data.
+
+**“Tabs” means something different in each video.** In Video 1 it is the
+profile's tabs. In Video 2 it is the **main navigation** (The Customer Factor's
+top bar against Corstead's left sidebar), and he says explicitly that cleaning
+that up is for *eventually* — “For now, let us focus on adding a prospect.”
+
+### What the Add form already has, and what it lacks
+
+`Customers.tsx` `NewCustomerForm`, shared by prospects and customers.
+
+| From Video 2 | Corstead today |
+|---|---|
+| Residential/Commercial, one click, template changes | **Has it**, first on the form |
+| Salutation | **Has it** |
+| Home, Work, Cell, Alt phone, Fax | **Has them.** Not a second cell |
+| Whose number it is, per phone | **Not at creation.** A single “Alt. Contact Name” only. Named contacts exist once the profile does |
+| County, subdivision | **Has them** (he says his company does not need them) |
+| Non-profit / tax exempt | **Has the checkboxes** |
+| Custom “Type” grouping | **Exists as Profile type / Profile group** (managed dropdowns) — on Profile Details, not on the Add form |
+| **Up to three job locations at creation** | **No.** One address on the form; further service addresses are added later under Properties |
+| **Address autocomplete** | **No**, and still blocked on **Lute** (account and billing cost) |
+| Marketing source as a click | **Free text** on the Add form (`howHeard`), while Profile Details has a managed **dropdown** (`marketingSourceId`). Two different fields for one question |
+| Dated notes, callback notes, general notes, directions | The form has **General Notes only**. The `customers` table already has `notes`, `specific_notes`, `callback_notes` and `directions` columns; what the screens show of the last three is **to be verified** |
+| Calendar filtered by customer type | **No** — calendar filters are by crew and technician |
+
+### Found while checking: the tax-exempt flag changes nothing
+
+`customers.tax_exempt` is stored and shown, but **no code reads it to calculate
+tax.** Invoices carry a typed `taxAmount` that defaults to 0 and no rate exists
+anywhere that was found. “Automatically bypass sales tax” therefore has nothing to
+bypass today. **To ask Kyle:** should Corstead calculate sales tax at all yet?
+
+### Questions to put to Kyle, each with a default so he can answer “yes”
+
+1. **Phones at intake:** fixed fields as on The Customer Factor (Home, Work, Cell,
+   Cell 2, Alt, Fax), each with a “whose number” name, stored as Corstead's
+   existing labelled contact channels? Default yes.
+2. **Job locations at intake:** the first address is the main service address and
+   up to two more can be named (“Mom's house”), stored as properties? Default yes.
+3. **Marketing source:** the managed dropdown on the Add form, replacing free text?
+   Default yes.
+4. **Notes at intake:** General Notes and Directions on the form; dated and
+   callback notes as entries on the profile? Default yes.
+5. **Tax exempt:** keep the checkbox, calculate nothing until he says Corstead
+   should charge sales tax? Default yes.
+6. **Customer type and calendar filter:** park it, since his company does not use
+   it? Default yes.
+
+Still waiting on further videos. Plan unchanged: a one-page “what I understood”
+with before/after screenshots and click counts, approved before building.
+
+---
+
+
+## Profile redesign — Video 1 and Kyle's answers, 2026-10-19
+
+**Nothing is built yet, deliberately.** Kyle is recording a numbered series of
+videos with written checklists, in a separate Drive folder, and said the rest
+will cover the sections below the main profile. The rule agreed with Toheed: do
+not assume what he has not said; take what he gives, confirm what he does not.
+The material so far is in `Requirements PDFs/Layout files/` (Video 1 summary +
+transcript, two screenshots of The Customer Factor's prospect profile).
+
+### What he asked for, in his words
+
+Reorganise the prospect and customer profiles, and possibly other areas, for
+speed and training. **No features removed.** The Customer Factor is the
+reference for structure and accessibility, **the older interface, not the new
+one** (the screenshots carry a “Click to View New User Interface” banner, so they
+are the classic one). Not to be copied visually. Priority is fewer clicks.
+
+### His answers to the six questions put to him
+
+| | Decision |
+|---|---|
+| **Saving** | Fields stay editable with **one Update button**, not “Save”. It must be **always visible**, even while scrolling |
+| **Layout, top to bottom** | Name and customer/prospect status → contact information (phones, emails, and the contact names attached) → service address → General Notes → Custom Fields |
+| **Profile statistics** | **Remove entirely** from the profile (Total Jobs, Revenue, Last Service, Windows). They belong to the reporting and search work later. This is firmer than the “move them lower down” that was proposed |
+| **Prospect → customer** | Stays tied to estimate acceptance, which can happen two ways: the customer accepts (the office is notified, an authorised user converts and creates the job) or the office marks it Accepted by hand after a verbal or other acceptance. **The office controls the conversion. Never automatic** |
+| **Reference** | The older Customer Factor interface |
+| **Navigation** | Previous/Next arrows beside the name, **alphabetical by last name through the customer database**. And a **Jump To** panel on the right: estimates, scheduling, jobs, invoices, communication history |
+
+### How these meet what already exists
+
+- The conversion rule is **already how it works.** Item #23 (2026-10-10) put
+  Accepted into Correct Status, with a required reason written to the history;
+  that is exactly his “office manually accepts” path. There is no standalone
+  “make them a customer” button and none is to be added — The Customer Factor has
+  one, and copying it would have contradicted his own earlier rule that a
+  prospect is not scheduled directly.
+- The “customer accepts” path only works end to end once the **Estimate sent**
+  automation is switched on; today it is off, so the customer has no emailed link.
+- Removing the statistics removes the only place they are shown. They are not
+  deleted; whether reporting or search exposes them today has still to be
+  checked, or they will have no home.
+- A **sticky Update button** with arrows and Jump To means an edit can be lost
+  by leaving the page. Needs an unsaved-changes warning.
+
+### Still open, and not to be guessed
+
+1. **Previous/Next scope.** Prospects with prospects and customers with
+   customers, or one list? Archived and inactive profiles skipped? Order for a
+   commercial profile — company name, or the contact's last name?
+2. **Where the rest of the profile goes.** Profile type/group, payment terms,
+   marketing source, tax-exempt and no-CC-fee flags, linked profiles, the
+   record (created/updated by), and the communication-safety card. He said
+   only that they should not come first.
+3. **What a field technician sees.** He named technicians; whether they open the
+   profile or the job page was not said, and a technician's view is restricted.
+4. **Jump To's full contents.** He listed five. Files, Payments and Callbacks
+   (The Customer Factor's “Due To Be Contacted?”) were not mentioned.
+5. **Add-customer flow**, which he said will need aligning with the new design.
+6. **“Other areas of the program”**, and whether that includes the calendar
+   (the spec's approval gate applies there).
+
+Waiting on the remaining videos before building. Plan: a one-page “what I
+understood” with before/after screenshots and click counts, approved first.
+
+### Two discrepancies between summaries, for whoever reads this next
+
+The PDF and transcript are the source. A second summary pasted into the chat
+said **“inline or instant editing”** (the transcript says only “edit it easily”)
+and listed **Invoices** among the scattered essentials (the transcript puts them
+under “dive deeper”). Neither is a requirement.
+
+---
+
+
 ## #3 — the custom fields were there all along, one tab over, 2026-10-12
 
 **This item was recorded as “waiting on Kyle's screenshot” for four days.

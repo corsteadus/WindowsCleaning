@@ -37,6 +37,17 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, Users, Phone, Mail, ChevronRight, ChevronLeft, User, MapPin, Layers, Info, StickyNote, CalendarClock } from "lucide-react";
 import { TimeSelect } from "@/components/TimeSelect";
+import { EmailRows, ExtraLocations, OwnerSelect } from "@/components/IntakeFields";
+import { IntakeEstimate } from "@/components/IntakeEstimate";
+import {
+  BLANK_APPOINTMENT, buildEstimate, emailBlocker, estimateProblems,
+  type EstimateAppointmentDraft, type EstimateLineDraft,
+} from "@/lib/intake-estimate";
+import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
+import {
+  ACCOUNT_OWNER, INTAKE_PHONES, buildIntake, intakeProblems, namedPeople,
+  type IntakeEmailRow, type IntakeLocationRow, type IntakeSlot, type Owner,
+} from "@/lib/intake-form";
 import { CustomFieldFilter } from "@/components/CustomFieldFilter";
 import {
   type CustomFieldFilterState,
@@ -89,6 +100,8 @@ const customerSchema = z.object({
   tags:                   z.string().optional(),
   // Notes
   notes: z.string().optional(),
+  // What the crew sees on the job (Kyle, Video 2).
+  directions: z.string().optional(),
 });
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
@@ -264,12 +277,13 @@ function F({ label, error, children, required }: { label: string; error?: string
  * 2026-10-01, #2). The person types digits; the brackets and dash appear on
  * their own. Anything that is not a plain US number is left as they wrote it.
  */
-function PhoneInput({ registration, placeholder }: {
-  registration: UseFormRegisterReturn; placeholder?: string;
+function PhoneInput({ registration, placeholder, label }: {
+  registration: UseFormRegisterReturn; placeholder?: string; label?: string;
 }) {
   return (
     <input
       {...registration}
+      aria-label={label}
       type="tel"
       inputMode="tel"
       placeholder={placeholder ?? "(555) 000-0000"}
@@ -296,6 +310,40 @@ function FormSection({ icon: Icon, title, children }: { icon: React.ElementType;
   );
 }
 
+/**
+ * Finalize the estimate just created and email it. Each line goes with its own
+ * location and description (#31), read back from the server. Returns the
+ * reason it was not sent, or null.
+ */
+async function sendNewEstimate(estimate: { id: number }, email: string): Promise<string | null> {
+  const BASE = import.meta.env.BASE_URL.replace(/\/+$/, "");
+  const call = async (path: string, init?: RequestInit) => {
+    const response = await protectedFetch(`${BASE}/api${path}`, {
+      credentials: "include", headers: { "Content-Type": "application/json" }, ...init,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error((body as { error?: string }).error ?? "Request failed");
+    return body as any;
+  };
+  try {
+    const quote = await call(`/quotes/${estimate.id}`);
+    await call(`/quotes/${estimate.id}/finalize`, {
+      method: "POST",
+      body: JSON.stringify({
+        notes: quote.notes, terms: quote.terms,
+        lineItems: (quote.lineItems ?? []).map((line: any) => ({
+          serviceId: line.serviceId, description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
+          serviceNotes: line.serviceNotes ?? null, propertyId: line.propertyId ?? quote.propertyId,
+        })),
+      }),
+    });
+    await call(`/quotes/${estimate.id}/deliver`, { method: "POST", body: JSON.stringify({ channels: ["email"], email }) });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "The estimate could not be sent";
+  }
+}
+
 function NewCustomerForm({
   onSuccess,
   mode,
@@ -313,8 +361,47 @@ function NewCustomerForm({
   // The appointment belongs to an estimate on the server, so creating the
   // prospect carries straight on into its estimate with the appointment open.
   const canScheduleEstimate = isProspect && hasClientCapability(user, "quotes.manage");
+  // Piece B2 (Kyle, Video 3): the estimate is booked on this same form. On by
+  // default — it is why the prospect called.
   const [scheduleEstimateNext, setScheduleEstimateNext] = useState(true);
+  // Every role with quotes.manage may also book and send an estimate; the
+  // server still checks estimates.schedule and estimates.deliver itself.
+  const canBookEstimateTime = canScheduleEstimate;
+  const canEmailEstimate = canScheduleEstimate;
+  const [estimateLines, setEstimateLines] = useState<EstimateLineDraft[]>([
+    { key: "s0", serviceId: null, description: "", quantity: "1", unitPrice: "", location: 0, serviceNotes: "" },
+  ]);
+  const [estimateAppointment, setEstimateAppointment] = useState<EstimateAppointmentDraft>(BLANK_APPOINTMENT);
+  const sendEstimateRef = useRef(false);
+  const { data: estimateEmployees = [] } = useQuery({
+    queryKey: authScopedQueryKey(user, ["estimate-employees"]),
+    enabled: canScheduleEstimate && canBookEstimateTime,
+    queryFn: async () => {
+      const response = await protectedFetch(`${import.meta.env.BASE_URL.replace(/\/+$/, "")}/api/estimate-employees`, { credentials: "include" });
+      if (!response.ok) return [];
+      return response.json() as Promise<Array<{ id: string; displayName: string; role?: string | null; isActive?: boolean }>>;
+    },
+  });
+  const estimators = filterSelectableCrewTechnicians(estimateEmployees);
   const [, navigate] = useLocation();
+  // Profile redesign piece B: what the profile page holds, asked for up front.
+  const [owners, setOwners] = useState<Partial<Record<IntakeSlot, Owner>>>({});
+  const [cell2, setCell2] = useState("");
+  const [emailRows, setEmailRows] = useState<IntakeEmailRow[]>([{ key: "e0", value: "", owner: ACCOUNT_OWNER, routing: "general" }]);
+  const [extraLocations, setExtraLocations] = useState<IntakeLocationRow[]>([]);
+  const [marketingSource, setMarketingSource] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [intakeErrors, setIntakeErrors] = useState<string[]>([]);
+  const { data: marketingSources = [] } = useQuery({
+    queryKey: authScopedQueryKey(user, ["catalog", "marketing-sources"]),
+    queryFn: async () => {
+      const response = await protectedFetch(`${import.meta.env.BASE_URL.replace(/\/+$/, "")}/api/catalogs/marketing-sources`, { credentials: "include" });
+      if (!response.ok) return [];
+      const items = await response.json() as Array<{ name?: string; label?: string; value?: string }> | { items?: Array<{ name?: string; label?: string; value?: string }> };
+      const list = Array.isArray(items) ? items : items.items ?? [];
+      return list.map((item) => item.value ?? item.name ?? item.label ?? "").filter(Boolean);
+    },
+  });
   const [duplicateState, setDuplicateState] = useState<"idle" | "checking" | "none" | "candidates" | "error">("idle");
   const [duplicateCandidates, setDuplicateCandidates] = useState<any[]>([]);
   const [duplicateDecision, setDuplicateDecision] = useState<"existing" | "separate" | null>(null);
@@ -331,7 +418,7 @@ function NewCustomerForm({
   const [initialJobError, setInitialJobError] = useState("");
   const [initialCommitPending, setInitialCommitPending] = useState(false);
   const submitInFlight = useRef(false);
-  const { data: servicesData } = useListServices({ query: { enabled: canScheduleInitialJob } as any });
+  const { data: servicesData } = useListServices({ query: { enabled: canScheduleInitialJob || canScheduleEstimate } as any });
   const { data: crewsData } = useListCrews({ query: { enabled: canScheduleInitialJob } as any });
   const { data: activeTeamUsersData, isLoading: activeTeamUsersLoading } = useListActiveTeamUsers({ query: { enabled: canScheduleInitialJob } as any });
   const services = (servicesData ?? []) as Array<{ id: number; name: string; basePrice: number; isActive?: boolean }>;
@@ -347,9 +434,18 @@ function NewCustomerForm({
     },
   });
 
-  const [firstName, lastName, email, homePhone, workPhone, cellPhone, altPhone] = watch([
-    "firstName", "lastName", "email", "homePhone", "workPhone", "cellPhone", "altPhone",
+  const [firstName, lastName, email, homePhone, workPhone, cellPhone, altPhone, fax] = watch([
+    "firstName", "lastName", "email", "homePhone", "workPhone", "cellPhone", "altPhone", "fax",
   ]);
+  const phoneValues: Record<string, string | undefined> = { homePhone, workPhone, cellPhone, altPhone, fax };
+  const accountName = `${firstName ?? ""} ${lastName ?? ""}`.trim();
+  const people = namedPeople([...Object.values(owners), ...emailRows.map((row) => row.owner)].filter(Boolean) as Owner[]);
+  // The first address is the account's own: it is the form's email, so the
+  // duplicate check and the email validation see it.
+  const firstEmail = emailRows.find((row) => row.value.trim())?.value.trim() ?? "";
+  useEffect(() => {
+    setValue("email", firstEmail, { shouldValidate: Boolean(firstEmail) });
+  }, [firstEmail, setValue]);
   const accountType = watch("accountType");
   // Switching to Residential hides the business name; it must not be saved from
   // behind the hidden field either.
@@ -406,18 +502,34 @@ function NewCustomerForm({
     return () => window.clearTimeout(timer);
   }, [firstName, lastName, email, homePhone, workPhone, cellPhone, altPhone, isProspect]);
 
-  const handleCreateSuccess = (created?: { id?: number }) => {
+  const handleCreateSuccess = (created?: { id?: number; estimate?: { id: number; quoteNumber: string } | null }) => {
     submitInFlight.current = false;
+    const madeEstimate = created?.estimate ?? null;
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customers"]) });
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["prospects"]) });
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListCustomersQueryKey()) });
     queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListProspectsQueryKey()) });
-    toast({ title: `${entityLabel} created successfully` });
     reset();
     onSuccess();
-    if (canScheduleEstimate && scheduleEstimateNext && created?.id) {
-      navigate(`/quotes/new?customerId=${created.id}&schedule=estimate`);
+    if (!madeEstimate || !created?.id) {
+      toast({ title: `${entityLabel} created successfully` });
+      return;
     }
+    if (!sendEstimateRef.current) {
+      toast({ title: `${entityLabel} created with estimate ${madeEstimate.quoteNumber}` });
+      navigate(`/prospects/${created.id}`);
+      return;
+    }
+    void sendNewEstimate(madeEstimate, firstEmail).then((error) => {
+      if (error) {
+        toast({ title: `${entityLabel} and estimate saved — the email was not sent`, description: error, variant: "destructive" });
+      } else {
+        // Queued, as the estimate page says: the email itself goes out through
+        // the "Estimate sent" automation, which an admin switches on.
+        toast({ title: `Estimate ${madeEstimate.quoteNumber} queued for email`, description: `To ${firstEmail}` });
+      }
+      navigate(`/quotes/${madeEstimate.id}`);
+    });
   };
   const handleCreateError = (err: unknown) => {
     submitInFlight.current = false;
@@ -439,6 +551,21 @@ function NewCustomerForm({
 
   const onSubmit = async (v: CustomerFormValues) => {
     if (submitInFlight.current) return;
+    const intakeState = {
+      phones: Object.fromEntries(INTAKE_PHONES.map(({ slot, field }) => [slot, field ? (v[field] ?? "") : cell2])),
+      owners, emails: emailRows, locations: extraLocations, marketingSource,
+    };
+    const bookEstimate = canScheduleEstimate && scheduleEstimateNext;
+    const locationCount = buildIntake(intakeState).locations.length;
+    const hasMain = [v.billingAddress, v.billingCity, v.billingState, v.billingZip].every((part) => part?.trim());
+    const problems = [
+      ...intakeProblems(intakeState),
+      ...(bookEstimate ? estimateProblems(estimateLines, estimateAppointment, { main: hasMain, locations: locationCount }) : []),
+    ];
+    setIntakeErrors(problems);
+    if (problems.length) return;
+    const intake = buildIntake(intakeState);
+    const estimate = bookEstimate ? buildEstimate(estimateLines, estimateAppointment) : undefined;
     if (duplicateState === "checking" || duplicateState === "idle" || duplicateState === "error") {
       setDuplicateError("Complete the duplicate check before creating this account.");
       return;
@@ -479,6 +606,9 @@ function NewCustomerForm({
             createSeparateAccount: true,
             overrideReason: duplicateReason.trim(),
           } : {}),
+          // Not in the generated API types yet (the spec is regenerated with pnpm);
+          // the server reads it from the body (api-server lib/intake.ts).
+          ...({ intake } as object),
           initialJob: {
             accepted: true,
             scheduledDate: initialDate,
@@ -509,6 +639,8 @@ function NewCustomerForm({
     mutation.mutate({
       data: {
         ...v,
+        intake,
+        ...(estimate ? { estimate } : {}),
         ...(duplicateState === "candidates" ? {
           createSeparateAccount: true,
           overrideReason: duplicateReason.trim(),
@@ -545,9 +677,10 @@ function NewCustomerForm({
         </div>
       </fieldset>
 
-      {/* ── Contact Information ─────────────────────────────────────────── */}
-      <FormSection icon={User} title="Contact Information">
-        <div className="grid grid-cols-3 gap-3">
+      {/* ── Name ── the same order as the profile page, so a profile looks
+          the same the day it is made as when it is edited (Kyle, Video 3). */}
+      <FormSection icon={User} title="Name">
+        <div className="grid grid-cols-[110px_1fr_1fr] gap-3">
           <F label="Salutation">
             <select {...register("salutation")} className={SELECT_CLS}>
               <option value="">—</option>
@@ -568,121 +701,129 @@ function NewCustomerForm({
             <input {...register("companyName")} placeholder="Company or business name" className={INPUT_CLS} />
           </F>
         )}
-        <F label="Email" error={errors.email?.message}>
-          <input type="email" {...register("email")} placeholder="john@example.com" className={INPUT_CLS} />
-        </F>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Home Phone">
-            <PhoneInput registration={register("homePhone")} />
-          </F>
-          <F label="Work Phone">
-            <PhoneInput registration={register("workPhone")} />
-          </F>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Cell Phone">
-            <PhoneInput registration={register("cellPhone")} />
-          </F>
-          <F label="Alt. Phone">
-            <PhoneInput registration={register("altPhone")} />
-          </F>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Fax">
-            <PhoneInput registration={register("fax")} />
-          </F>
-          <F label="Alt. Phone Type">
-            <input {...register("altPhoneType")} placeholder="e.g. Second Cell, Office" className={INPUT_CLS} />
-          </F>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <F label="Alt. Contact Name">
-            <input {...register("altContact")} placeholder="Name of alternate contact" className={INPUT_CLS} />
-          </F>
-          <F label="Birthday">
-            <input {...register("birthday")} placeholder="MM/DD" className={INPUT_CLS} />
-          </F>
-        </div>
-        <F label="Star Rating">
-          <select {...register("starRating")} className={SELECT_CLS}>
-            <option value="">— None —</option>
-            {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""}</option>)}
-          </select>
-        </F>
       </FormSection>
 
-      {/* ── Service Address ─────────────────────────────────────────────── */}
-      <FormSection icon={MapPin} title="Service Address">
-        <F label="Street Address">
-          <input {...register("billingAddress")} placeholder="1234 Elm Street" className={INPUT_CLS} />
-        </F>
-        <div className="grid grid-cols-3 gap-3">
-          <F label="City">
-            <input {...register("billingCity")} placeholder="City" className={INPUT_CLS} />
-          </F>
-          <F label="State">
-            <input {...register("billingState")} placeholder="MO" className={INPUT_CLS} />
-          </F>
-          <F label="Zip">
-            <input {...register("billingZip")} placeholder="64501" className={INPUT_CLS} />
-          </F>
+      {/* ── Contact information — Kyle's six phones, each saying whose number
+          it is, and as many named emails as the family has (Video 2). ───── */}
+      <FormSection icon={Phone} title="Contact Information">
+        <div className="space-y-2" data-testid="intake-phones">
+          {INTAKE_PHONES.map(({ slot, field }) => {
+            const value = field ? (phoneValues[field] ?? "") : cell2;
+            return (
+              <div key={slot} className="grid items-start gap-2 grid-cols-[64px_1fr_1fr]">
+                <span className="pt-2 text-xs font-semibold text-slate-500">{slot}</span>
+                {field
+                  ? <PhoneInput registration={register(field)} label={`${slot} phone`} />
+                  : <input type="tel" inputMode="tel" aria-label="Cell 2 phone" placeholder="(555) 555-5555" className={INPUT_CLS}
+                      value={cell2} onChange={(event) => setCell2(formatPhoneAsTyped(event.target.value))} />}
+                <OwnerSelect label={`Whose ${slot} number`} owner={owners[slot] ?? ACCOUNT_OWNER} people={people}
+                  accountName={accountName} disabled={!String(value).trim()}
+                  onChange={(owner) => setOwners((current) => ({ ...current, [slot]: owner }))} />
+              </div>
+            );
+          })}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="border-t border-slate-200 pt-3">
+          <EmailRows rows={emailRows} people={people} accountName={accountName} error={errors.email?.message} onChange={setEmailRows} />
+        </div>
+      </FormSection>
+
+      {/* ── Service address — the main one and up to two more, named ─────── */}
+      <FormSection icon={MapPin} title="Service Address">
+        <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary">
+          <MapPin className="w-3.5 h-3.5" /> Main
+        </span>
+        <div className="grid gap-2 grid-cols-[2fr_1fr_70px_100px]">
+          <input {...register("billingAddress")} aria-label="Street Address" placeholder="Street" className={INPUT_CLS} />
+          <input {...register("billingCity")} aria-label="City" placeholder="City" className={INPUT_CLS} />
+          <input {...register("billingState")} aria-label="State" placeholder="State" className={INPUT_CLS} />
+          <input {...register("billingZip")} aria-label="Zip" placeholder="Zip" className={INPUT_CLS} />
+        </div>
+        <ExtraLocations rows={extraLocations} onChange={setExtraLocations} />
+        {/* Kyle #10: visible, toward the bottom of the information block. */}
+        <div className="grid grid-cols-3 gap-3 border-t border-slate-200 pt-3">
           <F label="County">
             <input {...register("county")} placeholder="Buchanan" className={INPUT_CLS} />
           </F>
           <F label="Subdivision">
             <input {...register("subdivision")} placeholder="Subdivision name" className={INPUT_CLS} />
           </F>
+          <F label="Birthday">
+            <input {...register("birthday")} placeholder="MM/DD" className={INPUT_CLS} />
+          </F>
         </div>
+        {/* Kyle: "click Facebook. It is that simple." The managed list from Settings. */}
+        <F label="How did they hear about us?">
+          <select aria-label="How did they hear about us?" value={marketingSource} onChange={(event) => setMarketingSource(event.target.value)} className={SELECT_CLS}>
+            <option value="">Not set</option>
+            {marketingSources.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </F>
       </FormSection>
 
       {/* Window & Property Details was removed at Kyle's request (Testing Edits,
           2026-10-01, #3): the business defines its own Custom Fields instead. */}
 
-      {/* ── Account Settings ─────────────────────────────────────────────── */}
-      <FormSection icon={Info} title="Account Settings">
-        {/* Kyle (Testing Edits, 2026-10-01, #4): nobody chooses this. A record
-            made from Prospects is a prospect and one made from Customers is a
-            customer; the way across is the conversion after an estimate is
-            accepted, never a dropdown. The value still travels with the form. */}
-        <input type="hidden" {...register("lifecycleStatus")} />
-        {/* Customer Since is set by the server on creation or conversion (#4).
-            Preferred Contact (#5) and Sending Preferences (#6) were removed at
-            Kyle's request; the communication-safety rules behind them are unchanged. */}
+      {/* ── Notes — internal; Directions is what the crew sees ───────────── */}
+      <FormSection icon={StickyNote} title="Notes">
         <div className="grid grid-cols-2 gap-3">
-          <F label="How Did They Hear?">
-            <input {...register("howHeard")} placeholder="Referral, Google, Door Hanger…" className={INPUT_CLS} />
+          <F label="General Notes">
+            <textarea {...register("notes")} rows={3} placeholder="Anything the office should know…" className={INPUT_CLS + " resize-none"} />
           </F>
-          <F label="Tags">
-            <input {...register("tags")} placeholder="comma-separated tags" className={INPUT_CLS} />
+          <F label="Directions">
+            <textarea {...register("directions")} rows={3} placeholder="Gate, parking, which house… the crew sees this" className={INPUT_CLS + " resize-none"} />
           </F>
-        </div>
-        <div className="flex flex-wrap gap-5 pt-1">
-          {[
-            { name: "isNonProfit" as const, label: "Non-Profit" },
-            { name: "ccFeeExempt" as const, label: "CC Fee Exempt" },
-            { name: "taxExempt"   as const, label: "Tax Exempt" },
-          ].map(({ name, label }) => (
-            <label key={name} className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" {...register(name)} className="w-4 h-4 rounded accent-primary" />
-              <span className="text-sm text-slate-700">{label}</span>
-            </label>
-          ))}
         </div>
       </FormSection>
 
-      {/* ── Notes ───────────────────────────────────────────────────────── */}
-      <FormSection icon={StickyNote} title="General Notes">
-        <F label="General Notes">
-          <textarea
-            {...register("notes")}
-            rows={3}
-            placeholder="Any notes about this customer…"
-            className={INPUT_CLS + " resize-none"}
-          />
-        </F>
-      </FormSection>
+      {/* ── More details — rarely used at intake, kept one click away ─────── */}
+      <section className="rounded-2xl border border-slate-200 bg-white">
+        <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left">
+          <span className="flex items-center gap-2 text-sm font-semibold text-slate-700"><Info className="w-4 h-4 text-slate-400" /> More details</span>
+          <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${moreOpen ? "rotate-90" : ""}`} />
+        </button>
+        {/* Kept mounted while closed, so nothing typed is dropped from the form. */}
+        <div className={`space-y-3 border-t border-slate-200 px-4 py-3 ${moreOpen ? "" : "hidden"}`}>
+          {/* Kyle (Testing Edits, 2026-10-01, #4): nobody chooses this. A record
+              made from Prospects is a prospect and one made from Customers is a
+              customer; the way across is the conversion after an estimate is
+              accepted, never a dropdown. The value still travels with the form. */}
+          <input type="hidden" {...register("lifecycleStatus")} />
+          {/* Customer Since is set by the server on creation or conversion (#4).
+              Preferred Contact (#5) and Sending Preferences (#6) were removed at
+              Kyle's request; the communication-safety rules behind them are unchanged. */}
+          <div className="flex flex-wrap gap-5">
+            {[
+              { name: "isNonProfit" as const, label: "Non-Profit" },
+              { name: "ccFeeExempt" as const, label: "CC Fee Exempt" },
+              { name: "taxExempt"   as const, label: "Tax Exempt" },
+            ].map(({ name, label }) => (
+              <label key={name} className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" {...register(name)} className="w-4 h-4 rounded accent-primary" />
+                <span className="text-sm text-slate-700">{label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <F label="Tags">
+              <input {...register("tags")} placeholder="comma-separated tags" className={INPUT_CLS} />
+            </F>
+            <F label="Star Rating">
+              <select {...register("starRating")} className={SELECT_CLS}>
+                <option value="">— None —</option>
+                {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""}</option>)}
+              </select>
+            </F>
+            <F label="Alt. Contact Name">
+              <input {...register("altContact")} placeholder="Name of alternate contact" className={INPUT_CLS} />
+            </F>
+            <F label="Alt. Phone Type">
+              <input {...register("altPhoneType")} placeholder="e.g. Office" className={INPUT_CLS} />
+            </F>
+          </div>
+        </div>
+      </section>
 
       {!isProspect && canScheduleInitialJob && (
         <FormSection icon={CalendarClock} title="Accepted Initial Job">
@@ -766,15 +907,33 @@ function NewCustomerForm({
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
+              aria-label="Book an estimate now"
               checked={scheduleEstimateNext}
               onChange={(event) => setScheduleEstimateNext(event.target.checked)}
               className="mt-0.5 w-4 h-4 rounded accent-primary"
             />
             <span>
-              <span className="block text-sm font-semibold text-slate-800">Schedule the estimate next</span>
-              <span className="block text-xs text-slate-500">After saving, go straight to this prospect's estimate with the appointment ready to fill in.</span>
+              <span className="block text-sm font-semibold text-slate-800">Book an estimate now</span>
+              <span className="block text-xs text-slate-500">Saved with the prospect, or not at all. Leave a price blank for the estimator to quote on site.</span>
             </span>
           </label>
+          {scheduleEstimateNext && (
+            <IntakeEstimate
+              lines={estimateLines}
+              onLines={setEstimateLines}
+              appointment={estimateAppointment}
+              onAppointment={setEstimateAppointment}
+              services={services}
+              estimators={estimators}
+              canSchedule={canBookEstimateTime}
+              locations={[
+                { index: 0, label: watch("billingAddress")?.trim() ? `Main — ${watch("billingAddress")}` : "Main address" },
+                ...extraLocations
+                  .filter((row) => [row.address, row.city, row.state, row.zip].some((part) => part.trim()))
+                  .map((row, index) => ({ index: index + 1, label: row.name.trim() || `Location ${index + 2}` })),
+              ]}
+            />
+          )}
         </FormSection>
       )}
 
@@ -791,9 +950,16 @@ function NewCustomerForm({
         onOpen={(id) => navigate(`/customers/${id}`)}
       />
 
-      <div className="pt-2 pb-1">
+      {intakeErrors.length > 0 && (
+        <div role="alert" data-testid="intake-problems" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 space-y-0.5">
+          {intakeErrors.map((problem) => <p key={problem}>{problem}</p>)}
+        </div>
+      )}
+
+      <div className="pt-2 pb-1 space-y-2">
         <button
           type="submit"
+          onClick={() => { sendEstimateRef.current = false; }}
           disabled={shouldDisableCustomerCreate(isCreatePending, duplicateState, duplicateDecision, duplicateReason)}
           className="w-full h-11 rounded-xl bg-primary text-white text-sm font-bold
                      shadow-sm shadow-primary/20 hover:bg-primary/90 active:scale-[.98] transition-all disabled:opacity-60"
@@ -803,9 +969,28 @@ function NewCustomerForm({
             : includeInitialJob && !isProspect
               ? "Create Customer & Schedule Job"
               : canScheduleEstimate && scheduleEstimateNext
-                ? "Create Prospect & Schedule Estimate"
+                ? "Create Prospect & Save Estimate"
                 : `Create ${entityLabel}`}
         </button>
+        {/* Kyle, Video 3: when the price was given on the phone, send it now.
+            Never with a service still to be quoted (lib/estimate-pricing on the server). */}
+        {canScheduleEstimate && scheduleEstimateNext && canEmailEstimate && (() => {
+          const blocker = emailBlocker(estimateLines, firstEmail);
+          return (
+            <div>
+              <button
+                type="submit"
+                data-testid="save-and-email-estimate"
+                onClick={() => { sendEstimateRef.current = true; }}
+                disabled={Boolean(blocker) || shouldDisableCustomerCreate(isCreatePending, duplicateState, duplicateDecision, duplicateReason)}
+                className="w-full h-10 rounded-xl border border-primary/40 bg-white text-primary text-sm font-bold hover:bg-primary/5 transition-all disabled:opacity-50"
+              >
+                Save and email estimate
+              </button>
+              {blocker && <p className="mt-1 text-center text-[11px] text-slate-400" data-testid="email-blocker">{blocker}</p>}
+            </div>
+          );
+        })()}
       </div>
     </form>
   );
@@ -1134,7 +1319,7 @@ export default function Customers({ mode = "customers" }: { mode?: "customers" |
 
       {/* ─── New account dialog ───────────────────────── */}
       {canManage && <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="sm:max-w-2xl rounded-2xl max-h-[92vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl rounded-2xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">New {entityLabel}</DialogTitle>
           </DialogHeader>

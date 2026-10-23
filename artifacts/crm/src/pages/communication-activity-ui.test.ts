@@ -7,11 +7,13 @@ import { test } from "node:test";
 
 const source = readFileSync(fileURLToPath(new URL("./CustomerDetail.tsx", import.meta.url)), "utf8");
 const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\/.*$/gm, "");
+// Since the 2026-10-21 redesign the Overview is the profile page, ProfileSheet.
+const sheet = readFileSync(fileURLToPath(new URL("../components/ProfileSheet.tsx", import.meta.url)), "utf8");
 
 test("#5 there is one tab, not two", () => {
   assert.match(source, /\{ id: "activity", +label: "Communication & Activity"/);
   assert.doesNotMatch(code, /label: "Communications"/);
-  assert.doesNotMatch(code, /activeTab === "communications"/);
+  assert.doesNotMatch(code, /activeView === "communications"/);
 });
 
 test("#5 it holds both the messages and the profile changes", () => {
@@ -36,20 +38,18 @@ test("#6 history cannot be edited from the tab, and says so", () => {
   assert.doesNotMatch(tab, /method: "DELETE"|method: "PATCH"/);
 });
 
-test("#6 the Overview says who created the profile and who touched it last", () => {
-  assert.match(source, /Created by/);
-  assert.match(source, /Last updated by/);
-  assert.match(source, /profileStewardship\(\(customer\.activityLogs \?\? \[\]\) as never/);
+test("#6 the profile says who created it and who touched it last", () => {
+  assert.match(sheet, /Created by/);
+  assert.match(sheet, /Last updated by/);
+  assert.match(sheet, /profileStewardship\(\(customer\.activityLogs \?\? \[\]\) as never/);
 });
 
-test("#3 General Notes sit on the Overview, with who and when", () => {
-  const overview = source.slice(source.indexOf("function OverviewTab("));
-  assert.match(overview, /<Section title="General Notes"/);
-  assert.match(overview, /Last updated by \$\{noteChange\.performedBy/);
-  assert.match(overview, /Job, estimate and location notes are kept with their own records\./);
+test("#3 General Notes sit on the profile page, with who and when", () => {
+  assert.match(sheet, /<Area label="General notes"/);
+  assert.match(sheet, /Last changed by \$\{noteChange\.performedBy/);
+  assert.match(sheet, /Job, estimate and location notes are kept with their own records\./);
 });
 
-test("#3 the note is editable in place, through the profile's own form", () => {
-  const overview = source.slice(source.indexOf("function OverviewTab("));
-  assert.match(overview, /\{\.\.\.form\.register\("notes"\)\}/);
+test("#3 the note is editable in place, saved by the page's one Update", () => {
+  assert.match(sheet, /value=\{draft\.account\.notes\} onChange=\{\(v\) => setAccount\("notes", v\)\}/);
 });

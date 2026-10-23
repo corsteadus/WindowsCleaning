@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, and, sql, or, ilike, isNull } from "drizzle-orm";
-import { db, customersTable, leadsTable, jobsTable, invoicesTable, messageLogsTable, emailLogsTable, emailTemplatesTable, activityLogsTable } from "@workspace/db";
+import { db, customersTable, leadsTable, jobsTable, invoicesTable, messageLogsTable, emailLogsTable, emailTemplatesTable, activityLogsTable, contactChannelsTable } from "@workspace/db";
 import { sendEmailTo, renderTemplate, type TemplateVars } from "../lib/email";
 import { createCampaign } from "../lib/campaign-processor";
 import {
@@ -91,6 +91,7 @@ async function resolveEmailEntityRecipient(input: {
   if (!record?.email) {
     throw new Error("Recipient record not found or has no email");
   }
+  let recipientEmail = String(record.email);
   if (input.email != null) {
     const supplied = normalizeCommunicationDestination(
       "email",
@@ -101,13 +102,31 @@ async function resolveEmailEntityRecipient(input: {
       record.email,
     ).normalized;
     if (supplied !== canonical) {
-      throw new Error("Recipient email does not match the selected record");
+      // Since the profile redesign (2026-10-21) a profile can hold several
+      // emails, each with its owner's name — Lauren as well as Lute. Any of
+      // them may be written to; an address that is not on this record still
+      // may not, so this cannot be used to send as the customer to a stranger.
+      const onRecord = entityType === "customer"
+        ? (await db.select({ value: contactChannelsTable.value }).from(contactChannelsTable).where(and(
+          eq(contactChannelsTable.customerId, entityId),
+          eq(contactChannelsTable.channelType, "email"),
+          isNull(contactChannelsTable.archivedAt),
+        ))).some((channel) => {
+          try {
+            return normalizeCommunicationDestination("email", channel.value).normalized === supplied;
+          } catch {
+            return false;
+          }
+        })
+        : false;
+      if (!onRecord) throw new Error("Recipient email does not match the selected record");
+      recipientEmail = supplied;
     }
   }
   return {
     entityType,
     entityId,
-    email: String(record.email),
+    email: recipientEmail,
     firstName: String(record.firstName ?? ""),
     lastName: String(record.lastName ?? ""),
     companyName:

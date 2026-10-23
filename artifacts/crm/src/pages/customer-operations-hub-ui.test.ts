@@ -16,7 +16,7 @@ describe("customer operations hub UI", () => {
 
   it("keeps estimates, split job history, invoices, payments, files and communications customer-centered", async () => {
     const source = await readFile(new URL("./CustomerDetail.tsx", import.meta.url), "utf8");
-    for (const label of ["Properties", "Scheduled & active", "Completed", "New Estimate", "Invoices", "Payments", "Files", "Communications", "Activity"]) {
+    for (const label of ["Locations", "Scheduled & active", "Completed", "New Estimate", "Invoices", "Payments", "Files", "Communication & Activity"]) {
       assert.match(source, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
     assert.match(source, /\/quotes\/new\?customerId=/);

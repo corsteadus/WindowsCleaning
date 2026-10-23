@@ -9,14 +9,16 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const detail = read("./CustomerDetail.tsx");
+// The card moved into the profile page's More details on 2026-10-21.
+const sheet = read("../components/ProfileSheet.tsx");
 const card = read("../components/MainProfileCard.tsx");
 const route = read("../../../api-server/src/routes/customers.ts");
 const rules = read("../../../api-server/src/lib/customer-hierarchy.ts");
 
 test("the profile shows what it is linked to, both ways", () => {
-  assert.match(detail, /<MainProfileCard/);
-  assert.match(detail, /mainProfile=\{customer\.mainProfile \?\? null\}/);
-  assert.match(detail, /subProfiles=\{customer\.subProfiles \?\? \[\]\}/);
+  assert.match(sheet, /<MainProfileCard/);
+  assert.match(sheet, /mainProfile=\{customer\.mainProfile \?\? null\}/);
+  assert.match(sheet, /subProfiles=\{customer\.subProfiles \?\? \[\]\}/);
   // The server sends both with the profile, so the card needs no request of its own.
   assert.match(route, /mainProfile: mainProfileRow\[0\] \? asProfileLink\(mainProfileRow\[0\]\) : null/);
   assert.match(route, /subProfiles: subProfiles\.map\(asProfileLink\)/);
@@ -30,7 +32,8 @@ test("linking changes nothing about billing, and the card says so", () => {
 });
 
 test("only somebody who may manage the profile can change the link", () => {
-  assert.match(detail, /canManage=\{canManageCustomer\}/);
+  assert.match(detail, /<ProfileSheet[\s\S]{0,200}canManage=\{canManageCustomer\}/);
+  assert.match(sheet, /<MainProfileCard[\s\S]{0,200}canManage=\{canManage\}/);
   assert.match(card, /canManage && \(/);
 });
 

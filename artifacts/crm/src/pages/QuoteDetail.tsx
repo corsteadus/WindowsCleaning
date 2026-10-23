@@ -219,7 +219,9 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       notes: quote.notes, terms: quote.terms,
       lineItems: (quote.lineItems ?? []).map((line: any) => ({
         serviceId: line.serviceId, description: line.description,
-        quantity: line.quantity, unitPrice: line.unitPrice, propertyId: quote.propertyId,
+        quantity: line.quantity, unitPrice: line.unitPrice,
+        // #31: the customer-visible description, and the line's own location.
+        serviceNotes: line.serviceNotes ?? null, propertyId: line.propertyId ?? quote.propertyId,
       })),
     },
   });

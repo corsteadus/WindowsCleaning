@@ -59,6 +59,8 @@ async function lockProposedContactSignals(tx: Parameters<Parameters<typeof db.tr
 export function customerInitialJobDbDependencies(input: {
   idempotency: { scope: string; operation: string; clientKey: string; requestHash: string };
   actorId: string | null;
+  /** Writes in the same transaction once the main property exists, e.g. the intake. */
+  afterPrimaryProperty?: (tx: any, customer: Customer) => Promise<void>;
 }): CustomerInitialJobServiceDependencies<Customer, Property, Job> {
   return {
     transaction: (work) => db.transaction((tx) => work({
@@ -130,6 +132,7 @@ export function customerInitialJobDbDependencies(input: {
         const [customer] = await tx.update(customersTable).set({ defaultPropertyId: propertyId })
           .where(eq(customersTable.id, customerId)).returning();
         if (!customer) throw new Error("Customer disappeared while setting default property");
+        if (input.afterPrimaryProperty) await input.afterPrimaryProperty(tx, customer);
         return customer;
       },
       insertInitialJob: async (customer, property, initialJob) => {

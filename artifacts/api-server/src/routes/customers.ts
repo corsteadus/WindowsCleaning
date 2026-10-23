@@ -41,6 +41,7 @@ import {
   lockAccount,
   syncPrimaryContactFromLegacy,
   syncPrimaryPropertyFromLegacy,
+  AccountRelationError,
 } from "../lib/account-relations.ts";
 import {
   findStrongDuplicateCandidatesForCustomer,
@@ -67,6 +68,13 @@ import {
 } from "../lib/prospect-account.ts";
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
 import { decideMainProfile, describeMainProfileChange } from "../lib/customer-hierarchy.ts";
+import { neighborsOf } from "../lib/profile-neighbors.ts";
+import {
+  IntakeError, estimateLocationIds, intakeFlatFields, parseIntake, parseIntakeEstimate,
+  type IntakeEstimate, type IntakePlan,
+} from "../lib/intake.ts";
+import { createQuoteTx, createScheduledQuoteTx, parseQuoteAppointment } from "./quotes.ts";
+import { writeIntake } from "../lib/intake-writer.ts";
 import {
   containsPattern,
   parseCustomFieldFilter,
@@ -304,7 +312,14 @@ router.post("/customers/with-initial-job", async (req, res): Promise<void> => {
     res.status(400).json({ error: "firstName and lastName are required" });
     return;
   }
-  const normalized = normalizeCustomerFields(body);
+  let intake: IntakePlan | null;
+  try {
+    intake = parseIntake(body.intake, { firstName: body.firstName, lastName: body.lastName });
+  } catch (error) {
+    if (error instanceof IntakeError) { res.status(400).json({ error: error.message, code: "invalid_intake" }); return; }
+    throw error;
+  }
+  const normalized = normalizeCustomerFields(intake ? { ...body, ...intakeFlatFields(intake) } : body);
   if (normalized.error) {
     res.status(400).json({ error: normalized.error });
     return;
@@ -325,6 +340,7 @@ router.post("/customers/with-initial-job", async (req, res): Promise<void> => {
       createSeparateAccount,
       overrideReason,
       initialJob,
+      ...(intake ? { intake } : {}),
     });
     if (!idempotency) {
       res.status(400).json({ error: "Idempotency-Key is required", code: "idempotency_key_required" });
@@ -360,6 +376,7 @@ router.post("/customers/with-initial-job", async (req, res): Promise<void> => {
     }, customerInitialJobDbDependencies({
       idempotency,
       actorId: getPerformedBy(req),
+      afterPrimaryProperty: intake ? async (tx, customer) => { await writeIntake(tx, customer, intake); } : undefined,
     }));
     const { bundle, kind: finalKind } = serviceResult;
     if (finalKind === "replay") markIdempotencyReplay(res);
@@ -403,12 +420,44 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
     res.status(400).json({ error: "firstName and lastName are required" });
     return;
   }
-  const normalized = normalizeCustomerFields(body);
+  // Profile redesign piece B: named phones, emails and locations at creation.
+  let intake: IntakePlan | null;
+  try {
+    intake = parseIntake(req.body?.intake, { firstName: body.firstName, lastName: body.lastName });
+  } catch (error) {
+    if (error instanceof IntakeError) { res.status(400).json({ error: error.message, code: "invalid_intake" }); return; }
+    throw error;
+  }
+  const normalized = normalizeCustomerFields(intake ? { ...body, ...intakeFlatFields(intake) } : body);
   if (normalized.error) {
     res.status(400).json({ error: normalized.error });
     return;
   }
   withoutClientCustomerSince(normalized.fields);
+  // Piece B2: the estimate booked on the same screen (Kyle, Video 3).
+  let estimate: IntakeEstimate | null;
+  try {
+    const f = normalized.fields;
+    estimate = parseIntakeEstimate(req.body?.estimate, {
+      main: ["billingAddress", "billingCity", "billingState", "billingZip"].every((key) => typeof f[key] === "string" && String(f[key]).trim()),
+      extraLocations: intake?.locations.length ?? 0,
+    });
+  } catch (error) {
+    if (error instanceof IntakeError) { res.status(400).json({ error: error.message, code: "invalid_intake" }); return; }
+    throw error;
+  }
+  if (estimate) {
+    if (!hasCapability(req.user?.role, "quotes.manage")
+      || (estimate.appointment && !hasCapability(req.user?.role, "estimates.schedule"))) {
+      res.status(403).json({ error: "Estimate access is required to book an estimate here", code: "forbidden" });
+      return;
+    }
+    if (estimate.appointment) {
+      // The locations are filled in once they exist; everything else is checked now.
+      const check = parseQuoteAppointment({ ...estimate.appointment, propertyIds: [1] });
+      if ("error" in check) { res.status(400).json({ error: check.error, code: "invalid_intake" }); return; }
+    }
+  }
   const existingCustomerId = body.existingCustomerId === undefined || body.existingCustomerId === null || body.existingCustomerId === ""
     ? null
     : Number(body.existingCustomerId);
@@ -423,6 +472,8 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
     createSeparateAccount,
     overrideReason,
     existingCustomerId,
+    ...(intake ? { intake } : {}),
+    ...(estimate ? { estimate } : {}),
   });
   // Set after the idempotency fingerprint is taken, so a retry on a later day
   // is still recognised as the same request.
@@ -440,6 +491,9 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
   };
   let transactionKind: "created" | "existing" | "replay" = "created";
   let transactionAudit: CustomerCreateAudit | null = null;
+  let mainPropertyId: number | null = null;
+  let extraLocationIds: number[] = [];
+  let createdQuote: { id: number; quoteNumber: string } | null = null;
 
   try {
     const { customer, createdContact, createdProperty } = await db.transaction(async (tx) => {
@@ -540,6 +594,8 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
               .set({ defaultPropertyId: createdProperty.id })
               .where(eq(customersTable.id, created.id))
               .returning();
+            mainPropertyId = createdProperty.id;
+            if (intake) extraLocationIds = (await writeIntake(tx, created, intake)).locationIds;
             return {
               id: created.id,
               customer: withDefault ?? created,
@@ -547,12 +603,45 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
               createdProperty,
             };
           }
+          if (intake) extraLocationIds = (await writeIntake(tx, created, intake)).locationIds;
           return { id: created.id, customer: created, createdContact, createdProperty };
           },
         },
       );
       transactionKind = transactionOutcome.kind;
       transactionAudit = transactionOutcome.kind === "created" ? transactionOutcome.audit : null;
+      if (estimate && transactionOutcome.kind === "created") {
+        const propertyIds = [mainPropertyId, ...extraLocationIds] as number[];
+        const customerId = transactionOutcome.customer.id;
+        const quote = {
+          customerId,
+          propertyId: propertyIds[estimate.lines[0].location],
+          status: "draft",
+          notes: estimate.notes,
+          lineItems: estimate.lines.map((line) => ({
+            serviceId: line.serviceId ?? undefined,
+            description: line.description,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            serviceNotes: line.serviceNotes,
+            propertyId: propertyIds[line.location],
+          })),
+        };
+        if (estimate.appointment) {
+          const appointment = parseQuoteAppointment({
+            ...estimate.appointment,
+            propertyIds: estimateLocationIds(estimate, propertyIds),
+          });
+          if ("error" in appointment) throw new AccountRelationError(400, appointment.error);
+          const { quote: made } = await createScheduledQuoteTx(tx, {
+            quote, customerId, appointment, performedBy: getPerformedBy(req), actorId: req.user?.id ?? null,
+          });
+          createdQuote = { id: made.id, quoteNumber: made.quoteNumber };
+        } else {
+          const made = await createQuoteTx(tx, quote, getPerformedBy(req));
+          createdQuote = { id: made.id, quoteNumber: made.quoteNumber };
+        }
+      }
       return transactionOutcome.customer;
     });
     const finalKind = transactionKind as "created" | "existing" | "replay";
@@ -588,6 +677,8 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
       ...serialize(customer),
       createdContactId: createdContact?.id ?? null,
       createdPropertyId: createdProperty?.id ?? null,
+      estimate: createdQuote as { id: number; quoteNumber: string } | null
+        ?? (estimate && finalKind === "replay" ? await firstQuoteOf(customer.id) : null),
       created: finalKind === "created",
       replayed: finalKind === "replay",
     });
@@ -612,9 +703,46 @@ router.post(["/customers", "/prospects"], async (req, res): Promise<void> => {
       res.status(409).json({ error: error.message, code: "customer_existing_account_invalid" });
       return;
     }
+    if (error instanceof AccountRelationError) {
+      res.status(error.status).json({ error: error.message, code: "invalid_intake" });
+      return;
+    }
     throw error;
   }
 
+});
+
+/** A replayed create answers with the estimate it made the first time. */
+async function firstQuoteOf(customerId: number): Promise<{ id: number; quoteNumber: string } | null> {
+  const [quote] = await db.select({ id: quotesTable.id, quoteNumber: quotesTable.quoteNumber })
+    .from(quotesTable).where(eq(quotesTable.customerId, customerId)).orderBy(asc(quotesTable.id)).limit(1);
+  return quote ?? null;
+}
+
+// ─── Previous / Next beside the name (profile redesign, 2026-10-21) ───────────
+// Active profiles of the same kind only, filed by last name or, for a
+// commercial profile, company name. The ordering is lib/profile-neighbors.ts.
+router.get(["/customers/:id/neighbors", "/prospects/:id/neighbors"], async (req, res): Promise<void> => {
+  // A technician sees only the customers on their own work; arrows through the
+  // whole database would walk straight past that.
+  if (isAssignmentScopedOperationalRole(req.user?.role)) {
+    res.status(403).json({ error: "Not available for assigned-work access", code: "assigned_work_scope" });
+    return;
+  }
+  const id = parseId(req.params.id);
+  const lifecycle = req.path.startsWith("/prospects/") ? "prospect" : "customer";
+  const columns = {
+    id: customersTable.id,
+    firstName: customersTable.firstName,
+    lastName: customersTable.lastName,
+    companyName: customersTable.companyName,
+    clientType: customersTable.clientType,
+  };
+  const [current] = await db.select(columns).from(customersTable).where(eq(customersTable.id, id));
+  if (!current) { res.status(404).json({ error: "Profile not found" }); return; }
+  const rows = await db.select(columns).from(customersTable)
+    .where(eq(customersTable.lifecycleStatus, lifecycle));
+  res.json(neighborsOf(rows, current));
 });
 
 // ─── Get customer detail (with related data + activity log) ───────────────────

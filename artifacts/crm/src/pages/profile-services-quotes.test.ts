@@ -48,15 +48,25 @@ test("#22 a service can be added from the estimate's picker and from the job for
 
 test("#16 prospects get New Estimate too, in the header and in the Quotes tab", () => {
   assert.match(detail, /customer\.lifecycleStatus === "prospect"/);
-  assert.match(detail, /!isEditing && canQuoteThisAccount && \(/);
+  assert.match(detail, /\{canQuoteThisAccount && \(\s*<button[\s\S]{0,400}New Estimate/);
   assert.match(detail, /<QuotesTab [^>]*canCreate=\{canQuoteThisAccount\}/);
   const tab = detail.slice(detail.indexOf("function QuotesTab("));
   assert.match(tab.slice(0, 1200), /href=\{`\/quotes\/new\?customerId=\$\{customerId\}`\}/);
 });
 
-test("#15 creating a prospect carries on into its estimate with the appointment open", () => {
-  assert.match(customers, /navigate\(`\/quotes\/new\?customerId=\$\{created\.id\}&schedule=estimate`\)/);
-  assert.match(customers, /Create Prospect & Schedule Estimate/);
+// #15 was first built as a jump to the estimate page after saving. Kyle's
+// Video 3 showed he meant the estimate on the same form, saved with the
+// prospect (piece B2, 2026-10-23); the estimate page keeps its own link.
+test("#15 the estimate is booked on the Add Prospect form itself", () => {
+  assert.match(customers, /<IntakeEstimate/);
+  assert.match(customers, /Create Prospect & Save Estimate/);
+  assert.match(customers, /\.\.\.\(estimate \? \{ estimate \} : \{\}\),/);
+  assert.doesNotMatch(customers, /\/quotes\/new\?customerId=\$\{created\.id\}&schedule=estimate/);
   assert.match(quoteNew, /get\("schedule"\) === "estimate"/);
   assert.match(quoteNew, /id="estimate-appointment"/);
+});
+
+test("Save and email waits until every service is priced", () => {
+  assert.match(customers, /const blocker = emailBlocker\(estimateLines, firstEmail\);/);
+  assert.match(customers, /disabled=\{Boolean\(blocker\) \|\|/);
 });

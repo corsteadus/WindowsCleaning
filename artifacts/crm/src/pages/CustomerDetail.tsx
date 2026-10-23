@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { useBackNavigation } from "@/hooks/use-back-navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
 import { Layout } from "@/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { customerLifecycleDisplayStatus } from "@/lib/customer-lifecycle-display";
@@ -14,23 +13,22 @@ import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { MainProfileCard, type ProfileLink } from "@/components/MainProfileCard";
 import {
-  buildActivityFeed, countFeed, filterFeed, lastNoteChange, profileStewardship,
+  buildActivityFeed, countFeed, filterFeed,
   type FeedFilter,
 } from "@/lib/activity-feed";
 import { getListCustomersQueryKey, getListProspectsQueryKey } from "@workspace/api-client-react";
 import {
-  ArrowLeft, Edit2, Save, X, Phone, Mail, MapPin, Tag,
-  Building2, Briefcase, FileText, Receipt, MessageSquare,
-  PhoneCall, StickyNote, Home, ChevronRight, User, Calendar,
-  Layers, Info, AlertCircle, CheckCircle2, Clock, DollarSign,
-  Repeat, Plus, Trash2, Star, CreditCard, Activity, PowerOff, Power, Paperclip, RotateCcw,
+  ArrowLeft, Phone, Mail, MapPin,
+  Briefcase, FileText, Receipt,
+  PhoneCall, Home, ChevronLeft, ChevronRight, User, Calendar,
+  CheckCircle2,
+  Plus, Trash2, Star, CreditCard, Activity, PowerOff, Power, Paperclip, RotateCcw,
   Users,
-  ContactRound, Archive, Link2,
+  Archive,
 } from "lucide-react";
 import { FilesTab } from "@/components/FilesTab";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
-import { ProfileDetailsTab } from "@/components/ProfileDetailsTab";
-import { ProfileCustomFieldsCard } from "@/components/ProfileCustomFieldsCard";
+import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -252,24 +250,27 @@ interface MessageLog {
   createdAt: string;
 }
 
-// ─── Tab config ───────────────────────────────────────────────────────────────
-type Tab = "overview" | "profile" | "contacts" | "properties" | "jobs" | "quotes" | "invoices" | "payments" | "callbacks" | "notes" | "files" | "activity";
+// ─── Views (profile redesign, 2026-10-21) ─────────────────────────────────────
+// Twelve tabs became one page and a Jump To list. Overview, Profile Details,
+// General Notes and Callbacks are all on the profile page itself now. Contacts
+// and Properties are still here in full — the page edits the everyday parts
+// (names, numbers, addresses), and these keep the rest (sharing an address,
+// archiving, a contact's own details). Nothing that worked was taken away.
+type View = "profile" | "quotes" | "jobs" | "invoices" | "payments" | "activity" | "files" | "contacts" | "properties";
 
-const TABS: { id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "overview",       label: "Overview",        icon: User },
-  { id: "profile",        label: "Profile Details", icon: ContactRound },
-  { id: "contacts",       label: "Contacts",        icon: Users },
-  { id: "properties",     label: "Properties",      icon: Home },
-  { id: "jobs",           label: "Job History",     icon: Briefcase },
-  { id: "quotes",         label: "Quotes",          icon: FileText },
-  { id: "invoices",       label: "Invoices",        icon: Receipt },
-  { id: "payments",       label: "Payments",        icon: CreditCard },
-
-  { id: "callbacks",      label: "Callbacks",       icon: PhoneCall },
-  { id: "notes",          label: "General Notes",   icon: StickyNote },
-  { id: "files",          label: "Files",           icon: Paperclip },
-  { id: "activity",       label: "Communication & Activity", icon: Activity },
+const VIEWS: { id: View; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "profile",    label: "Profile",       icon: User },
+  { id: "quotes",     label: "Estimates",     icon: FileText },
+  { id: "jobs",       label: "Jobs",          icon: Briefcase },
+  { id: "invoices",   label: "Invoices",      icon: Receipt },
+  { id: "payments",   label: "Payments",      icon: CreditCard },
+  { id: "activity",   label: "Communication & Activity", icon: Activity },
+  { id: "files",      label: "Files",         icon: Paperclip },
+  { id: "contacts",   label: "Contacts",      icon: Users },
+  { id: "properties", label: "Locations",     icon: Home },
 ];
+
+const UNSAVED_WARNING = "You have changes that are not updated yet. Leave without saving them?";
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function CustomerDetail() {
@@ -293,23 +294,48 @@ export default function CustomerDetail() {
   const canCreateEstimates = hasClientCapability(user, "quotes.manage");
   const canSendEmail = hasClientCapability(user, "communication.send");
   const canViewFinancials = hasClientCapability(user, "invoices.view");
-  const visibleTabs = TABS.filter((tab) =>
-    (tab.id !== "quotes" || hasClientCapability(user, "quotes.view"))
-    && (tab.id !== "invoices" || canViewFinancials)
-    && (tab.id !== "payments" || hasClientCapability(user, "payments.view"))
-    && (tab.id !== "activity" || hasClientCapability(user, "communication.view"))
-    && (tab.id !== "profile" || canManageCustomer)
-    && (tab.id !== "callbacks" || canManageCustomer)
-    && (tab.id !== "files" || canManageCustomer)
-    && (tab.id !== "activity" || canManageCustomer)
+  const visibleViews = VIEWS.filter((view) =>
+    (view.id !== "quotes" || hasClientCapability(user, "quotes.view"))
+    && (view.id !== "invoices" || canViewFinancials)
+    && (view.id !== "payments" || hasClientCapability(user, "payments.view"))
+    && (view.id !== "activity" || hasClientCapability(user, "communication.view"))
+    && (view.id !== "files" || canManageCustomer)
+    && (view.id !== "activity" || canManageCustomer)
   );
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
-  const [isEditing, setIsEditing] = useState(false);
+  const [activeView, setActiveView] = useState<View>("profile");
+  // The page holds unsaved edits until Update; anything that would leave it
+  // asks first rather than throwing them away.
+  const [sheetDirty, setSheetDirty] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const guard = (action: () => void) => {
+    if (sheetDirty && activeView === "profile" && !window.confirm(UNSAVED_WARNING)) return;
+    setSheetDirty(false);
+    action();
+  };
+  // Moving to another profile with the arrows starts it on its own page.
+  useEffect(() => { setActiveView("profile"); setActionsOpen(false); }, [id]);
+
+  // Kyle's answer #6: Previous / Next through active profiles of the same kind.
+  const neighbors = useQuery<{ previous: Neighbor | null; next: Neighbor | null }>({
+    queryKey: authScopedQueryKey(user, ["profile-neighbors", apiBase, id]),
+    queryFn: async () => {
+      const response = await protectedFetch(`${apiBase}/${id}/neighbors`);
+      if (!response.ok) throw new Error("No neighbours");
+      return response.json();
+    },
+    retry: false,
+  });
+  const goToNeighbor = (neighbor: Neighbor) =>
+    guard(() => navigate(`${isProspectRoute ? "/prospects" : "/customers"}/${neighbor.id}`));
   // Kyle A#21: a profile can be archived, not only deactivated. Both ask for a
   // reason and both are logged, so they share one dialog.
   const [statusIntent, setStatusIntent] = useState<null | "inactive" | "archived">(null);
   const [deactivateReason, setDeactivateReason] = useState("");
   const [emailModal, setEmailModal] = useState(false);
+  // Which address the one-off email goes to: any address on the profile can be
+  // clicked, not only the main one (Kyle's answer #11).
+  const [emailTo, setEmailTo] = useState<string | null>(null);
+  const openEmail = (address: string) => { setEmailTo(address); setEmailModal(true); };
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [emailSending, setEmailSending] = useState(false);
@@ -402,47 +428,8 @@ export default function CustomerDetail() {
     onError: () => toast({ title: "Status update failed", variant: "destructive" }),
   });
 
-  const mutation = useMutation({
-    mutationFn: async (updates: Partial<CustomerDetail>) => {
-      const res = await protectedFetch(`${apiBase}/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (!res.ok) throw new Error("Failed to save");
-      return res.json();
-    },
-    onSuccess: (committedCustomer) => {
-      queryClient.setQueryData<CustomerDetail>(
-        authScopedQueryKey(user, ["customer", id]),
-        (current) => current ? { ...current, ...committedCustomer } : current,
-      );
-      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
-      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customers"]) });
-      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["prospects"]) });
-      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListCustomersQueryKey()) });
-      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListProspectsQueryKey()) });
-      toast({ title: `${entityLabel} saved` });
-      setIsEditing(false);
-    },
-    onError: () => toast({ title: "Save failed", variant: "destructive" }),
-  });
-
-  const form = useForm<Partial<CustomerDetail>>({ defaultValues: customer });
-
-  function startEdit() {
-    form.reset(customer);
-    setIsEditing(true);
-  }
-
-  function cancelEdit() {
-    setIsEditing(false);
-    form.reset(customer);
-  }
-
-  function onSubmit(values: Partial<CustomerDetail>) {
-    mutation.mutate(values);
-  }
+  // The Edit / Save Changes mode is gone (Kyle, Video 1): every field on the
+  // profile page is always editable, and its own Update button saves it.
 
   if (isLoading) {
     return (
@@ -498,135 +485,98 @@ export default function CustomerDetail() {
 
   return (
     <Layout>
-      <div className="p-4 lg:p-6 max-w-5xl mx-auto space-y-6">
+      <div className="p-4 lg:p-6 pt-0 lg:pt-0 max-w-6xl mx-auto space-y-5">
 
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <button onClick={goBack} className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:text-slate-900 hover:border-slate-300 hover:bg-slate-50 transition-colors shrink-0">
+        {/* ── Header — sticky, so the name, the arrows and the actions stay in
+            reach while the profile scrolls (Kyle, Videos 1 and 3). Seven
+            buttons became three and a menu; nothing was removed. ──────── */}
+        <div data-testid="profile-header" className="sticky top-0 z-30 -mx-4 lg:-mx-6 border-b border-slate-200 bg-white/95 px-4 lg:px-6 py-3 backdrop-blur">
+          <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => guard(goBack)} className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50 shrink-0">
               <ArrowLeft className="w-3.5 h-3.5" />
               {backLabel ?? entityLabelPlural}
             </button>
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
-                <span className="text-base font-bold text-primary">{initials}</span>
-              </div>
-              <div>
-                 <h1 className="text-xl font-bold text-slate-900">{accountName}</h1>
-                 {customer.companyName && fullName && (
-                   <p className="text-xs text-slate-500 mt-0.5">Primary contact: {fullName}</p>
-                 )}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <StatusBadge status={customerLifecycleDisplayStatus(customer)} />
-                  <span className="text-[10px] font-semibold bg-slate-100 text-slate-500 rounded-full px-2 py-0.5 capitalize">
-                    {customer.accountType ?? customer.clientType ?? "residential"}
-                  </span>
-                  {customer.isNonProfit && (
-                    <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">Non-Profit</span>
-                  )}
-                  {customer.taxExempt && (
-                    <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">Tax Exempt</span>
-                  )}
-                  {customer.ccFeeExempt && (
-                    <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">No CC Fee</span>
-                  )}
-                  <span className="text-[10px] text-slate-400">ID #{customer.id}</span>
-                  {customer.importExternalId && (
-                    <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">CF #{customer.importExternalId}</span>
-                  )}
-                </div>
+            <NeighborArrow direction="previous" neighbor={neighbors.data?.previous ?? null} onGo={goToNeighbor} />
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-slate-900 truncate">{accountName}</h1>
+              {customer.companyName && fullName && (
+                <p className="text-xs text-slate-500">Primary contact: {fullName}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                <StatusBadge status={customerLifecycleDisplayStatus(customer)} />
+                <span className="text-[10px] font-semibold bg-slate-100 text-slate-500 rounded-full px-2 py-0.5 capitalize">
+                  {customer.accountType ?? customer.clientType ?? "residential"}
+                </span>
+                {customer.isNonProfit && (
+                  <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">Non-Profit</span>
+                )}
+                {customer.taxExempt && (
+                  <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">Tax Exempt</span>
+                )}
+                {customer.ccFeeExempt && (
+                  <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">No CC Fee</span>
+                )}
+                <span className="text-[10px] text-slate-400">ID #{customer.id}</span>
+                {customer.importExternalId && (
+                  <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">CF #{customer.importExternalId}</span>
+                )}
               </div>
             </div>
-          </div>
+            <NeighborArrow direction="next" neighbor={neighbors.data?.next ?? null} onGo={goToNeighbor} />
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            {/* Schedule Job */}
-            {!isEditing && canScheduleJobs && (customer.lifecycleStatus === "customer" || customer.status === "active") && (
-              <button
-                onClick={() => navigate(`/jobs/new?customerId=${customer.id}`)}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 shadow-sm shadow-primary/20 transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" /> Schedule Job
-              </button>
-            )}
-            {/* New Quote — prospects too: an estimate is how a prospect becomes a customer (#16) */}
-            {!isEditing && canQuoteThisAccount && (
-              <button
-                onClick={() => navigate(`/quotes/new?customerId=${customer.id}`)}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-primary/30 text-primary bg-white text-xs font-semibold hover:bg-primary/5 transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" /> New Estimate
-              </button>
-            )}
-            {!isEditing && canManageCustomer && (
-              <button
-                onClick={() => { setDeleteError(null); setDeleteOpen(true); }}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-red-200 text-red-600 bg-white text-xs font-semibold hover:bg-red-50 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Delete
-              </button>
-            )}
-            {/* One-off email button */}
-            {!isEditing && canSendEmail && customer.email && (
-              <button
-                onClick={() => setEmailModal(true)}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-blue-200 text-blue-700 bg-white text-xs font-semibold hover:bg-blue-50 transition-colors"
-              >
-                <Mail className="w-3.5 h-3.5" /> Send Email
-              </button>
-            )}
-            {/* Status toggle — only in view mode */}
-            {!isEditing && canManageCustomer && (customer.lifecycleStatus === "customer" || customer.status === "active") && (
-              <button
-                onClick={() => setStatusIntent("inactive")}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-orange-200 text-orange-600 bg-white text-xs font-semibold hover:bg-orange-50 transition-colors"
-              >
-                <PowerOff className="w-3.5 h-3.5" /> Deactivate
-              </button>
-            )}
-            {!isEditing && canManageCustomer && customer.lifecycleStatus !== "archived" && (
-              <button
-                onClick={() => setStatusIntent("archived")}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-300 text-slate-600 bg-white text-xs font-semibold hover:bg-slate-50 transition-colors"
-              >
-                <Archive className="w-3.5 h-3.5" /> Archive
-              </button>
-            )}
-            {!isEditing && canManageCustomer && (customer.lifecycleStatus === "inactive" || customer.lifecycleStatus === "archived" || customer.status === "inactive") && (
-              <button
-                onClick={() => statusMutation.mutate({ status: "active" })}
-                disabled={statusMutation.isPending}
-                className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-emerald-200 text-emerald-700 bg-white text-xs font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50"
-              >
-                <Power className="w-3.5 h-3.5" /> Reactivate
-              </button>
-            )}
-            {canManageCustomer && (isEditing ? (
-              <>
+            <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+              {/* New Quote — prospects too: an estimate is how a prospect becomes a customer (#16) */}
+              {canQuoteThisAccount && (
                 <button
-                  onClick={cancelEdit}
-                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                  onClick={() => guard(() => navigate(`/quotes/new?customerId=${customer.id}`))}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90 shadow-sm shadow-primary/20"
                 >
-                  <X className="w-3.5 h-3.5" /> Cancel
+                  <FileText className="w-3.5 h-3.5" /> New Estimate
                 </button>
+              )}
+              {canScheduleJobs && (customer.lifecycleStatus === "customer" || customer.status === "active") && customer.lifecycleStatus !== "prospect" && (
                 <button
-                  onClick={form.handleSubmit(onSubmit)}
-                  disabled={mutation.isPending}
-                  className="flex items-center gap-1.5 h-9 px-4 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-60"
+                  onClick={() => guard(() => navigate(`/jobs/new?customerId=${customer.id}`))}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-primary/30 text-primary bg-white text-xs font-semibold hover:bg-primary/5"
                 >
-                  <Save className="w-3.5 h-3.5" />
-                  {mutation.isPending ? "Saving…" : "Save Changes"}
+                  <Plus className="w-3.5 h-3.5" /> Schedule Job
                 </button>
-              </>
-            ) : (
-              <button
-                onClick={startEdit}
-                className="flex items-center gap-1.5 h-9 px-4 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors"
-              >
-                <Edit2 className="w-3.5 h-3.5" /> Edit
-              </button>
-            ))}
+              )}
+              {canSendEmail && customer.email && (
+                <button
+                  onClick={() => openEmail(customer.email!)}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-blue-200 text-blue-700 bg-white text-xs font-semibold hover:bg-blue-50"
+                >
+                  <Mail className="w-3.5 h-3.5" /> Send Email
+                </button>
+              )}
+              {canManageCustomer && (
+                <div className="relative">
+                  <button
+                    data-testid="profile-more-actions"
+                    onClick={() => setActionsOpen((open) => !open)}
+                    aria-expanded={actionsOpen}
+                    className="flex items-center gap-1 h-9 px-3 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    More <ChevronRight className={`w-3.5 h-3.5 transition-transform ${actionsOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {actionsOpen && (
+                    <div className="absolute right-0 top-11 z-40 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg" onMouseLeave={() => setActionsOpen(false)}>
+                      {(customer.lifecycleStatus === "customer" || customer.status === "active") && (
+                        <MenuItem icon={PowerOff} label="Deactivate" onClick={() => { setActionsOpen(false); setStatusIntent("inactive"); }} />
+                      )}
+                      {customer.lifecycleStatus !== "archived" && (
+                        <MenuItem icon={Archive} label="Archive" onClick={() => { setActionsOpen(false); setStatusIntent("archived"); }} />
+                      )}
+                      {(customer.lifecycleStatus === "inactive" || customer.lifecycleStatus === "archived" || customer.status === "inactive") && (
+                        <MenuItem icon={Power} label="Reactivate" onClick={() => { setActionsOpen(false); statusMutation.mutate({ status: "active" }); }} />
+                      )}
+                      <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setActionsOpen(false); setDeleteError(null); setDeleteOpen(true); }} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -639,7 +589,7 @@ export default function CustomerDetail() {
               </DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-sm text-slate-600">
-                  To: <span className="font-semibold text-slate-800">{customer.email}</span>
+                  To: <span className="font-semibold text-slate-800">{emailTo ?? customer.email}</span>
                 </div>
                 <div className="space-y-1">
                   <Label>Subject</Label>
@@ -684,7 +634,7 @@ export default function CustomerDetail() {
                         body: JSON.stringify({
                           entityType: "customer",
                           entityId: customer.id,
-                          email: customer.email,
+                          email: emailTo ?? customer.email,
                           firstName: customer.firstName,
                           lastName: customer.lastName,
                           subject: emailSubject,
@@ -692,7 +642,7 @@ export default function CustomerDetail() {
                         }),
                       });
                       if (!res.ok) throw new Error("Send failed");
-                      toast({ title: "Email sent!", description: `Sent to ${customer.email}` });
+                      toast({ title: "Email sent!", description: `Sent to ${emailTo ?? customer.email}` });
                       queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
                       setEmailModal(false);
                       setEmailSubject("");
@@ -760,163 +710,99 @@ export default function CustomerDetail() {
           </div>
         )}
 
-        {/* ── Stat cards ─────────────────────────────────────────────────── */}
-        <div className={`grid grid-cols-2 ${canViewFinancials ? "lg:grid-cols-4" : "lg:grid-cols-3"} gap-3`}>
-          <StatCard label="Total Jobs" value={String(customer.jobs.length)} icon={Briefcase} color="blue" />
-          {canViewFinancials && <StatCard label="Total Revenue" value={`$${totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={DollarSign} color="emerald" />}
-          <StatCard
-            label="Last Service"
-            value={lastServiceDate
-              ? new Date(lastServiceDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-              : "—"}
-            icon={Calendar}
-            color="violet"
-          />
-          <StatCard
-            label="Windows"
-            value={customer.windowCount != null ? String(customer.windowCount) : "—"}
-            icon={Layers}
-            color="slate"
-          />
-        </div>
+        {/* Kyle (2026-10-21): no statistics on the profile. Total Jobs, Revenue,
+            Last Service and Windows belong to reporting, not to the screen the
+            office works from. The default-property banner went too: the
+            address is the third thing on the page now. */}
 
-        {/* ── Default property banner ─────────────────────────────────────── */}
-        {activeProperties.length > 0 && (() => {
-          const effId = customer.effectiveDefaultPropertyId;
-          const defaultProp = effId
-            ? activeProperties.find(p => p.id === effId) ?? activeProperties[0]
-            : activeProperties[0];
-          const isManual = customer.defaultPropertySource === "manual";
-          const propCount    = activeProperties.length;
-          const displayName  = defaultProp.name
-            ? `${defaultProp.name} · ${defaultProp.address}`
-            : defaultProp.address;
-          const cityLine = [defaultProp.city, defaultProp.state, defaultProp.zip]
-            .filter(Boolean).join(", ");
-          return (
-            <button
-              onClick={() => setActiveTab("properties")}
-              className="flex items-center gap-3 w-full bg-white border border-slate-200 rounded-xl px-4 py-3 hover:border-amber-300 hover:bg-amber-50/40 transition-colors group text-left"
-            >
-              <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
-                <Home className="w-4 h-4 text-amber-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
-                    Default Property
-                  </span>
-                  {!isManual && (
-                    <span className="text-[10px] text-slate-400 italic">(auto-selected)</span>
-                  )}
-                  {isManual && (
-                    <span className="text-[10px] text-slate-400 italic">(manually set)</span>
-                  )}
-                </div>
-                <p className="text-sm font-semibold text-slate-800 truncate">{displayName}</p>
-                {cityLine && (
-                  <p className="text-xs text-slate-400 truncate">{cityLine}</p>
-                )}
-              </div>
-              {propCount > 1 && (
-                <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full px-2.5 py-1 whitespace-nowrap shrink-0">
-                  {propCount} properties
-                </span>
-              )}
-              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-500 shrink-0 transition-colors" />
-            </button>
-          );
-        })()}
-
-        {/* ── Tabs ────────────────────────────────────────────────────────── */}
-        <div className="flex gap-1 overflow-x-auto border-b border-slate-200 pb-px">
-          {visibleTabs.map(t => {
-            const Icon = t.icon;
-            const count = getTabCount(t.id, customer);
-            return (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="min-w-0">
+            {activeView !== "profile" && (
               <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold whitespace-nowrap rounded-t-lg transition-colors border-b-2 -mb-px
-                  ${activeTab === t.id
-                    ? "border-primary text-primary bg-primary/5"
-                    : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50"}`}
+                data-testid="back-to-profile"
+                onClick={() => setActiveView("profile")}
+                className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
               >
-                <Icon className="w-3.5 h-3.5" />
-                {t.label}
-                {count !== null && (
-                  <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 ${activeTab === t.id ? "bg-primary/15 text-primary" : "bg-slate-100 text-slate-500"}`}>
-                    {count}
-                  </span>
-                )}
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to profile
               </button>
-            );
-          })}
+            )}
+            {activeView === "profile" && (
+              <ProfileSheet
+                customer={customer as unknown as SheetCustomer}
+                apiBase={apiBase}
+                canManage={canManageCustomer}
+                entityLabel={entityLabel}
+                onDirtyChange={setSheetDirty}
+                onEmail={canSendEmail ? openEmail : undefined}
+                onSaved={() => {
+                  // Lists refresh in the background; the page itself is awaited.
+                  queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customers"]) });
+                  queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["prospects"]) });
+                  queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListCustomersQueryKey()) });
+                  queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, getListProspectsQueryKey()) });
+                  queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["profile-neighbors"]) });
+                  return queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
+                }}
+              />
+            )}
+            {activeView === "contacts" && (
+              canManageContacts
+                ? <ContactsTab contacts={customer.contacts ?? []} customerId={customer.id} />
+                : <ReadOnlyContacts contacts={customer.contacts ?? []} />
+            )}
+            {activeView === "properties" && (
+              canManageProperties
+                ? <PropertiesTab customer={customer} properties={customer.properties} customerId={customer.id} />
+                : <ReadOnlyProperties customer={customer} properties={customer.properties} />
+            )}
+            {activeView === "jobs" && (
+              <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
+            )}
+            {activeView === "quotes" && (
+              <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
+            )}
+            {activeView === "invoices" && (
+              <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
+            )}
+            {activeView === "payments" && (
+              <PaymentsTab payments={customer.payments ?? []} />
+            )}
+            {activeView === "files" && (
+              <FilesTab entityType="customer" entityId={customer.id} />
+            )}
+            {activeView === "activity" && (
+              <CommunicationActivityTab
+                messages={customer.messages}
+                logs={customer.activityLogs ?? []}
+                customerId={customer.id}
+              />
+            )}
+          </div>
+
+          {/* Jump To — Kyle's answer #6: the rest of the account, one click
+              away, without crowding the page the office works from. */}
+          <aside data-testid="jump-to" className="self-start lg:sticky lg:top-28">
+            <nav className="rounded-2xl border border-slate-200 bg-white p-2" aria-label="Jump to">
+              <p className="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Jump to</p>
+              {visibleViews.map((view) => {
+                const Icon = view.icon;
+                const count = getViewCount(view.id, customer);
+                const active = activeView === view.id;
+                return (
+                  <button
+                    key={view.id}
+                    onClick={() => (view.id === "profile" ? setActiveView("profile") : guard(() => setActiveView(view.id)))}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors ${active ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"}`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="flex-1">{view.label}</span>
+                    {count !== null && <span className="text-[11px] font-semibold text-slate-400">{count}</span>}
+                  </button>
+                );
+              })}
+            </nav>
+          </aside>
         </div>
-
-        {/* ── Tab content ─────────────────────────────────────────────────── */}
-        <div>
-          {activeTab === "overview" && (
-            <OverviewTab
-              customer={customer}
-              isEditing={isEditing}
-              form={form}
-              apiBase={apiBase}
-              canManage={canManageCustomer}
-              onProfileLinkChanged={() =>
-                queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) })}
-            />
-          )}
-          {activeTab === "profile" && (
-            <ProfileDetailsTab
-              customerId={customer.id}
-              apiBase={apiBase}
-              contacts={customer.contacts ?? []}
-              fallbackLocations={customer.properties ?? []}
-              entityLabel={entityLabel}
-            />
-          )}
-          {activeTab === "contacts" && (
-            canManageContacts
-              ? <ContactsTab contacts={customer.contacts ?? []} customerId={customer.id} />
-              : <ReadOnlyContacts contacts={customer.contacts ?? []} />
-          )}
-          {activeTab === "properties" && (
-            canManageProperties
-              ? <PropertiesTab customer={customer} properties={customer.properties} customerId={customer.id} />
-              : <ReadOnlyProperties customer={customer} properties={customer.properties} />
-          )}
-          {activeTab === "jobs" && (
-            <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
-          )}
-          {activeTab === "quotes" && (
-            <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
-          )}
-          {activeTab === "invoices" && (
-            <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
-          )}
-          {activeTab === "payments" && (
-            <PaymentsTab payments={customer.payments ?? []} />
-          )}
-
-          {activeTab === "callbacks" && (
-            <CallbacksTab customer={customer} isEditing={isEditing} form={form} />
-          )}
-          {activeTab === "notes" && (
-            <NotesTab customer={customer} isEditing={isEditing} form={form} />
-          )}
-          {activeTab === "files" && (
-            <FilesTab entityType="customer" entityId={customer.id} />
-          )}
-          {activeTab === "activity" && (
-            <CommunicationActivityTab
-              messages={customer.messages}
-              logs={customer.activityLogs ?? []}
-              customerId={customer.id}
-            />
-          )}
-        </div>
-
       {/* Permanent, so it asks first — but only once, and plainly. Kyle (Testing
           Edits, 2026-10-01, #6) asked for the typed name to go: a confirmation
           and two buttons, with the warning about what else is erased kept. */}
@@ -955,41 +841,57 @@ export default function CustomerDetail() {
   );
 }
 
-// ─── Stat card ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, icon: Icon, color }: {
-  label: string; value: string;
-  icon: React.ComponentType<{ className?: string }>;
-  color: "blue" | "emerald" | "amber" | "violet" | "slate";
+interface Neighbor { id: number; name: string }
+
+/**
+ * « or » beside the name (Kyle's answer #6). It says whose profile it opens,
+ * so it never takes you somewhere you did not mean to go.
+ */
+function NeighborArrow({ direction, neighbor, onGo }: {
+  direction: "previous" | "next"; neighbor: Neighbor | null; onGo: (neighbor: Neighbor) => void;
 }) {
-  const colors = {
-    blue:    "bg-blue-50 text-blue-600",
-    emerald: "bg-emerald-50 text-emerald-600",
-    amber:   "bg-amber-50 text-amber-600",
-    violet:  "bg-violet-50 text-violet-600",
-    slate:   "bg-slate-50 text-slate-500",
-  };
+  const Icon = direction === "previous" ? ChevronLeft : ChevronRight;
+  const label = direction === "previous" ? "Previous profile" : "Next profile";
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${colors[color]}`}>
-        <Icon className="w-4 h-4" />
-      </div>
-      <p className="text-lg font-bold text-slate-900">{value}</p>
-      <p className="text-xs text-slate-400 mt-0.5">{label}</p>
-    </div>
+    <button
+      type="button"
+      data-testid={`neighbor-${direction}`}
+      disabled={!neighbor}
+      onClick={() => neighbor && onGo(neighbor)}
+      aria-label={neighbor ? `${label}: ${neighbor.name}` : label}
+      title={neighbor ? neighbor.name : "No more profiles this way"}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30"
+    >
+      <Icon className="h-4 w-4" />
+    </button>
   );
 }
 
-function getTabCount(tab: Tab, customer: CustomerDetail): number | null {
-  if (tab === "jobs")           return customer.jobs.length;
-  if (tab === "quotes")         return customer.quotes?.length ?? 0;
-  if (tab === "invoices")       return customer.invoices?.length ?? 0;
-  if (tab === "payments")       return customer.payments?.length ?? 0;
-  if (tab === "properties") {
+function MenuItem({ icon: Icon, label, onClick, danger }: {
+  icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${danger ? "text-red-600 hover:bg-red-50" : "text-slate-700 hover:bg-slate-50"}`}
+    >
+      <Icon className="h-4 w-4" /> {label}
+    </button>
+  );
+}
+
+function getViewCount(view: View, customer: CustomerDetail): number | null {
+  if (view === "jobs")           return customer.jobs.length;
+  if (view === "quotes")         return customer.quotes?.length ?? 0;
+  if (view === "invoices")       return customer.invoices?.length ?? 0;
+  if (view === "payments")       return customer.payments?.length ?? 0;
+  if (view === "properties") {
     return customer.properties.filter((property) => !property.archivedAt).length;
   }
-  if (tab === "contacts")       return customer.contacts?.length ?? 0;
-  // one tab now shows both, so the badge counts both
-  if (tab === "activity") return (customer.messages?.length ?? 0) + (customer.activityLogs?.length ?? 0);
+  if (view === "contacts")       return customer.contacts?.length ?? 0;
+  // one view shows both, so the count is both
+  if (view === "activity") return (customer.messages?.length ?? 0) + (customer.activityLogs?.length ?? 0);
   return null;
 }
 
@@ -1379,272 +1281,7 @@ function ContactEditor({
   );
 }
 
-// ─── Field components ─────────────────────────────────────────────────────────
-function FieldRow({ label, value, editing, name, form, type = "text", placeholder }: {
-  label: string;
-  value?: string | number | null;
-  editing: boolean;
-  name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  form: any;
-  type?: string;
-  placeholder?: string;
-}) {
-  if (editing) {
-    return (
-      <div>
-        <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</label>
-        <input
-          {...form.register(name)}
-          type={type}
-          placeholder={placeholder ?? label}
-          className="mt-1 w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white"
-        />
-      </div>
-    );
-  }
-  return (
-    <div>
-      <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</label>
-      <p className="text-sm text-slate-800 mt-0.5">{value ?? <span className="text-slate-300 italic">—</span>}</p>
-    </div>
-  );
-}
-
-function CheckboxRow({ label, value, editing, name, form }: {
-  label: string; value?: boolean; editing: boolean; name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  form: any;
-}) {
-  if (editing) {
-    return (
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" {...form.register(name)} className="w-4 h-4 rounded accent-primary" />
-        <span className="text-sm text-slate-700">{label}</span>
-      </label>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2">
-      {value
-        ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-        : <div className="w-4 h-4 rounded-full border-2 border-slate-200 shrink-0" />}
-      <span className="text-sm text-slate-700">{label}</span>
-    </div>
-  );
-}
-
-function Section({ title, icon: Icon, children }: {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
-      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-        <Icon className="w-4 h-4 text-slate-400" />
-        {title}
-      </h3>
-      {children}
-    </div>
-  );
-}
-
-// ─── Overview Tab ─────────────────────────────────────────────────────────────
-function OverviewTab({ customer, isEditing, form, canManage, onProfileLinkChanged, apiBase }: {
-  customer: CustomerDetail; isEditing: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  form: any;
-  canManage: boolean;
-  onProfileLinkChanged: () => void;
-  apiBase: string;
-}) {
-  // Who last wrote a general note, and who created and last touched the
-  // profile — both read from the recorded history (Random Edits #3, #6).
-  const noteChange = lastNoteChange((customer.activityLogs ?? []) as never);
-  const stewardship = profileStewardship((customer.activityLogs ?? []) as never, {
-    createdAt: customer.createdAt, updatedAt: customer.updatedAt,
-  });
-  const when = (value: string | null) => (value ? new Date(value).toLocaleString() : "—");
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-      {/* Kyle's answer #5: sub-customers are a link and nothing else. */}
-      <Section title="Linked profiles" icon={Link2}>
-        <MainProfileCard
-          customerId={customer.id}
-          mainProfile={customer.mainProfile ?? null}
-          subProfiles={customer.subProfiles ?? []}
-          canManage={canManage}
-          onChanged={onProfileLinkChanged}
-        />
-      </Section>
-
-      {/* General notes, on the Overview rather than buried in Profile Details */}
-      <Section title="General Notes" icon={StickyNote}>
-        {isEditing ? (
-          <textarea {...form.register("notes")} rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Notes about this account…" />
-        ) : (
-          <p className="whitespace-pre-wrap text-sm text-slate-700">{customer.notes?.trim() || "No general notes yet."}</p>
-        )}
-        <p className="mt-2 text-[11px] text-slate-400">
-          {noteChange
-            ? `Last updated by ${noteChange.performedBy ?? "someone"} on ${when(noteChange.createdAt)}`
-            : "Job, estimate and location notes are kept with their own records."}
-        </p>
-      </Section>
-
-      {/* Kyle #3: the custom fields, on the tab a profile actually opens on.
-          They were already reaching every profile and saving correctly — on
-          Profile Details, one tab over, which is why he reported them as not
-          appearing at all. Same fields, same save; managing them stays where
-          it was. */}
-      <ProfileCustomFieldsCard customerId={customer.id} apiBase={apiBase} />
-
-      {/* Who created it, and who touched it last */}
-      <Section title="Record" icon={Activity}>
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Created by</p>
-            <p className="text-slate-800">{stewardship.createdBy ?? "—"}</p>
-            <p className="text-xs text-slate-500">{when(stewardship.createdAt)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Last updated by</p>
-            <p className="text-slate-800">{stewardship.updatedBy ?? "—"}</p>
-            <p className="text-xs text-slate-500">{when(stewardship.updatedAt)}</p>
-          </div>
-        </div>
-      </Section>
-
-      {/* Contact Info */}
-      <Section title="Contact Information" icon={Phone}>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="First Name"  value={customer.firstName} editing={isEditing} name="firstName" form={form} />
-          <FieldRow label="Last Name"   value={customer.lastName}  editing={isEditing} name="lastName"  form={form} />
-        </div>
-        <FieldRow label="Company / Business Name" value={customer.companyName} editing={isEditing} name="companyName" form={form} placeholder="Optional company name" />
-        <FieldRow label="Email" value={customer.email} editing={isEditing} name="email" form={form} type="email" />
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Home Phone" value={customer.homePhone} editing={isEditing} name="homePhone" form={form} placeholder="(555) 000-0000" />
-          <FieldRow label="Work Phone" value={customer.workPhone} editing={isEditing} name="workPhone" form={form} placeholder="(555) 000-0000" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Cell Phone" value={customer.cellPhone} editing={isEditing} name="cellPhone" form={form} placeholder="(555) 000-0000" />
-          <FieldRow label="Alt Phone"  value={customer.altPhone}  editing={isEditing} name="altPhone"  form={form} placeholder="(555) 000-0000" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Fax"            value={customer.fax}        editing={isEditing} name="fax"        form={form} placeholder="(555) 000-0000" />
-          <FieldRow label="Alt Phone Type" value={customer.altPhoneType} editing={isEditing} name="altPhoneType" form={form} placeholder="e.g. Second Cell, Office" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Alt. Contact Name" value={customer.altContact} editing={isEditing} name="altContact" form={form} placeholder="Name of alternate contact" />
-          <FieldRow label="Birthday" value={customer.birthday} editing={isEditing} name="birthday" form={form} type="text" placeholder="MM/DD" />
-        </div>
-        {/* Star rating display */}
-        <div>
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Star Rating</label>
-          {isEditing ? (
-            <select {...form.register("starRating", { valueAsNumber: true })} className="mt-1 w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white">
-              <option value="">— None —</option>
-              {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} star{n > 1 ? "s" : ""}</option>)}
-            </select>
-          ) : (
-            <p className="mt-0.5 text-sm text-amber-500">
-              {customer.starRating
-                ? "★".repeat(customer.starRating) + "☆".repeat(5 - customer.starRating)
-                : <span className="text-slate-300 italic">—</span>}
-            </p>
-          )}
-        </div>
-      </Section>
-
-      {/* Address — resolved from default property when available */}
-      {(() => {
-        const defProp = customer.effectiveDefaultPropertyId
-          ? customer.properties.find(p => p.id === customer.effectiveDefaultPropertyId)
-          : null;
-        const addr   = defProp?.address ?? customer.billingAddress;
-        const city   = defProp?.city    ?? customer.billingCity;
-        const state  = defProp?.state   ?? customer.billingState;
-        const zip    = defProp?.zip     ?? customer.billingZip;
-        return (
-          <Section title="Service Address" icon={MapPin}>
-            {defProp ? (
-              <>
-                <FieldRow label="Street Address" value={addr} editing={false} name="" form={form} />
-                <div className="grid grid-cols-3 gap-3">
-                  <FieldRow label="City"  value={city}  editing={false} name="" form={form} />
-                  <FieldRow label="State" value={state} editing={false} name="" form={form} />
-                  <FieldRow label="Zip"   value={zip}   editing={false} name="" form={form} />
-                </div>
-                <p className="text-[10px] text-slate-400 italic">From default property{defProp.name ? ` — ${defProp.name}` : ""}</p>
-              </>
-            ) : (
-              <>
-                <FieldRow label="Street Address" value={customer.billingAddress} editing={isEditing} name="billingAddress" form={form} />
-                <div className="grid grid-cols-3 gap-3">
-                  <FieldRow label="City"    value={customer.billingCity}  editing={isEditing} name="billingCity"  form={form} />
-                  <FieldRow label="State"   value={customer.billingState} editing={isEditing} name="billingState" form={form} />
-                  <FieldRow label="Zip"     value={customer.billingZip}   editing={isEditing} name="billingZip"   form={form} />
-                </div>
-              </>
-            )}
-            <div className="grid grid-cols-2 gap-4">
-              <FieldRow label="County"      value={customer.county}      editing={isEditing} name="county"      form={form} />
-              <FieldRow label="Subdivision" value={customer.subdivision} editing={isEditing} name="subdivision" form={form} />
-            </div>
-          </Section>
-        );
-      })()}
-
-      {/* Window & Property Details was removed at Kyle's request (Testing Edits,
-          2026-10-01, #3): the business defines its own Custom Fields instead. */}
-
-      {/* Account Flags */}
-      <Section title="Account Settings" icon={Info}>
-        <div className="space-y-3">
-          <CheckboxRow label="Non-Profit (no CC processing fee)" value={customer.isNonProfit}  editing={isEditing} name="isNonProfit"  form={form} />
-          <CheckboxRow label="Exempt from CC processing fee"     value={customer.ccFeeExempt}  editing={isEditing} name="ccFeeExempt"  form={form} />
-          <CheckboxRow label="Tax Exempt"                         value={customer.taxExempt}    editing={isEditing} name="taxExempt"    form={form} />
-        </div>
-        <div className="pt-2 border-t border-slate-100 grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Lifecycle</label>
-            {/* Kyle (Testing Edits, 2026-10-01, #4): this is shown, never chosen.
-                A prospect becomes a customer through the conversion after an
-                estimate is accepted; Deactivate and Archive have their own
-                buttons. So it reads the same whether or not the form is open. */}
-            <p className="mt-0.5"><StatusBadge status={customerLifecycleDisplayStatus(customer)} /></p>
-          </div>
-          <div>
-            <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Account Type</label>
-            {isEditing ? (
-              <select {...form.register("accountType")} className="mt-1 w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white">
-                <option value="residential">Residential</option>
-                <option value="commercial">Commercial</option>
-              </select>
-            ) : (
-              <p className="text-sm text-slate-800 mt-0.5 capitalize">{customer.accountType ?? customer.clientType ?? "residential"}</p>
-            )}
-          </div>
-        </div>
-        {/* Preferred Contact and Sending Preferences removed (Profile Notes #5, #6).
-            The communication-safety rules that read them are unchanged. */}
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="How Did They Hear?" value={customer.howHeard} editing={isEditing} name="howHeard" form={form} placeholder="Referral, Google, …" />
-          <FieldRow label="Tags"               value={customer.tags}    editing={isEditing} name="tags"    form={form} placeholder="comma-separated tags" />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <FieldRow label="Prospect Date"  value={customer.prospectDate}  editing={isEditing} name="prospectDate"  form={form} placeholder="YYYY-MM-DD" />
-          {/* Set by the system on creation or conversion, never typed (#4). */}
-          <FieldRow label="Customer Since" value={customer.customerDate}  editing={false} name="customerDate"  form={form} />
-        </div>
-      </Section>
-    </div>
-  );
-}
+// The Overview tab is the profile page now: components/ProfileSheet.tsx.
 
 // ─── Properties Tab ───────────────────────────────────────────────────────────
 function PropertiesTab({
@@ -2434,86 +2071,7 @@ function InvoicesTab({ invoices, customerId }: { invoices: Invoice[]; customerId
   );
 }
 
-// ─── Communications Tab ───────────────────────────────────────────────────────
-
-function CallbacksTab({ customer, isEditing, form }: {
-  customer: CustomerDetail; isEditing: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  form: any;
-}) {
-  return (
-    <div className="space-y-4">
-      <Section title="Callback Notes" icon={PhoneCall}>
-        {isEditing ? (
-          <textarea
-            {...form.register("callbackNotes")}
-            rows={6}
-            placeholder="Enter callback notes…"
-            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white resize-y"
-          />
-        ) : (
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">
-            {customer.callbackNotes ?? <span className="italic text-slate-300">No callback notes</span>}
-          </p>
-        )}
-      </Section>
-      <Section title="Directions to Property" icon={MapPin}>
-        {isEditing ? (
-          <textarea
-            {...form.register("directions")}
-            rows={4}
-            placeholder="Directions to reach the property…"
-            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white resize-y"
-          />
-        ) : (
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">
-            {customer.directions ?? <span className="italic text-slate-300">No directions</span>}
-          </p>
-        )}
-      </Section>
-    </div>
-  );
-}
-
-// ─── Notes Tab ────────────────────────────────────────────────────────────────
-function NotesTab({ customer, isEditing, form }: {
-  customer: CustomerDetail; isEditing: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  form: any;
-}) {
-  return (
-    <div className="space-y-4">
-      <Section title="General Notes" icon={StickyNote}>
-        {isEditing ? (
-          <textarea
-            {...form.register("notes")}
-            rows={6}
-            placeholder="General notes about this customer…"
-            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white resize-y"
-          />
-        ) : (
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">
-            {customer.notes ?? <span className="italic text-slate-300">No general notes</span>}
-          </p>
-        )}
-      </Section>
-      <Section title="Specific Notes" icon={AlertCircle}>
-        {isEditing ? (
-          <textarea
-            {...form.register("specificNotes")}
-            rows={4}
-            placeholder="Specific notes (e.g. always knock twice, dog in yard)…"
-            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary bg-white resize-y"
-          />
-        ) : (
-          <p className="text-sm text-slate-700 whitespace-pre-wrap">
-            {customer.specificNotes ?? <span className="italic text-slate-300">No specific notes</span>}
-          </p>
-        )}
-      </Section>
-    </div>
-  );
-}
+// The Callbacks and General Notes tabs are the Notes section of the profile page now.
 
 // ─── Activity Tab ─────────────────────────────────────────────────────────────
 /**

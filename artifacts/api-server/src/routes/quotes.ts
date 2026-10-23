@@ -211,14 +211,14 @@ function serializeQuote(q: typeof quotesTable.$inferSelect) {
  */
 async function saveLineServiceNotes(
   tx: { insert: typeof db.insert; delete: typeof db.delete },
-  entries: ReadonlyArray<{ lineItemId: number; serviceNotes: string | null }>,
+  entries: ReadonlyArray<{ lineItemId: number; serviceNotes: string | null; propertyId?: number | null }>,
 ): Promise<void> {
   for (const entry of entries) {
     await tx.delete(estimateLineMetadataTable)
       .where(eq(estimateLineMetadataTable.lineItemId, entry.lineItemId));
-    if (!entry.serviceNotes) continue;
+    if (!entry.serviceNotes && !entry.propertyId) continue;
     await tx.insert(estimateLineMetadataTable)
-      .values({ lineItemId: entry.lineItemId, serviceNotes: entry.serviceNotes });
+      .values({ lineItemId: entry.lineItemId, serviceNotes: entry.serviceNotes, propertyId: entry.propertyId ?? null });
   }
 }
 
@@ -250,6 +250,7 @@ async function getQuoteWithDetails(id: number) {
       .where(inArray(estimateLineMetadataTable.lineItemId, lineItems.map((line) => line.id)))
     : [];
   const notesByLine = new Map(lineNotes.map((row) => [row.lineItemId, row.serviceNotes ?? null]));
+  const propertyByLine = new Map(lineNotes.map((row) => [row.lineItemId, row.propertyId ?? null]));
 
   // Fetch customer or lead info
   let displayName = null;
@@ -305,6 +306,7 @@ async function getQuoteWithDetails(id: number) {
     lineItems: lineItems.map((line) => ({
       ...serializeLineItem(line),
       serviceNotes: notesByLine.get(line.id) ?? null,
+      propertyId: propertyByLine.get(line.id) ?? null,
     })),
     customer: customerForQuote,
     lead: leadForQuote,
@@ -355,10 +357,12 @@ type QuoteCreateBody = {
     description: string;
     quantity: number;
     unitPrice: number;
+    /** The job location for this line (Kyle, Video 3); checked against the account. */
+    propertyId?: number | null;
   }>;
 };
 
-async function createQuoteTx(
+export async function createQuoteTx(
   tx: DrizzleTX,
   body: QuoteCreateBody,
   performedBy: string | null,
@@ -411,9 +415,15 @@ async function createQuoteTx(
         sortOrder: i,
       })),
     ).returning();
+    const linePropertyIds = lineItemsInput.map((li) => normalizeOptionalPropertyId(li.propertyId));
+    for (const propertyId of new Set(linePropertyIds.filter((id): id is number => id !== null))) {
+      if (requestedCustomerId === null) throw new AccountRelationError(400, "Line locations require a customer account");
+      await requireActivePropertyForCustomer(tx, requestedCustomerId, propertyId);
+    }
     await saveLineServiceNotes(tx, inserted.map((row, i) => ({
       lineItemId: row.id,
       serviceNotes: (lineItemsInput[i] as { serviceNotes?: string | null }).serviceNotes?.trim() || null,
+      propertyId: linePropertyIds[i],
     })));
   }
   await logQuoteActivityTx(
@@ -603,6 +613,125 @@ router.post("/quotes", async (req, res): Promise<void> => {
   }
 });
 
+export interface QuoteAppointmentInput {
+  startsAt: Date;
+  durationMinutes: number;
+  assignedUserId: string;
+  propertyIds: number[];
+  appointmentNotes: string | null;
+  estimateNotes: string | null;
+}
+
+/** An estimate appointment as the office sends it, or the reason it cannot be booked. */
+export function parseQuoteAppointment(raw: Record<string, unknown>): QuoteAppointmentInput | { error: string } {
+  const startsAtInput = raw.startsAt;
+  const startsAt = new Date(typeof startsAtInput === "string" ? startsAtInput : "");
+  const durationMinutes = Number(raw.durationMinutes);
+  const assignedUserId = typeof raw.assignedUserId === "string" ? raw.assignedUserId.trim() : "";
+  const propertyIds = [...new Set(
+    (Array.isArray(raw.propertyIds) ? raw.propertyIds : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0),
+  )];
+  if (
+    typeof startsAtInput !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(startsAtInput)
+    || Number.isNaN(startsAt.valueOf())
+    || !Number.isInteger(durationMinutes)
+    || durationMinutes < 15
+    || durationMinutes > 1440
+    || !assignedUserId
+    || !propertyIds.length
+  ) {
+    return { error: "A complete appointment with a valid start, duration, technician, and location is required" };
+  }
+  return {
+    startsAt, durationMinutes, assignedUserId, propertyIds,
+    appointmentNotes: typeof raw.appointmentNotes === "string" && raw.appointmentNotes ? raw.appointmentNotes : null,
+    estimateNotes: typeof raw.estimateNotes === "string" && raw.estimateNotes ? raw.estimateNotes : null,
+  };
+}
+
+/**
+ * Create a quote with its appointment inside the caller's transaction. Used by
+ * POST /quotes/with-appointment and by the Add Prospect form (piece B2), so a
+ * new prospect's estimate is booked exactly as one booked later would be.
+ */
+export async function createScheduledQuoteTx(
+  tx: DrizzleTX,
+  input: {
+    quote: QuoteCreateBody;
+    customerId: number;
+    appointment: QuoteAppointmentInput;
+    performedBy: string | null;
+    actorId: string | null;
+    completeIdempotency?: (quote: typeof quotesTable.$inferSelect) => Promise<void>;
+  },
+) {
+  const { appointment, customerId, actorId } = input;
+  return persistScheduledQuoteCore<
+    typeof quotesTable.$inferSelect,
+    typeof estimateAppointmentsTable.$inferSelect
+  >({
+    async validateReferences() {
+      for (const propertyId of appointment.propertyIds) {
+        await requireActivePropertyForCustomer(tx, customerId, propertyId);
+      }
+      const [technician] = await tx.select({ id: usersTable.id, role: usersTable.role })
+        .from(usersTable)
+        .where(and(eq(usersTable.id, appointment.assignedUserId), eq(usersTable.isActive, true)))
+        .limit(1);
+      if (!technician || normalizeAuthorizationRole(technician.role) !== "field_tech") {
+        throw new AccountRelationError(400, "Assigned technician must be an active Field or Team Technician");
+      }
+    },
+    createQuote: () => createQuoteTx(tx, input.quote, input.performedBy),
+    async createAppointment(quote) {
+      const [created] = await tx.insert(estimateAppointmentsTable).values({
+        quoteId: quote.id,
+        startsAt: appointment.startsAt,
+        durationMinutes: appointment.durationMinutes,
+        assignedUserId: appointment.assignedUserId,
+        appointmentNotes: appointment.appointmentNotes,
+        estimateNotes: appointment.estimateNotes,
+        createdBy: actorId,
+      }).returning();
+      return created;
+    },
+    createLocations: (quote) => tx.insert(estimateLocationsTable).values(appointment.propertyIds.map((propertyId) => ({
+      quoteId: quote.id,
+      propertyId,
+    }))).then(() => undefined),
+    createActivity: (quote) => tx.insert(estimateActivitiesTable).values({
+      quoteId: quote.id,
+      activityType: "appointment_scheduled",
+      actorId,
+      detail: {
+        startsAt: appointment.startsAt.toISOString(),
+        durationMinutes: appointment.durationMinutes,
+        assignedUserId: appointment.assignedUserId,
+        propertyIds: appointment.propertyIds,
+      },
+    }).then(() => undefined),
+    async enqueueEvent(quote) {
+      await enqueueCommunicationEvent(tx, {
+        eventType: "appointment.scheduled",
+        aggregateType: "quote",
+        aggregateId: quote.id,
+        payload: {
+          quoteId: quote.id,
+          customerId: quote.customerId,
+          scheduledDate: appointment.startsAt.toISOString(),
+        },
+        source: "estimate_lifecycle",
+        actorId,
+        dedupeKey: `estimate-appointment:${quote.id}:${appointment.startsAt.toISOString()}`,
+      });
+    },
+    completeIdempotency: (quote) => input.completeIdempotency?.(quote) ?? Promise.resolve(),
+  });
+}
+
 router.post("/quotes/with-appointment", async (req, res): Promise<void> => {
   try {
     if (!hasCapability(req.user?.role, "estimates.schedule")) {
@@ -614,41 +743,17 @@ router.post("/quotes/with-appointment", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Quote and appointment are required" });
       return;
     }
-    const startsAtInput = body.appointment.startsAt;
-    const startsAt = new Date(typeof startsAtInput === "string" ? startsAtInput : "");
-    const durationMinutes = Number(body.appointment.durationMinutes);
-    const assignedUserId = typeof body.appointment.assignedUserId === "string"
-      ? body.appointment.assignedUserId.trim()
-      : "";
-    const propertyIds = [...new Set(
-      (Array.isArray(body.appointment.propertyIds) ? body.appointment.propertyIds : [])
-        .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value > 0),
-    )];
-    if (
-      typeof startsAtInput !== "string"
-      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(startsAtInput)
-      || Number.isNaN(startsAt.valueOf())
-      || !Number.isInteger(durationMinutes)
-      || durationMinutes < 15
-      || durationMinutes > 1440
-      || !assignedUserId
-      || !propertyIds.length
-    ) {
-      res.status(400).json({ error: "A complete appointment with a valid start, duration, technician, and location is required" });
+    const appointment = parseQuoteAppointment(body.appointment);
+    if ("error" in appointment) {
+      res.status(400).json({ error: appointment.error });
       return;
     }
+    const { startsAt, propertyIds } = appointment;
     const requestedCustomerId = body.quote.customerId ? Number(body.quote.customerId) : null;
     if (!requestedCustomerId) {
       res.status(400).json({ error: "Scheduled quotes require a customer account" });
       return;
     }
-    const appointmentNotes = typeof body.appointment.appointmentNotes === "string" && body.appointment.appointmentNotes
-      ? body.appointment.appointmentNotes
-      : null;
-    const estimateNotes = typeof body.appointment.estimateNotes === "string" && body.appointment.estimateNotes
-      ? body.appointment.estimateNotes
-      : null;
     const actorId = req.user?.id ?? null;
     const performedBy = getPerformedBy(req);
     const idempotency = getIdempotencyContext(req, "quotes.create_with_appointment", body);
@@ -660,65 +765,12 @@ router.post("/quotes/with-appointment", async (req, res): Promise<void> => {
     const result = await db.transaction(async (tx) => {
       const claim = await claimIdempotencyKey(tx, idempotency);
       if (claim.kind !== "claimed") return claim;
-      const committed = await persistScheduledQuoteCore<
-        typeof quotesTable.$inferSelect,
-        typeof estimateAppointmentsTable.$inferSelect
-      >({
-        async validateReferences() {
-          for (const propertyId of propertyIds) {
-            await requireActivePropertyForCustomer(tx, requestedCustomerId, propertyId);
-          }
-          const [technician] = await tx.select({ id: usersTable.id, role: usersTable.role })
-            .from(usersTable)
-            .where(and(eq(usersTable.id, assignedUserId), eq(usersTable.isActive, true)))
-            .limit(1);
-          if (!technician || normalizeAuthorizationRole(technician.role) !== "field_tech") {
-            throw new AccountRelationError(400, "Assigned technician must be an active Field or Team Technician");
-          }
-        },
-        createQuote: () => createQuoteTx(tx, body.quote!, performedBy),
-        async createAppointment(quote) {
-          const [appointment] = await tx.insert(estimateAppointmentsTable).values({
-            quoteId: quote.id,
-            startsAt,
-            durationMinutes,
-            assignedUserId,
-            appointmentNotes,
-            estimateNotes,
-            createdBy: actorId,
-          }).returning();
-          return appointment;
-        },
-        createLocations: (quote) => tx.insert(estimateLocationsTable).values(propertyIds.map((propertyId) => ({
-          quoteId: quote.id,
-          propertyId,
-        }))).then(() => undefined),
-        createActivity: (quote) => tx.insert(estimateActivitiesTable).values({
-          quoteId: quote.id,
-          activityType: "appointment_scheduled",
-          actorId,
-          detail: {
-            startsAt: startsAt.toISOString(),
-            durationMinutes,
-            assignedUserId,
-            propertyIds,
-          },
-        }).then(() => undefined),
-        async enqueueEvent(quote) {
-          await enqueueCommunicationEvent(tx, {
-            eventType: "appointment.scheduled",
-            aggregateType: "quote",
-            aggregateId: quote.id,
-            payload: {
-              quoteId: quote.id,
-              customerId: quote.customerId,
-              scheduledDate: startsAt.toISOString(),
-            },
-            source: "estimate_lifecycle",
-            actorId,
-            dedupeKey: `estimate-appointment:${quote.id}:${startsAt.toISOString()}`,
-          });
-        },
+      const committed = await createScheduledQuoteTx(tx, {
+        quote: body.quote!,
+        customerId: requestedCustomerId,
+        appointment,
+        performedBy,
+        actorId,
         completeIdempotency: (quote) => completeIdempotencyKey(tx, claim.record.id, {
           resourceType: "quote",
           resourceId: quote.id,

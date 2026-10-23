@@ -8,8 +8,9 @@ import { test } from "node:test";
 
 const source = readFileSync(fileURLToPath(new URL("./CustomerDetail.tsx", import.meta.url)), "utf8");
 
+// Since the 2026-10-21 redesign it sits in the header's More menu.
 test("the profile carries a Delete button, for people who may manage customers", () => {
-  assert.match(source, /\{!isEditing && canManageCustomer && \([\s\S]{0,400}Delete/);
+  assert.match(source, /\{canManageCustomer && \(\s*<div className="relative">[\s\S]{0,2000}label="Delete"/);
 });
 
 // Kyle (Testing Edits, 2026-10-01, #6) asked for the typed name to go: one plain

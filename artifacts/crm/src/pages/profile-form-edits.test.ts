@@ -12,6 +12,8 @@ const read = (name: string) =>
 const customers = read("Customers.tsx");
 const detail = read("CustomerDetail.tsx");
 const properties = read("Properties.tsx");
+const sheet = read("../components/ProfileSheet.tsx");
+const sheetLib = read("../lib/profile-sheet.ts");
 
 test("#1 the account type is the first thing on the new-account form", () => {
   const form = customers.slice(customers.indexOf("<form onSubmit={handleSubmit(onSubmit)}"));
@@ -24,7 +26,9 @@ test("#1 the account type is the first thing on the new-account form", () => {
 
 test("#4 Customer Since cannot be typed on create or edit", () => {
   assert.doesNotMatch(customers, /register\("customerDate"\)/);
-  assert.match(detail, /label="Customer Since"[^\n]*editing=\{false\}/);
+  // The profile page shows it as text, and the field is not in what it saves.
+  assert.match(sheet, /<span className="field-label">Customer since<\/span>\s*<p[^>]*>\{customer\.customerDate \|\| "—"\}<\/p>/);
+  assert.doesNotMatch(sheetLib.slice(sheetLib.indexOf("ACCOUNT_FIELDS"), sheetLib.indexOf("]", sheetLib.indexOf("ACCOUNT_FIELDS"))), /customerDate/);
 });
 
 test("#5 and #6 Preferred Contact and Sending Preferences are gone from both forms", () => {

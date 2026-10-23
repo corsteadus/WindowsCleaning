@@ -39,6 +39,7 @@ import { businessDateStr } from "../lib/date.ts";
 import { normaliseValidityDays, quoteExpiryFor } from "../lib/quote-settings.ts";
 import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
+import { unpricedRefusal, type PricedLine } from "../lib/estimate-pricing.ts";
 
 const router: IRouter = Router();
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -651,6 +652,20 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
     if (isTerminalEstimateStatus(lockedQuote?.status)) {
       throw Object.assign(new Error("Accepted estimate terms are locked; create a revision instead"), { status: 409 });
     }
+    // Finalize replaces the lines. What a sender leaves out of a line — its
+    // customer-visible description (#31), its location, the upsell flag — is
+    // carried over from the line it replaces, by position, so finalizing can
+    // never quietly wipe it. Found 2026-10-23: the estimate page sent no
+    // descriptions, and every finalized estimate lost them.
+    const previousLines = await tx.select({ id: quoteLineItemsTable.id }).from(quoteLineItemsTable)
+      .where(eq(quoteLineItemsTable.quoteId, quoteId)).orderBy(asc(quoteLineItemsTable.sortOrder));
+    const previousMeta = previousLines.length
+      ? await tx.select().from(estimateLineMetadataTable)
+        .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.map((line) => line.id)))
+      : [];
+    const previousByPosition = previousLines.map((line) => previousMeta.find((meta) => meta.lineItemId === line.id) ?? null);
+    await tx.delete(estimateLineMetadataTable)
+      .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.length ? previousLines.map((line) => line.id) : [0]));
     await tx.delete(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, quoteId));
     const inserted = await tx.insert(quoteLineItemsTable).values(lines.map((line: any, sortOrder: number) => {
       const quantity = Number(line.quantity);
@@ -663,10 +678,15 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
       notes: req.body.notes ?? quote.notes, terms: req.body.terms ?? quote.terms,
       subtotal: String(subtotal), totalAmount: String(subtotal), status: "draft",
     }).where(eq(quotesTable.id, quoteId));
-    const metas = inserted.map((item, i) => ({
-      lineItemId: item.id, propertyId: numericId(lines[i].propertyId),
-      isUpsell: !!lines[i].isUpsell, serviceNotes: lines[i].serviceNotes || null,
-    }));
+    const metas = inserted.map((item, i) => {
+      const previous = previousByPosition[i];
+      return {
+        lineItemId: item.id,
+        propertyId: lines[i].propertyId === undefined ? previous?.propertyId ?? null : numericId(lines[i].propertyId),
+        isUpsell: lines[i].isUpsell === undefined ? previous?.isUpsell ?? false : !!lines[i].isUpsell,
+        serviceNotes: lines[i].serviceNotes === undefined ? previous?.serviceNotes ?? null : lines[i].serviceNotes || null,
+      };
+    });
     if (metas.length) await tx.insert(estimateLineMetadataTable).values(metas);
     const [{ next }] = await tx.select({ next: sql<number>`coalesce(max(${estimateRevisionsTable.revisionNumber}),0)+1` })
       .from(estimateRevisionsTable).where(eq(estimateRevisionsTable.quoteId, quoteId));
@@ -712,6 +732,9 @@ router.post("/quotes/:id/deliver", async (req, res): Promise<any> => {
   const [revision] = await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.quoteId, quoteId))
     .orderBy(desc(estimateRevisionsTable.revisionNumber)).limit(1);
   if (!quote || !revision) return res.status(400).json({ error: "Finalize the estimate before sending" });
+  // B2: a $0 line is "to be quoted"; the customer must never receive $0.00.
+  const unpriced = unpricedRefusal(((revision.snapshot as any)?.lineItems ?? []) as PricedLine[]);
+  if (unpriced) return res.status(400).json({ error: unpriced, code: "estimate_unpriced" });
   const [customer] = quote.customerId
     ? await db.select().from(customersTable).where(eq(customersTable.id, quote.customerId)).limit(1) : [];
   const recipients: Record<string, string | null | undefined> = { email: req.body.email || customer?.email, sms: req.body.phone || customer?.phone };
