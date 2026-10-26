@@ -13,6 +13,8 @@ import { createIdempotencyKey } from "@/lib/idempotency";
 import { protectedFetch } from "@/lib/auth-scope";
 import { TimeSelect } from "@/components/TimeSelect";
 import { conversionBlockers } from "@/lib/conversion-readiness";
+import { applyDiscounts, discountLabel, type Discount } from "@/lib/discounts";
+import { formatCurrency } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -36,7 +38,7 @@ interface Preview {
   accepted: boolean;
   requiresVerbalAcceptance: boolean;
   revisionNumber: number;
-  snapshot: { quote: { notes?: string | null }; locations: Location[]; lineItems: SnapshotLine[] };
+  snapshot: { quote: { notes?: string | null }; locations: Location[]; lineItems: SnapshotLine[]; discounts?: Discount[] };
   existingJobs: Array<{ id: number; jobNumber: string }>;
   /** Why it cannot be scheduled while a service is still to be quoted, or null. */
   unpriced?: string | null;
@@ -173,6 +175,15 @@ export function EstimateConversionDialog({ quoteId, open: openProp, onOpenChange
             <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0" />
             <div><p className="text-sm font-bold text-emerald-900">Revision {preview.data.revisionNumber} is the scheduling source</p><p className="text-xs text-emerald-700 mt-1">Services, quantities, and prices below are copied unchanged into each location job.</p></div>
           </div>
+          {(preview.data.snapshot.discounts ?? []).length > 0 && (() => {
+            // Phase 5: what the customer's discounts take off, shared between the jobs.
+            const lines = preview.data!.snapshot.lineItems;
+            const money = applyDiscounts(lines.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100, preview.data!.snapshot.discounts!);
+            return <div className="rounded-xl border border-emerald-200 bg-white p-4 text-sm" data-testid="convert-discounts">
+              <p className="font-semibold text-slate-800">Discounts: {money.discounts.map((d) => `${discountLabel(d)} −${formatCurrency(d.amount)}`).join(", ")}</p>
+              <p className="mt-1 text-xs text-slate-500">{formatCurrency(money.subtotal)} of services, {formatCurrency(money.total)} after discounts. {preview.data!.snapshot.locations.length > 1 ? "Each location's job takes its share, in proportion to its services." : "The job's total is after the discounts."}</p>
+            </div>;
+          })()}
           {preview.data.existingJobs.length > 0 && <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">This estimate already has {preview.data.existingJobs.length} scheduled job(s). Submitting again returns those existing jobs.</div>}
           {preview.data.requiresVerbalAcceptance && <div className="space-y-3 rounded-xl border border-amber-200 p-4">
             <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={verbal} onChange={(event) => setVerbal(event.target.checked)} /> Record authorized verbal acceptance</label>

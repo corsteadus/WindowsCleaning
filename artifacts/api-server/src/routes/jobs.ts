@@ -1289,8 +1289,9 @@ router.post("/jobs/:id/generate-invoice", async (req, res): Promise<void> => {
           jobId: outcome.job.id,
           description: "Job services",
           quantity: "1",
-          unitPrice: outcome.total,
-          discountAmount: "0",
+          // Phase 5: the estimate's discount shows on the invoice as this line's discount.
+          unitPrice: outcome.discount === "0.00" ? outcome.total : outcome.gross,
+          discountAmount: outcome.discount,
           taxAmount: "0",
           lineTotal: outcome.total,
           sortOrder: 0,

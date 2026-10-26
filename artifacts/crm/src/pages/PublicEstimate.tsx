@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileText, MapPin, XCircle } from "lucide-react";
 import { useParams } from "wouter";
 import { formatCurrency } from "@/lib/utils";
+import { DiscountRows } from "@/components/DiscountEditor";
+import { applyDiscounts, type Discount } from "@/lib/discounts";
 
 type Line = {
   id: number; description: string; quantity: number; unitPrice: number | null; totalPrice: number;
@@ -10,6 +12,8 @@ type Line = {
 type Snapshot = {
   quote: { quoteNumber: string; totalAmount: number; notes?: string | null; terms?: string | null; validUntil?: string | null };
   lineItems: Line[];
+  /** Phase 5: the estimate's discounts. Absent on estimates finalized before them. */
+  discounts?: Discount[];
   locations: Array<{ id: number; name?: string | null; address: string; city?: string | null; state?: string | null; zip?: string | null; notes?: string | null }>;
 };
 type Estimate = {
@@ -49,17 +53,19 @@ export default function PublicEstimate() {
   }, [token]);
 
   const lines = estimate?.snapshot?.lineItems ?? [];
-  const offeredTotal = useMemo(
-    () => lines.reduce((sum, line) => sum + Number(line.totalPrice), 0),
-    [lines],
-  );
+  // Phase 5: the discounts are worked out on what is chosen, by the server's
+  // own rule — a percentage of less is less; a dollar discount stays.
+  const discounts = estimate?.snapshot?.discounts ?? [];
+  const sumOf = (some: Line[]) => some.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100;
+  const offeredTotal = useMemo(() => applyDiscounts(sumOf(lines), discounts).total, [lines, discounts]);
   // Once decided, the figure that matters is what was taken, not what was asked.
   const settled = accepted !== null;
   const shownIds = settled ? new Set(accepted) : chosen;
-  const shownTotal = useMemo(
-    () => lines.filter((line) => shownIds.has(line.id)).reduce((sum, line) => sum + Number(line.totalPrice), 0),
-    [lines, shownIds],
+  const shownMoney = useMemo(
+    () => applyDiscounts(sumOf(lines.filter((line) => shownIds.has(line.id))), discounts),
+    [lines, shownIds, discounts],
   );
+  const shownTotal = shownMoney.total;
   const partial = shownIds.size > 0 && shownIds.size < lines.length;
 
   const toggle = (id: number) => setChosen((current) => {
@@ -162,6 +168,14 @@ export default function PublicEstimate() {
               );
             })}
           </div>
+          {discounts.length > 0 && (
+            <div className="space-y-1.5 border-t px-5 pt-4" data-testid="public-discounts">
+              <div className="flex justify-between text-sm text-slate-500">
+                <span>Subtotal</span><span className="font-semibold text-slate-800">{formatCurrency(shownMoney.subtotal)}</span>
+              </div>
+              <DiscountRows discounts={shownMoney.discounts} />
+            </div>
+          )}
           <div className="border-t bg-slate-50 px-5 py-4 flex items-baseline justify-between text-lg font-bold">
             <span>{settled ? "Accepted total" : partial ? "Selected total" : "Total"}</span>
             <span className="flex items-baseline gap-3">

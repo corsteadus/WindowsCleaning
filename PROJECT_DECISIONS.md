@@ -164,6 +164,52 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 5 — discounts on estimates, and discounts that follow the profile — 2026-10-26
+
+**Built; browser-verified locally with the discount routes stubbed (9/9; regressions phase 1
+19/19, 3 15/15, 4 19/19); the real run, through the jobs and the invoice, waits for the
+republish.** Kyle, Video 5: "dollar discounts or percentage discounts … name the discounts …
+add more discounts if I want to stack them", and his answer #3: discounts that follow the
+customer (senior, military) now.
+
+**The rule** (`api-server lib/discounts.ts`, the same in `crm lib/discounts.ts`), in whole
+cents: a **percentage is of the subtotal — they do not compound** (two 10% off $500 is $100);
+a dollar discount is its amount; in order, each is **cut to what is left, so a total is
+never below zero**. At most 10 per estimate; a percentage at most 100 (also a database check).
+Tax (phase 6) will be worked out on the amount after discounts.
+
+**Where it shows.** The estimate screen has a **Discounts** card while editing (name, % or $,
+amount, remove, "Add a discount", and the profile's saved ones one tap away), and every total
+lists each discount by name: the estimate, the print, the **customer's page** — where the
+discounts are worked out again on the services they tick — the new-estimate screen, and the
+convert dialog. **Discounts that follow this profile** sit in the profile's Estimates
+section; each is **added to the profile's new estimates** (Kyle's default) and can be removed
+there; removing it from the profile leaves estimates already made as they are.
+
+**Money, end to end.** Every change to an estimate's lines or discounts ends in one writer
+(`lib/quote-totals.ts`: subtotal, each discount's dollars, discount total, total). The
+finalized revision carries the discounts. **A partial accept** works them out again on what
+was accepted (a percentage of less is less; a dollar discount stays). **Converting** shares the
+discount between the locations' jobs in proportion to their services, to the cent
+(`shareDiscount`); each job's total is after its share and it keeps the share in the new
+`jobs.discount_total`. **Generating the invoice** for such a job now uses that job's own amount
+and shows its discount on the line — it used to take the whole estimate's total, which was
+wrong for an estimate with more than one location (fixed with this). Jobs made the old way are
+unchanged. **Not covered:** bulk invoicing and the manual invoice form use the job's total
+(after discounts, so the amount is right) without naming the discount.
+
+**Migration `estimate-discounts-v1`**: creates `customer_discounts` and `quote_discounts`
+(with kind/value checks) and adds `jobs.discount_total` (default 0). Dry-run on the shared
+database inside a rolled-back transaction, **running the real totals code**: profile discount
+copied onto a new estimate, $500 − Senior 10% − $25 coupon = $425 stored, a 150% discount
+refused by the database, existing jobs all 0, nothing left after ROLLBACK.
+
+**For Kyle (defaults built, his call):** percentages of the subtotal, not compounding; a
+discount never takes a total below zero; a profile's discount is copied onto new estimates
+only, not onto estimates already made.
+
+---
+
 ## Phase 4 — callbacks — 2026-10-26
 
 **Built; browser-verified locally with the callbacks API stubbed (19/19; regressions 1b

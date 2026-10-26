@@ -32,6 +32,9 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
+import { DiscountRows } from "@/components/DiscountEditor";
+import { applyDiscounts, type Discount } from "@/lib/discounts";
+import { estimateCall } from "@/lib/estimate-actions";
 import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 import { PropertyPicker } from "@/components/PropertyPicker";
 import { CustomerCombobox } from "@/components/CustomerCombobox";
@@ -394,6 +397,14 @@ export default function QuoteNew() {
     return sum + (parseFloat(li.quantity) || 0) * (parseFloat(li.unitPrice) || 0);
   }, 0);
   const itemCount = lineItems.filter((li) => li.description.trim()).length;
+  // Phase 5: the profile's own discounts are added when the estimate is saved
+  // (server lib/quote-totals.ts), so the total shown here already counts them.
+  const { data: profileDiscounts = [] } = useQuery({
+    queryKey: authScopedQueryKey(user, ["profile-discounts", `/customers/${customerId}`]),
+    queryFn: () => estimateCall<Discount[]>(`/customers/${customerId}/discounts`),
+    enabled: !!customerId,
+  });
+  const money = applyDiscounts(subtotal, profileDiscounts);
 
   const handleSave = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -577,12 +588,13 @@ export default function QuoteNew() {
                 <span className="text-slate-500">Subtotal</span>
                 <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
               </div>
+              <DiscountRows discounts={money.discounts} />
             </div>
 
             {/* Total — most prominent */}
             <div className="flex justify-between items-end">
               <span className="text-base font-bold text-slate-800">Total</span>
-              <span className="text-3xl font-bold text-primary tabular-nums">{formatCurrency(subtotal)}</span>
+              <span className="text-3xl font-bold text-primary tabular-nums" data-testid="new-estimate-total">{formatCurrency(money.total)}</span>
             </div>
 
             <button
@@ -685,9 +697,10 @@ export default function QuoteNew() {
                     <span>Subtotal</span>
                     <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
                   </div>
+                  <DiscountRows discounts={money.discounts} />
                   <div className="flex justify-between items-end pt-1 border-t border-slate-100">
                     <span className="text-base font-bold text-slate-900">Total</span>
-                    <span className="text-xl font-bold text-primary">{formatCurrency(subtotal)}</span>
+                    <span className="text-xl font-bold text-primary">{formatCurrency(money.total)}</span>
                   </div>
                 </div>
               </div>
@@ -776,7 +789,7 @@ export default function QuoteNew() {
             <div className="bg-white rounded-2xl border border-slate-100 p-5">
               <div className="flex justify-between items-end mb-4">
                 <span className="text-base font-bold text-slate-800">Total</span>
-                <span className="text-3xl font-bold text-primary">{formatCurrency(subtotal)}</span>
+                <span className="text-3xl font-bold text-primary">{formatCurrency(money.total)}</span>
               </div>
               <button
                 type="submit"

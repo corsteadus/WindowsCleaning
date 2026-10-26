@@ -14,6 +14,7 @@
  * `buildLocationJobPlans` refuses a location with nothing to do.
  */
 import type { AcceptedEstimateSnapshot } from "./estimate-conversion.ts";
+import { applyDiscounts } from "./discounts.ts";
 
 export class EstimateAcceptanceError extends Error {}
 
@@ -63,7 +64,10 @@ function outcome(
 ): AcceptanceOutcome {
   const keep = new Set(chosen);
   const lineItems = all.filter((line) => keep.has(line.id));
-  const acceptedTotal = round2(lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0));
+  // Phase 5: the discounts are worked out again on what was accepted — a
+  // percentage of less is less; a dollar discount stays, never past the subtotal.
+  const priced = applyDiscounts(round2(lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0)), snapshot.discounts ?? []);
+  const acceptedTotal = priced.total;
 
   // A line that names no location belongs to the only location there is; that is
   // the rule buildLocationJobPlans works by, so location trimming follows it.
@@ -76,7 +80,8 @@ function outcome(
   return {
     snapshot: {
       ...snapshot,
-      quote: { ...snapshot.quote, totalAmount: acceptedTotal },
+      quote: { ...snapshot.quote, subtotal: priced.subtotal, discountTotal: priced.discountTotal, totalAmount: acceptedTotal },
+      ...(snapshot.discounts ? { discounts: priced.discounts } : {}),
       lineItems,
       locations,
     },

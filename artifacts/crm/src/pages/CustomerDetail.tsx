@@ -35,6 +35,7 @@ import { EstimateConversionDialog } from "@/components/EstimateConversionDialog"
 import { ProfileSection } from "@/components/ProfileSection";
 import { EmailHistory } from "@/components/EmailHistory";
 import { ProfileCallbacks } from "@/components/ProfileCallbacks";
+import { ProfileDiscounts } from "@/components/ProfileDiscounts";
 import { estimateCallLine, type ProfileEstimate } from "@/lib/profile-estimates";
 import { bookingTarget } from "@/lib/callbacks";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
@@ -819,6 +820,9 @@ export default function CustomerDetail() {
                 {visibleViews.some((view) => view.id === "quotes") && (
                   <ProfileSection id="quotes" title="Estimates" icon={FileText} count={getViewCount("quotes", customer)}
                     open={!!openSections.quotes} onToggle={() => toggleSection("quotes")}>
+                    {/* Phase 5 (Kyle, Video 5): discounts that follow the customer. */}
+                    <ProfileDiscounts profilePath={`${apiBase.replace(/^\/api/, "")}/${customer.id}`}
+                      canManage={canManageCustomer && !isDeactivatedProfile(customer)} />
                     <EstimatesView
                       quotes={customer.quotes ?? []}
                       customerId={customer.id}

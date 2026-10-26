@@ -14,6 +14,7 @@ import { kyleAnswers20261024V1Migration } from "./kyle-answers-2026-10-24-v1.ts"
 import { emailLogSenderV1Migration } from "./email-log-sender-v1.ts";
 import { attachmentLocationV1Migration } from "./attachment-location-v1.ts";
 import { profileCallbacksV1Migration } from "./profile-callbacks-v1.ts";
+import { estimateDiscountsV1Migration } from "./estimate-discounts-v1.ts";
 
 export type MigrationEnvironment =
   | "sandbox"
@@ -94,6 +95,7 @@ export const REQUIRED_MIGRATIONS = [
   emailLogSenderV1Migration,
   attachmentLocationV1Migration,
   profileCallbacksV1Migration,
+  estimateDiscountsV1Migration,
 ] as const;
 
 export class MigrationGateError extends Error {

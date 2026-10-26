@@ -8,6 +8,8 @@ export interface BillingJobRow {
   jobNumber: string;
   status: string;
   totalAmount: string;
+  /** Phase 5: what the estimate's discounts took off this job; totalAmount is after it. */
+  discountTotal?: string | null;
   lineItems?: string | null;
 }
 
@@ -63,7 +65,7 @@ export type GenerateInvoiceOutcome =
   | { kind: "notFound" }
   | { kind: "notCompleted"; status: string }
   | { kind: "existing"; invoice: BillingInvoiceRow }
-  | { kind: "created"; invoice: BillingInvoiceRow; job: BillingJobRow; total: string };
+  | { kind: "created"; invoice: BillingInvoiceRow; job: BillingJobRow; total: string; discount: string; gross: string };
 
 export interface GenerateInvoiceOptions {
   now?: Date;
@@ -102,7 +104,13 @@ export async function generateInvoiceCore(
   if (existing) return { kind: "existing", invoice: existing };
 
   let totalCents = parseBillingMoneyCents(job.totalAmount);
-  if (job.quoteId) {
+  let discountCents = 0n;
+  if (convertedPerLocation(job)) {
+    // A job scheduled from an accepted estimate is one location's work: its own
+    // total, and its own share of the estimate's discounts (phase 5). The
+    // quote's total is the whole estimate's, every location together.
+    discountCents = parseBillingMoneyCents(job.discountTotal ?? "0");
+  } else if (job.quoteId) {
     const quote = await adapter.findQuoteById(job.quoteId);
     if (quote) totalCents = parseBillingMoneyCents(quote.totalAmount);
   }
@@ -130,7 +138,16 @@ export async function generateInvoiceCore(
     lineItems: null,
   });
 
-  return { kind: "created", invoice, job, total: totalString };
+  return {
+    kind: "created", invoice, job, total: totalString,
+    discount: formatBillingMoneyCents(discountCents),
+    gross: formatBillingMoneyCents(totalCents + discountCents),
+  };
+}
+
+/** Written by persistAcceptedEstimateJobsCore: each line names the revision it was accepted from. */
+function convertedPerLocation(job: BillingJobRow): boolean {
+  return Boolean(job.quoteId && job.lineItems?.includes('"acceptedRevisionId"'));
 }
 
 export interface ManualPaymentAdapter {

@@ -40,6 +40,8 @@ import { normaliseValidityDays, quoteExpiryFor } from "../lib/quote-settings.ts"
 import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
 import { priceOf, shownPrice, unpricedRefusal, type PricedLine } from "../lib/estimate-pricing.ts";
+import { applyDiscounts, discountsOf, type DiscountInput } from "../lib/discounts.ts";
+import { readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
 
 const router: IRouter = Router();
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
@@ -64,7 +66,11 @@ async function quoteSnapshot(tx: any, quoteId: number) {
     ? await tx.select().from(estimateLineMetadataTable).where(inArray(estimateLineMetadataTable.lineItemId, lines.map((x: any) => x.id)))
     : [];
   const metadataByLine = new Map<number, any>(metadata.map((x: any) => [x.lineItemId, x]));
+  // Phase 5: the discounts as offered, so a partial accept can work them out again.
+  const discounts = serializeDiscounts(await readQuoteDiscounts(tx, quoteId))
+    .map(({ name, kind, value, amount }) => ({ name, kind, value, amount }));
   return {
+    discounts,
     quote: {
       id: quote.id, quoteNumber: quote.quoteNumber, customerId: quote.customerId,
       leadId: quote.leadId, subtotal: Number(quote.subtotal), taxTotal: Number(quote.taxTotal),
@@ -412,7 +418,8 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
     declinedLineItems: offered.lineItems.filter(
       (line) => !snapshot.lineItems.some((accepted) => accepted.id === line.id),
     ),
-    offeredTotal: offered.lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0),
+    // After the estimate's discounts (phase 5), as the customer was offered it.
+    offeredTotal: applyDiscounts(offered.lineItems.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100, (offered as { discounts?: DiscountInput[] }).discounts ?? []).total,
     existingJobs: existingJobs.map(conversionJobResponse),
   });
 });
@@ -648,6 +655,9 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
   }
   const lines = Array.isArray(req.body.lineItems) ? req.body.lineItems : null;
   if (!lines?.length) return res.status(400).json({ error: "At least one service is required" });
+  // Phase 5: discounts sent with the finalize replace the estimate's; left out, they stay.
+  const sentDiscounts = req.body.discounts === undefined ? null : discountsOf(req.body.discounts);
+  if (sentDiscounts && "error" in sentDiscounts) return res.status(400).json({ error: sentDiscounts.error });
   const linePropertyIds = [...new Set(lines.map((line: any) => numericId(line.propertyId)).filter(Boolean))] as number[];
   if (linePropertyIds.length) {
     if (!quote.customerId) return res.status(400).json({ error: "Estimate locations require a customer account" });
@@ -687,11 +697,16 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
         pricePending: price.pricePending, sortOrder,
       };
     })).returning();
-    const subtotal = inserted.reduce((sum, item) => sum + Number(item.totalPrice), 0);
     await tx.update(quotesTable).set({
-      notes: req.body.notes ?? quote.notes, terms: req.body.terms ?? quote.terms,
-      subtotal: String(subtotal), totalAmount: String(subtotal), status: "draft",
+      notes: req.body.notes ?? quote.notes, terms: req.body.terms ?? quote.terms, status: "draft",
     }).where(eq(quotesTable.id, quoteId));
+    if (sentDiscounts) {
+      const before = await readQuoteDiscounts(tx, quoteId);
+      await replaceQuoteDiscountsTx(tx, quoteId, sentDiscounts.discounts.map((discount) => ({
+        ...discount, customerDiscountId: before.find((row) => row.name === discount.name)?.customerDiscountId ?? null,
+      })));
+    }
+    const totals = await writeQuoteTotalsTx(tx, quoteId);
     const metas = inserted.map((item, i) => {
       const previous = previousByPosition[i];
       return {
@@ -710,7 +725,7 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
     }).returning();
     await tx.insert(estimateActivitiesTable).values({
       quoteId, activityType: "estimate_finalized", actorId: actorId(req),
-      detail: { revisionNumber: Number(next), totalAmount: subtotal },
+      detail: { revisionNumber: Number(next), totalAmount: totals.total },
     });
     return created;
   });

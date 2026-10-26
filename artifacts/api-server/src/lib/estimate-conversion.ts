@@ -1,4 +1,5 @@
 import { isDateOnly, isTimeOnly } from "./date.ts";
+import { applyDiscounts, shareDiscount, type AppliedDiscount } from "./discounts.ts";
 
 export interface AcceptedEstimateSnapshot {
   quote: {
@@ -8,7 +9,11 @@ export interface AcceptedEstimateSnapshot {
     leadId: number | null;
     totalAmount: number;
     notes: string | null;
+    subtotal?: number;
+    discountTotal?: number;
   };
+  /** Phase 5. Absent on a revision finalized before discounts existed. */
+  discounts?: AppliedDiscount[];
   lineItems: Array<{
     id: number;
     serviceId: number | null;
@@ -44,6 +49,11 @@ export interface LocationScheduleInput {
 export interface LocationJobPlan extends LocationScheduleInput {
   location: AcceptedEstimateSnapshot["locations"][number];
   lineItems: AcceptedEstimateSnapshot["lineItems"];
+  /** Before discounts. */
+  subtotal: number;
+  /** This location's share of the estimate's discounts (phase 5). */
+  discountTotal: number;
+  /** After discounts: what the job is worth. */
   totalAmount: number;
 }
 
@@ -88,20 +98,29 @@ export function buildLocationJobPlans(
     throw new EstimateConversionValidationError("Every service on a multi-location estimate must be assigned to a location");
   }
 
-  return snapshot.locations.map((location) => {
-    const schedule = byProperty.get(location.id)!;
+  const grouped = snapshot.locations.map((location) => {
     const lineItems = snapshot.lineItems.filter((line) =>
       line.propertyId === location.id || (snapshot.locations.length === 1 && line.propertyId === null),
     );
     if (!lineItems.length) {
       throw new EstimateConversionValidationError(`Location #${location.id} has no accepted services`);
     }
+    return { location, lineItems, subtotal: centsSum(lineItems.map((line) => Number(line.totalPrice))) };
+  });
+  // Phase 5: the estimate's discounts, worked out on what is being converted,
+  // shared between the locations' jobs in proportion to each one's work.
+  const discount = applyDiscounts(centsSum(grouped.map((group) => group.subtotal)), snapshot.discounts ?? []).discountTotal;
+  const shares = shareDiscount(discount, grouped.map((group) => group.subtotal));
+  return grouped.map(({ location, lineItems, subtotal }, i) => {
+    const schedule = byProperty.get(location.id)!;
     return {
       ...schedule,
       assignedUserIds: [...new Set(schedule.assignedUserIds ?? [])],
       location,
       lineItems,
-      totalAmount: lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0),
+      subtotal,
+      discountTotal: shares[i],
+      totalAmount: (Math.round(subtotal * 100) - Math.round(shares[i] * 100)) / 100,
     };
   });
 }
@@ -162,6 +181,7 @@ export async function persistAcceptedEstimateJobsCore<TJob extends { id: number 
       estimatedDuration: endMinutes - startMinutes,
       isRecurring: false,
       totalAmount: String(plan.totalAmount),
+      discountTotal: String(plan.discountTotal),
       notes: [input.snapshot.quote.notes, plan.location.notes, plan.jobNotes].filter(Boolean).join("\n\n") || null,
       lineItems: JSON.stringify(lineItems),
     });
@@ -170,3 +190,4 @@ export async function persistAcceptedEstimateJobsCore<TJob extends { id: number 
   }
   return { kind: "created", jobs };
 }
+const centsSum = (values: readonly number[]) => values.reduce((sum, value) => sum + Math.round(value * 100), 0) / 100;

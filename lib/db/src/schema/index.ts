@@ -59,3 +59,4 @@ export * from "./customer_import_provenance.ts";
 export * from "./profile_details.ts";
 export * from "./profile_notes.ts";
 export * from "./profile_callbacks.ts";
+export * from "./discounts.ts";

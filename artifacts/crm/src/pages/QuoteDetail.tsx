@@ -30,6 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
+import { DiscountEditor, DiscountRows } from "@/components/DiscountEditor";
+import { applyDiscounts, draftOf, draftsToDiscounts, type AppliedDiscount, type Discount, type DiscountDraft } from "@/lib/discounts";
 import { useToast } from "@/hooks/use-toast";
 import {
   CORRECTABLE_ESTIMATE_STATUSES, CORRECTION_REASON_MIN_LENGTH, correctionRequiresReason,
@@ -455,6 +457,9 @@ export default function QuoteDetail() {
 
   const [editPropertyId,  setEditPropertyId]   = useState<number | "">("");
   const [editLineItems,   setEditLineItems]    = useState<LineItemEdit[]>([]);
+  // Phase 5 (Kyle, Video 5): named $ / % discounts that stack.
+  const [editDiscounts,   setEditDiscounts]    = useState<DiscountDraft[]>([]);
+  const [discountError,   setDiscountError]    = useState<string | null>(null);
   const [showPicker,      setShowPicker]       = useState(false);
   // Only fetched once the picker is wanted; the page does not otherwise need
   // the catalogue.
@@ -463,6 +468,13 @@ export default function QuoteDetail() {
   });
 
   const { data: quote, isLoading, isError } = useGetQuote(quoteId);
+  // The profile's own discounts (senior, military), to add with one tap.
+  const discountCustomerId = (quote as { customerId?: number | null } | undefined)?.customerId ?? null;
+  const { data: savedDiscounts = [] } = useQuery({
+    queryKey: ["profile-discounts", discountCustomerId],
+    queryFn: () => estimateApi<Discount[]>(`/customers/${discountCustomerId}/discounts`),
+    enabled: editing && discountCustomerId != null,
+  });
 
   const updateMutation = useUpdateQuote({
     mutation: {
@@ -498,6 +510,8 @@ export default function QuoteDetail() {
     setEditNotes(quote.notes ?? "");
     setEditTerms(quote.terms ?? "");
     setEditPropertyId(quote.propertyId ?? "");
+    setEditDiscounts(((quote as { discounts?: Discount[] }).discounts ?? []).map(draftOf));
+    setDiscountError(null);
     setEditLineItems(
       (quote.lineItems ?? []).map((li) => ({
         key: String(li.id),
@@ -535,6 +549,9 @@ export default function QuoteDetail() {
 
   const saveEdit = () => {
     const validItems = editLineItems.filter((li) => li.description.trim());
+    const discounts = draftsToDiscounts(editDiscounts);
+    if ("error" in discounts) { setDiscountError(discounts.error); return; }
+    setDiscountError(null);
     updateMutation.mutate({
       id: quoteId,
       data: {
@@ -553,7 +570,8 @@ export default function QuoteDetail() {
           quantity: parseFloat(li.quantity) || 1,
           unitPrice: li.unitPrice.trim() === "" ? null : parseFloat(li.unitPrice),
         })),
-      },
+        discounts: discounts.discounts,
+      } as Parameters<typeof updateMutation.mutate>[0]["data"],
     });
   };
 
@@ -602,8 +620,12 @@ export default function QuoteDetail() {
 
   const displayLineItems = editing ? editLineItems : (quote.lineItems ?? []);
   const editSubtotal = editLineItems.reduce((s, li) => s + (parseFloat(li.quantity) || 0) * (parseFloat(li.unitPrice) || 0), 0);
-  const subtotal = editing ? editSubtotal : Number(quote.subtotal);
-  const totalAmount = editing ? editSubtotal : Number(quote.totalAmount ?? quote.subtotal);
+  // While editing, the totals are worked out here by the server's own rule; saved, they are the server's.
+  const editDiscountList = draftsToDiscounts(editDiscounts);
+  const editMoney = applyDiscounts(editSubtotal, "error" in editDiscountList ? [] : editDiscountList.discounts);
+  const subtotal = editing ? editMoney.subtotal : Number(quote.subtotal);
+  const totalAmount = editing ? editMoney.total : Number(quote.totalAmount ?? quote.subtotal);
+  const shownDiscounts: AppliedDiscount[] = editing ? editMoney.discounts : ((quote as { discounts?: AppliedDiscount[] }).discounts ?? []);
 
   const isDraft    = quote.status === "draft";
   const isSent     = quote.status === "sent";
@@ -820,6 +842,7 @@ export default function QuoteDetail() {
                     <span>Subtotal</span>
                     <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
                   </div>
+                  <DiscountRows discounts={shownDiscounts} />
                   <div className="flex justify-between items-end pt-1 border-t border-slate-100">
                     <span className="text-base font-bold text-slate-900">Total</span>
                     <span className="text-xl font-bold text-primary">{formatCurrency(totalAmount)}</span>
@@ -830,6 +853,15 @@ export default function QuoteDetail() {
           </div>
 
           {/* Notes & Terms */}
+          {editing && (
+            <div className="bg-white rounded-2xl border border-slate-100 p-5 space-y-3" data-testid="quote-discounts">
+              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Discounts</h2>
+              <DiscountEditor drafts={editDiscounts} onChange={(next) => { setEditDiscounts(next); setDiscountError(null); }}
+                saved={savedDiscounts} />
+              {discountError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="discount-error">{discountError}</p>}
+            </div>
+          )}
+
           {editing ? (
             <div className="bg-white rounded-2xl border border-slate-100 p-5 space-y-4">
               <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Notes & Terms</h2>
@@ -920,10 +952,11 @@ export default function QuoteDetail() {
                 <span className="text-slate-500">Subtotal</span>
                 <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
               </div>
+              <DiscountRows discounts={shownDiscounts} />
             </div>
             <div className="flex justify-between items-end mt-3 mb-4">
               <span className="text-base font-bold text-slate-800">Total</span>
-              <span className="text-3xl font-bold text-primary tabular-nums">{formatCurrency(totalAmount)}</span>
+              <span className="text-3xl font-bold text-primary tabular-nums" data-testid="quote-sidebar-total">{formatCurrency(totalAmount)}</span>
             </div>
 
             {/* Sidebar quick actions */}

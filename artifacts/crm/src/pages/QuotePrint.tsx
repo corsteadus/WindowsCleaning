@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { protectedFetch } from "@/lib/auth-scope";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { formatCurrency } from "@/lib/utils";
+import { discountLabel } from "@/lib/discounts";
 import { format } from "date-fns";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -30,6 +31,8 @@ interface Quote {
   subtotal: number;
   taxTotal: number;
   discountTotal: number;
+  /** Phase 5: each discount by name. */
+  discounts?: Array<{ name: string; kind: "amount" | "percent"; value: number; amount: number }>;
   totalAmount: number;
   notes?: string | null;
   terms?: string | null;
@@ -178,16 +181,24 @@ export default function QuotePrint() {
             <span className="text-slate-500">Subtotal</span>
             <span>{formatCurrency(quote.subtotal)}</span>
           </div>
+          {/* Discounts come off before any tax (phase 5; tax is phase 6). */}
+          {quote.discounts?.length ? (
+            quote.discounts.map((discount, i) => (
+              <div key={i} className="flex justify-between text-sm text-emerald-600">
+                <span>{discountLabel(discount)}</span>
+                <span>−{formatCurrency(discount.amount)}</span>
+              </div>
+            ))
+          ) : quote.discountTotal > 0 && (
+            <div className="flex justify-between text-sm text-emerald-600">
+              <span>Discount</span>
+              <span>−{formatCurrency(quote.discountTotal)}</span>
+            </div>
+          )}
           {quote.taxTotal > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-slate-500">Tax</span>
               <span>{formatCurrency(quote.taxTotal)}</span>
-            </div>
-          )}
-          {quote.discountTotal > 0 && (
-            <div className="flex justify-between text-sm text-emerald-600">
-              <span>Discount</span>
-              <span>−{formatCurrency(quote.discountTotal)}</span>
             </div>
           )}
           <div className="flex justify-between font-bold text-base border-t border-slate-200 pt-2 mt-2">

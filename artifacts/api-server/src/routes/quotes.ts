@@ -41,6 +41,8 @@ import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, normaliseQuoteTerms, QUOTE_VALIDITY_PRESETS } from "../lib/quote-settings.js";
 import { readQuoteSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
 import { priceOf, shownPrice } from "../lib/estimate-pricing.ts";
+import { discountsOf, type DiscountInput } from "../lib/discounts.ts";
+import { copyProfileDiscountsTx, readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -311,9 +313,12 @@ async function getQuoteWithDetails(id: number) {
     quotes: [quote], appointments: appointmentRows, revisions: revisionRows, links: linkRows, jobs: linkedJobRows,
   }).get(quote.id);
 
+  const discounts = serializeDiscounts(await readQuoteDiscounts(db, id));
+
   return {
     ...serializeQuote(quote),
     displayStatus,
+    discounts,
     lineItems: lineItems.map((line) => ({
       ...serializeLineItem(line),
       serviceNotes: notesByLine.get(line.id) ?? null,
@@ -332,27 +337,9 @@ async function getQuoteWithDetails(id: number) {
   };
 }
 
-async function recalcQuoteTotals(quoteId: number) {
-  const items = await db
-    .select()
-    .from(quoteLineItemsTable)
-    .where(eq(quoteLineItemsTable.quoteId, quoteId));
-
-  const subtotal = items.reduce((sum, li) => sum + Number(li.totalPrice), 0);
-  await db
-    .update(quotesTable)
-    .set({
-      subtotal: String(subtotal),
-      totalAmount: String(subtotal), // tax/discount handled later
-    })
-    .where(eq(quotesTable.id, quoteId));
-}
-
+// Phase 5: the totals take the estimate's discounts into account (lib/quote-totals.ts).
 async function recalcQuoteTotalsTx(tx: DrizzleTX, quoteId: number) {
-  const items = await tx.select().from(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, quoteId));
-  const subtotal = items.reduce((sum, li) => sum + Number(li.totalPrice), 0);
-  await tx.update(quotesTable).set({ subtotal: String(subtotal), totalAmount: String(subtotal) })
-    .where(eq(quotesTable.id, quoteId));
+  await writeQuoteTotalsTx(tx, quoteId);
 }
 
 type QuoteCreateBody = {
@@ -372,6 +359,8 @@ type QuoteCreateBody = {
     /** The job location for this line (Kyle, Video 3); checked against the account. */
     propertyId?: number | null;
   }>;
+  /** Phase 5. Absent: the profile's own discounts are added. */
+  discounts?: unknown;
 };
 
 export async function createQuoteTx(
@@ -384,6 +373,8 @@ export async function createQuoteTx(
     throw new AccountRelationError(400, "customerId or leadId is required");
   }
   const lineItemsInput = body.lineItems ?? [];
+  const sentDiscounts = body.discounts === undefined ? null : discountsOf(body.discounts);
+  if (sentDiscounts && "error" in sentDiscounts) throw new AccountRelationError(400, sentDiscounts.error);
   const requestedPropertyId = normalizeOptionalPropertyId(body.propertyId);
   const requestedCustomerId = body.customerId ? Number(body.customerId) : null;
   if (requestedPropertyId !== null && requestedCustomerId === null) {
@@ -440,6 +431,11 @@ export async function createQuoteTx(
       propertyId: linePropertyIds[i],
     })));
   }
+  // Phase 5: a new estimate starts with the profile's own discounts, unless
+  // the sender chose its discounts itself.
+  if (sentDiscounts) await replaceQuoteDiscountsTx(tx, created.id, sentDiscounts.discounts);
+  else await copyProfileDiscountsTx(tx, created.id, requestedCustomerId);
+  await writeQuoteTotalsTx(tx, created.id);
   await logQuoteActivityTx(
     tx,
     { customerId: created.customerId, leadId: created.leadId },
@@ -460,7 +456,8 @@ export async function createQuoteTx(
       dedupeKey: `quote.${created.status}:${created.id}:${created.updatedAt.toISOString()}`,
     });
   }
-  return created;
+  const [withTotals] = await tx.select().from(quotesTable).where(eq(quotesTable.id, created.id));
+  return withTotals ?? created;
 }
 
 async function quoteIsAccepted(quoteId: number): Promise<boolean> {
@@ -879,6 +876,18 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
       if (body.terms !== undefined) updateData.terms = body.terms;
       if (body.validUntil !== undefined) updateData.validUntil = body.validUntil;
 
+      let moneyChanged = false;
+      if (body.discounts !== undefined) {
+        const sent = discountsOf(body.discounts);
+        if ("error" in sent) throw new AccountRelationError(400, sent.error);
+        // A discount kept from the profile keeps its link, by name, so the
+        // estimate still says where it came from.
+        const before = await readQuoteDiscounts(tx, id);
+        await replaceQuoteDiscountsTx(tx, id, sent.discounts.map((discount: DiscountInput) => ({
+          ...discount, customerDiscountId: before.find((row) => row.name === discount.name)?.customerDiscountId ?? null,
+        })));
+        moneyChanged = true;
+      }
       if (body.lineItems !== undefined) {
         const lineItemsInput: Array<{
           serviceId?: number; description: string; quantity: number; unitPrice: number | null;
@@ -923,19 +932,17 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
             };
           }));
         }
-        const items = await tx.select().from(quoteLineItemsTable).where(eq(quoteLineItemsTable.quoteId, id));
-        const subtotal = items.reduce((sum, li) => sum + Number(li.totalPrice), 0);
-        updateData.subtotal = String(subtotal);
-        updateData.totalAmount = String(subtotal);
+        moneyChanged = true;
       }
       if (Object.keys(updateData).length > 0) {
         await tx.update(quotesTable).set(updateData).where(eq(quotesTable.id, id));
       }
+      if (moneyChanged) await writeQuoteTotalsTx(tx, id);
       const statusChanged = body.status !== undefined && body.status !== current.status;
       if (statusChanged) {
         await logQuoteActivityTx(tx, current, "quote_status_changed", current.status, body.status, null, getPerformedBy(req));
-      } else if (body.lineItems !== undefined) {
-        await logQuoteActivityTx(tx, current, "quote_updated", null, null, `Quote ${current.quoteNumber} line items updated`, getPerformedBy(req));
+      } else if (body.lineItems !== undefined || body.discounts !== undefined) {
+        await logQuoteActivityTx(tx, current, "quote_updated", null, null, `Quote ${current.quoteNumber} ${body.lineItems !== undefined ? "line items" : "discounts"} updated`, getPerformedBy(req));
       }
       const [quote] = await tx.select().from(quotesTable).where(eq(quotesTable.id, id));
       if (statusChanged && (body.status === "sent" || body.status === "accepted")) {

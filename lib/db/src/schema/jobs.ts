@@ -22,6 +22,8 @@ export const jobsTable = pgTable("jobs", {
   recurringFrequency: text("recurring_frequency"),
   recurringPlanId: integer("recurring_plan_id"),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
+  // Phase 5: what the estimate's discounts took off this job; total_amount is after it.
+  discountTotal: numeric("discount_total", { precision: 10, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
   techNotes: text("tech_notes"),
   lineItems: text("line_items"),
