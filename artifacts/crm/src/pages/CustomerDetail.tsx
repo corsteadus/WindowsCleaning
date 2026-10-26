@@ -27,6 +27,7 @@ import {
   Archive,
 } from "lucide-react";
 import { FilesTab } from "@/components/FilesTab";
+import { locationLabel } from "@/lib/profile-files";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
 import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
 import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEstimates";
@@ -790,7 +791,8 @@ export default function CustomerDetail() {
                 {visibleViews.some((view) => view.id === "files") && (
                   <ProfileSection id="files" title="Photos & Files" icon={Paperclip}
                     open={!!openSections.files} onToggle={() => toggleSection("files")}>
-                    <FilesTab entityType="customer" entityId={customer.id} />
+                    <FilesTab entityType="customer" entityId={customer.id}
+                      locations={[...activeProperties].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary)).map((property) => ({ id: property.id, label: locationLabel(property) }))} />
                   </ProfileSection>
                 )}
                 {visibleViews.some((view) => view.id === "quotes") && (

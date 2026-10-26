@@ -1,6 +1,7 @@
 import { Storage, File } from "@google-cloud/storage";
 import { Readable } from "stream";
 import { randomUUID } from "crypto";
+import { parseByteRange } from "./byte-range";
 import {
   ObjectAclPolicy,
   ObjectPermission,
@@ -87,18 +88,30 @@ export class ObjectStorageService {
     return null;
   }
 
-  async downloadObject(file: File, cacheTtlSec: number = 3600): Promise<Response> {
+  async downloadObject(file: File, cacheTtlSec: number = 3600, rangeHeader?: string): Promise<Response> {
     const [metadata] = await file.getMetadata();
     const aclPolicy = await getObjectAclPolicy(file);
     const isPublic = aclPolicy?.visibility === "public";
 
-    const nodeStream = file.createReadStream();
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-
     const headers: Record<string, string> = {
       "Content-Type": (metadata.contentType as string) || "application/octet-stream",
       "Cache-Control": `${isPublic ? "public" : "private"}, max-age=${cacheTtlSec}`,
+      "Accept-Ranges": "bytes",
     };
+    const size = Number(metadata.size ?? 0);
+    // A video plays on a phone, and skips ahead anywhere, only through ranges.
+    const range = parseByteRange(rangeHeader, size);
+    if (range === "unsatisfiable") {
+      return new Response(null, { status: 416, headers: { ...headers, "Content-Range": `bytes */${size}` } });
+    }
+    if (range) {
+      const webStream = Readable.toWeb(file.createReadStream({ start: range.start, end: range.end })) as ReadableStream;
+      headers["Content-Range"] = `bytes ${range.start}-${range.end}/${size}`;
+      headers["Content-Length"] = String(range.end - range.start + 1);
+      return new Response(webStream, { status: 206, headers });
+    }
+
+    const webStream = Readable.toWeb(file.createReadStream()) as ReadableStream;
     if (metadata.size) {
       headers["Content-Length"] = String(metadata.size);
     }

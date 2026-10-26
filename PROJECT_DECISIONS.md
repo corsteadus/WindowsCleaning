@@ -164,8 +164,32 @@ steps 05–08 will not complete.
 
 ---
 
-﻿
-﻿
+## Phase 3 — photos, videos and files by location — 2026-10-26
+
+**Built; browser-verified locally with the storage bucket stubbed (15/15); the real run waits
+for the republish** (it needs the new column, and only Replit has the bucket). Kyle, Videos 4
+and 5: photos, documents and videos "organised by job location", and photos that keep "the
+same resolution and the same size".
+
+**Photos & Files** (`components/FilesTab.tsx`, `lib/profile-files.ts`): **Upload to** picks
+one of the profile's live locations (primary first, and the default) or the whole profile.
+Files show **grouped under their location** as a grid of previews; a location with no files is
+left out, and a file whose location is removed falls back to the whole profile. **Nothing is
+resized or cropped**: tiles and the viewer show the original whole (`object-contain`), and
+**Open original** / **Download** give the file as uploaded. **Videos** can now be uploaded and
+play in the viewer; the file route now answers **byte ranges** (206), which iPhones need to
+play a video at all and every browser needs to skip ahead (`lib/byte-range.ts`). The viewer
+also **moves** a file to another location and **deletes** it — the old hover-only buttons
+never showed on a touch screen.
+
+Routes: `POST /attachments` takes `propertyId`; new `PATCH /attachments/:id` moves a file
+(logged as "file_moved"). Both accept only a location **on that same profile**.
+**Migration `attachment-location-v1`**: adds the nullable `attachments.property_id`
+(references properties, on delete set null) and its index. Dry-run on the shared database
+inside a rolled-back transaction: applies and verifies cleanly (0 attachments today).
+
+---
+
 ## Phase 2 — email history: open any email, and resend it — 2026-10-26
 
 **Built and unit-tested; the browser walkthrough waits for the republish** (it needs the new

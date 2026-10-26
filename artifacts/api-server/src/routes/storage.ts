@@ -119,7 +119,7 @@ router.get("/storage/objects/*path", async (req: Request, res: Response) => {
     //   return;
     // }
 
-    const response = await objectStorageService.downloadObject(objectFile);
+    const response = await objectStorageService.downloadObject(objectFile, 3600, req.headers.range);
 
     res.status(response.status);
     response.headers.forEach((value, key) => res.setHeader(key, value));

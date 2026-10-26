@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Paperclip, Trash2, Download, Upload, FileImage, FileText, File, X, Loader2 } from "lucide-react";
+import { Paperclip, Trash2, Download, Upload, FileText, File, X, Loader2, MapPin, Play, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 import { protectedFetch } from "@/lib/auth-scope";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { defaultUploadLocation, fileKind, fileUrl, groupFilesByLocation, type FileLocation } from "@/lib/profile-files";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -14,6 +16,7 @@ interface Attachment {
   fileName: string;
   fileType: string;
   fileSize: number | null;
+  propertyId?: number | null;
   description: string | null;
   uploadedBy: string | null;
   createdAt: string;
@@ -22,12 +25,8 @@ interface Attachment {
 interface FilesTabProps {
   entityType: "customer" | "lead";
   entityId: number;
-}
-
-function fileIcon(mimeType: string) {
-  if (mimeType.startsWith("image/")) return <FileImage className="w-5 h-5 text-blue-500" />;
-  if (mimeType === "application/pdf") return <FileText className="w-5 h-5 text-red-500" />;
-  return <File className="w-5 h-5 text-slate-400" />;
+  /** The profile's locations, primary first — phase 3 files photos and files under them. */
+  locations?: FileLocation[];
 }
 
 function formatBytes(bytes: number | null): string {
@@ -37,13 +36,42 @@ function formatBytes(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function FilesTab({ entityType, entityId }: FilesTabProps) {
+/**
+ * The tile's picture. Kyle (Video 5): photos must not be squished — the
+ * original is shown whole inside the tile (`object-contain`), never cropped
+ * or stretched, and never resized on upload.
+ */
+function Preview({ att }: { att: Attachment }) {
+  const [broken, setBroken] = useState(false);
+  const kind = fileKind(att.fileType);
+  const src = fileUrl(BASE, att.objectPath);
+  if (kind === "image" && !broken) {
+    return <img src={src} alt={att.fileName} loading="lazy" onError={() => setBroken(true)} className="h-full w-full object-contain" />;
+  }
+  if (kind === "video" && !broken) {
+    return (
+      <>
+        <video src={`${src}#t=0.1`} preload="metadata" muted playsInline onError={() => setBroken(true)} className="h-full w-full object-contain" />
+        <span className="absolute inset-0 flex items-center justify-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white"><Play className="h-5 w-5 translate-x-px" /></span>
+        </span>
+      </>
+    );
+  }
+  return kind === "pdf"
+    ? <FileText className="h-10 w-10 text-red-500" />
+    : <File className="h-10 w-10 text-slate-400" />;
+}
+
+export function FilesTab({ entityType, entityId, locations = [] }: FilesTabProps) {
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploadLocation, setUploadLocation] = useState<number | null>(() => defaultUploadLocation(locations));
+  const [viewingId, setViewingId] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery<{ attachments: Attachment[] }>({
     queryKey: ["/api/attachments", entityType, entityId],
@@ -59,6 +87,20 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
       const response = await protectedFetch(`${BASE}/api/attachments/${id}`, { method: "DELETE" });
       if (!response.ok) throw new Error(`Failed to delete attachment (${response.status})`);
       return response.json();
+    },
+    onSuccess: () => { setViewingId(null); return qc.invalidateQueries({ queryKey: ["/api/attachments", entityType, entityId] }); },
+  });
+
+  const moveMutation = useMutation({
+    mutationFn: async ({ id, propertyId }: { id: number; propertyId: number | null }) => {
+      const response = await protectedFetch(`${BASE}/api/attachments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Failed to move the file (${response.status})`);
+      return body;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/attachments", entityType, entityId] }),
   });
@@ -81,6 +123,7 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
 
       // Public presigned GCS URL: deliberately unauthenticated and outside
       // /api; protected API steps before/after it use protectedFetch.
+      // The file goes up exactly as it is: same resolution, same size.
       setUploadProgress(`Uploading ${file.name}…`);
       const putRes = await fetch(uploadURL, {
         method: "PUT",
@@ -95,7 +138,10 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ entityType, entityId, objectPath, fileName: file.name, fileType: file.type || "application/octet-stream", fileSize: file.size }),
+        body: JSON.stringify({
+          entityType, entityId, objectPath, fileName: file.name, fileType: file.type || "application/octet-stream", fileSize: file.size,
+          propertyId: uploadLocation,
+        }),
       });
       if (!regRes.ok) throw new Error("Failed to save attachment record");
 
@@ -108,7 +154,7 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
     }
-  }, [entityType, entityId, qc]);
+  }, [entityType, entityId, uploadLocation, qc]);
 
   const handleFiles = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -116,9 +162,25 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
   }, [uploadFile]);
 
   const attachments = data?.attachments ?? [];
+  const groups = groupFilesByLocation(attachments, locations);
+  const viewing = attachments.find((att) => att.id === viewingId) ?? null;
+  const viewingKind = viewing ? fileKind(viewing.fileType) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="files-tab">
+      {locations.length > 0 && (
+        <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <MapPin className="h-4 w-4 text-slate-400" />
+          <span className="font-medium">Upload to</span>
+          <select data-testid="files-location-picker" value={uploadLocation ?? ""} disabled={uploading}
+            onChange={(e) => setUploadLocation(e.target.value ? Number(e.target.value) : null)}
+            className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm sm:flex-none">
+            {locations.map((location) => <option key={location.id} value={location.id}>{location.label}</option>)}
+            <option value="">The whole profile (no one location)</option>
+          </select>
+        </label>
+      )}
+
       {/* Upload zone */}
       <div
         className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
@@ -137,8 +199,9 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
           type="file"
           multiple
           className="hidden"
+          data-testid="files-input"
           onChange={e => handleFiles(e.target.files)}
-          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+          accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
         />
         {uploading ? (
           <div className="flex flex-col items-center gap-2 text-primary">
@@ -149,7 +212,7 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
           <div className="flex flex-col items-center gap-2 text-slate-400 cursor-pointer">
             <Upload className="w-8 h-8" />
             <p className="text-sm font-medium text-slate-600">Drop files here or click to browse</p>
-            <p className="text-xs">Images, PDFs, documents up to 20MB</p>
+            <p className="text-xs">Photos, videos, PDFs and documents, kept at their original size</p>
           </div>
         )}
       </div>
@@ -162,7 +225,7 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
         </div>
       )}
 
-      {/* File list */}
+      {/* Files, by location */}
       {isLoading ? (
         <div className="flex justify-center py-8">
           <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
@@ -173,47 +236,105 @@ export function FilesTab({ entityType, entityId }: FilesTabProps) {
           <p className="text-sm">No files uploaded yet</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {attachments.map(att => (
-            <div key={att.id} className="flex items-center gap-3 p-3 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition group">
-              {fileIcon(att.fileType)}
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{att.fileName}</p>
-                <p className="text-xs text-slate-400">
-                  {formatBytes(att.fileSize)}
-                  {att.uploadedBy ? ` · ${att.uploadedBy}` : ""}
-                  {" · "}
-                  {format(new Date(att.createdAt), "MMM d, yyyy")}
-                </p>
+        <div className="space-y-5">
+          {groups.map((group) => (
+            <section key={group.key} data-testid="files-group" data-location={group.location?.id ?? ""}>
+              {locations.length > 0 && (
+                <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {group.location?.label ?? "Whole profile"}
+                  <span className="font-normal text-slate-400">· {group.files.length}</span>
+                </h4>
+              )}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {group.files.map((att) => (
+                  <button key={att.id} type="button" data-testid="file-tile" onClick={() => setViewingId(att.id)}
+                    className="group overflow-hidden rounded-xl border border-slate-200 bg-white text-left transition hover:border-slate-300 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                    <span className="relative flex aspect-[4/3] items-center justify-center bg-slate-100">
+                      <Preview att={att} />
+                    </span>
+                    <span className="block px-2.5 py-2">
+                      <span className="block truncate text-xs font-medium text-slate-800">{att.fileName}</span>
+                      <span className="block truncate text-[11px] text-slate-400">
+                        {[formatBytes(att.fileSize), att.uploadedBy, format(new Date(att.createdAt), "MMM d, yyyy")].filter(Boolean).join(" · ")}
+                      </span>
+                    </span>
+                  </button>
+                ))}
               </div>
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                <a
-                  href={`${BASE}/api/storage/objects${att.objectPath.replace(/^\/objects/, "")}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700"
-                  title="Download"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <Download className="w-4 h-4" />
-                </a>
-                <button
-                  className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
-                  title="Delete"
-                  onClick={() => {
-                    if (window.confirm(`Delete "${att.fileName}"?`)) {
-                      deleteMutation.mutate(att.id);
-                    }
-                  }}
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+            </section>
           ))}
         </div>
       )}
+
+      <Dialog open={viewing != null} onOpenChange={(open) => { if (!open) setViewingId(null); }}>
+        <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto rounded-2xl" data-testid="file-viewer">
+          <DialogHeader><DialogTitle className="truncate pr-6">{viewing?.fileName ?? "File"}</DialogTitle></DialogHeader>
+          {viewing && (
+            <>
+              {/* Shown whole, at its own proportions; never larger than it really is. */}
+              <div className="flex items-center justify-center rounded-xl bg-slate-900/95 p-2">
+                {viewingKind === "image" && (
+                  <img data-testid="file-viewer-image" src={fileUrl(BASE, viewing.objectPath)} alt={viewing.fileName}
+                    className="max-h-[60vh] max-w-full object-contain" />
+                )}
+                {viewingKind === "video" && (
+                  <video data-testid="file-viewer-video" src={fileUrl(BASE, viewing.objectPath)} controls playsInline
+                    className="max-h-[60vh] max-w-full" />
+                )}
+                {viewingKind === "pdf" && (
+                  <iframe title={viewing.fileName} src={fileUrl(BASE, viewing.objectPath)} className="h-[60vh] w-full rounded-lg bg-white" />
+                )}
+                {viewingKind === "other" && (
+                  <div className="flex flex-col items-center gap-2 py-12 text-slate-300">
+                    <File className="h-12 w-12" />
+                    <p className="text-sm">No preview for this kind of file — download it to open it.</p>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                {[formatBytes(viewing.fileSize), viewing.uploadedBy ? `Uploaded by ${viewing.uploadedBy}` : null, format(new Date(viewing.createdAt), "MMM d, yyyy")].filter(Boolean).join(" · ")}
+              </p>
+              {locations.length > 0 && (
+                <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                  <MapPin className="h-4 w-4 text-slate-400" />
+                  <span className="font-medium">Location</span>
+                  <select data-testid="file-move" value={viewing.propertyId != null && locations.some((l) => l.id === viewing.propertyId) ? viewing.propertyId : ""}
+                    disabled={moveMutation.isPending}
+                    onChange={(e) => moveMutation.mutate({ id: viewing.id, propertyId: e.target.value ? Number(e.target.value) : null })}
+                    className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm sm:flex-none">
+                    {locations.map((location) => <option key={location.id} value={location.id}>{location.label}</option>)}
+                    <option value="">The whole profile (no one location)</option>
+                  </select>
+                  {moveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                </label>
+              )}
+              {moveMutation.isError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{(moveMutation.error as Error).message}</p>}
+            </>
+          )}
+          <DialogFooter className="gap-2 sm:justify-between">
+            {viewing && (
+              <button type="button" data-testid="file-delete" disabled={deleteMutation.isPending}
+                onClick={() => { if (window.confirm(`Delete "${viewing.fileName}"?`)) deleteMutation.mutate(viewing.id); }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-red-200 px-4 text-sm font-semibold text-red-600 hover:bg-red-50">
+                <Trash2 className="h-4 w-4" /> Delete
+              </button>
+            )}
+            {viewing && (
+              <span className="flex gap-2">
+                <a href={fileUrl(BASE, viewing.objectPath)} target="_blank" rel="noopener noreferrer" data-testid="file-open-original"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                  <ExternalLink className="h-4 w-4" /> Open original
+                </a>
+                <a href={fileUrl(BASE, viewing.objectPath)} download={viewing.fileName}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-semibold text-white hover:bg-primary/90">
+                  <Download className="h-4 w-4" /> Download
+                </a>
+              </span>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
