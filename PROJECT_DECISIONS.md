@@ -166,6 +166,42 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 1b — sections under the profile, and Jump To to them — 2026-10-26
+
+**Built and browser-verified locally (13/13; regression Phase 1 19/19, A 33/33). No
+migration.** Kyle's answer #4. Under the profile: **Photos & Files**, **Estimates** and
+**Email History & Activity**, in his order, closed by default and loaded only when opened
+(`components/ProfileSection.tsx`). **Jump To** opens a section where it is and scrolls to it
+— it never leaves the page, so an unsaved edit is not interrupted; Jobs, Invoices, Payments,
+Contacts and Locations stay views of their own and still ask before leaving unsaved edits.
+**Callbacks** joins as a fourth section in phase 4. Jump To's "Files" is now "Photos &
+Files", Kyle's word.
+
+---
+
+## Kyle's answers to the Videos 4–6 questions, 2026-10-26
+
+| # | Kyle | What it means for the work |
+|---|---|---|
+| 1 | **Estimate → Invoice: on hold.** He thinks the estimate would need scheduling first; he will follow up | Keep estimate → job → invoice. **Build nothing** for it |
+| 2 | **Sales tax, optional, never by default, on estimates and invoices.** The business sets up **state and county rates**; base = state, county added when it applies; either rate alone **or both added together**. **Each service has a Taxable setting.** "We may need to refine the tax setup further" | New phase: a rates set-up in Settings, Taxable on the Service Catalog, a tax choice on estimates and invoices that taxes only taxable lines, carried estimate → job → invoice. Money code; migration |
+| 3 | **Customer-linked discounts now** (senior, military): assigned to the profile, used again without setting up | The discounts phase grows: named $ / % discounts on an estimate, stacked, **and** discounts kept on the profile that apply to its new estimates. Migration |
+| 4 | **Both**: Photos, Estimates, Callbacks and Email History as **expandable sections under the profile**, **and** Jump To kept on the right to go straight to one | The profile page gets those sections at its foot; Jump To opens and scrolls to the section. Phases 2–4 land as sections |
+| 5 | Basic estimate email: **a link that opens the estimate as a PDF** is the standard; **attaching the PDF is an option** on the send screen | Needs a real PDF of the estimate (server-side) and attachments in outgoing email |
+
+**Defaults built unless Kyle says otherwise:** tax is worked out on the amount **after**
+discounts; a **Tax Exempt** customer's estimate and invoice are not taxed (the choice is off,
+with the reason shown); a profile's discount is **added to each new estimate** and can be
+removed there; the profile's county suggests the county rate.
+
+**Revised order:** 1 ✅ (Sandbox check pending) → **1b** expandable sections + Jump To →
+2 email history (full message, resend) → 3 photos/files by location → 4 callbacks →
+5 discounts (estimate + customer-linked) → 6 sales tax → 7 basic estimate email with PDF
+link and attachment → 8 branding. Discounts before tax, because tax is on the discounted
+amount. On hold: estimate → invoice. Blocked: deposits paid online, SMS.
+
+---
+
 ## Phase 1 — estimates on the profile, and converting from one — 2026-10-24
 
 **Built and browser-verified locally (19/19; regression: B2 18/18, A 33/33). Not yet

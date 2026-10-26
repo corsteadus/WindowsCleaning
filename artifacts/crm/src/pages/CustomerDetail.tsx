@@ -31,6 +31,7 @@ import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
 import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
 import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEstimates";
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
+import { ProfileSection } from "@/components/ProfileSection";
 import type { ProfileEstimate } from "@/lib/profile-estimates";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -262,12 +263,19 @@ const VIEWS: { id: View; label: string; icon: React.ComponentType<{ className?: 
   { id: "invoices",   label: "Invoices",      icon: Receipt },
   { id: "payments",   label: "Payments",      icon: CreditCard },
   { id: "activity",   label: "Communication & Activity", icon: Activity },
-  { id: "files",      label: "Files",         icon: Paperclip },
+  { id: "files",      label: "Photos & Files", icon: Paperclip },
   { id: "contacts",   label: "Contacts",      icon: Users },
   { id: "properties", label: "Locations",     icon: Home },
 ];
 
 const UNSAVED_WARNING = "You have changes that are not updated yet. Leave without saving them?";
+
+// Kyle (2026-10-26): these open under the profile, in his order, and Jump To
+// goes straight to them; the rest stay views of their own. Callbacks join
+// here when they are built (phase 4).
+const SECTION_VIEWS = ["files", "quotes", "activity"] as const;
+type SectionView = (typeof SECTION_VIEWS)[number];
+const isSection = (view: View): view is SectionView => (SECTION_VIEWS as readonly string[]).includes(view);
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function CustomerDetail() {
@@ -304,6 +312,29 @@ export default function CustomerDetail() {
   // asks first rather than throwing them away.
   const [sheetDirty, setSheetDirty] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [openSections, setOpenSections] = useState<Partial<Record<SectionView, boolean>>>({});
+  const [scrollTo, setScrollTo] = useState<SectionView | null>(null);
+  const toggleSection = (view: SectionView) => setOpenSections((current) => ({ ...current, [view]: !current[view] }));
+  // Jump To: a section opens where it is, under the profile; anything else is
+  // a view of its own, and leaving the profile asks about unsaved edits first.
+  const jumpTo = (view: View) => {
+    if (view === "profile") { setActiveView("profile"); return; }
+    if (isSection(view)) {
+      setActiveView("profile");
+      setOpenSections((current) => ({ ...current, [view]: true }));
+      setScrollTo(view);
+      return;
+    }
+    guard(() => setActiveView(view));
+  };
+  useEffect(() => {
+    if (!scrollTo) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`section-${scrollTo}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setScrollTo(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scrollTo]);
   // Kyle, Video 4: choose one of their estimates, check it, schedule it.
   const canConvertEstimates = hasClientCapability(user, "estimates.convert") && canScheduleJobs;
   const [convertPicker, setConvertPicker] = useState<{ open: boolean; quoteId?: number }>({ open: false });
@@ -315,7 +346,7 @@ export default function CustomerDetail() {
     action();
   };
   // Moving to another profile with the arrows starts it on its own page.
-  useEffect(() => { setActiveView("profile"); setActionsOpen(false); }, [id]);
+  useEffect(() => { setActiveView("profile"); setActionsOpen(false); setOpenSections({}); }, [id]);
 
   // Kyle's answer #6: Previous / Next through active profiles of the same kind.
   const neighbors = useQuery<{ previous: Neighbor | null; next: Neighbor | null }>({
@@ -752,6 +783,40 @@ export default function CustomerDetail() {
                 }}
               />
             )}
+            {activeView === "profile" && (
+              <div className="mt-4 space-y-3" data-testid="profile-sections">
+                {visibleViews.some((view) => view.id === "files") && (
+                  <ProfileSection id="files" title="Photos & Files" icon={Paperclip}
+                    open={!!openSections.files} onToggle={() => toggleSection("files")}>
+                    <FilesTab entityType="customer" entityId={customer.id} />
+                  </ProfileSection>
+                )}
+                {visibleViews.some((view) => view.id === "quotes") && (
+                  <ProfileSection id="quotes" title="Estimates" icon={FileText} count={getViewCount("quotes", customer)}
+                    open={!!openSections.quotes} onToggle={() => toggleSection("quotes")}>
+                    <EstimatesView
+                      quotes={customer.quotes ?? []}
+                      customerId={customer.id}
+                      canCreate={canQuoteThisAccount}
+                      canConvert={canConvertEstimates}
+                      isProspect={customer.lifecycleStatus === "prospect"}
+                      onConvert={openConvert}
+                      onDelete={canManageCustomer ? confirmDeleteRecord : undefined}
+                    />
+                  </ProfileSection>
+                )}
+                {visibleViews.some((view) => view.id === "activity") && (
+                  <ProfileSection id="activity" title="Email History & Activity" icon={Activity} count={getViewCount("activity", customer)}
+                    open={!!openSections.activity} onToggle={() => toggleSection("activity")}>
+                    <CommunicationActivityTab
+                      messages={customer.messages}
+                      logs={customer.activityLogs ?? []}
+                      customerId={customer.id}
+                    />
+                  </ProfileSection>
+                )}
+              </div>
+            )}
             {activeView === "contacts" && (
               canManageContacts
                 ? <ContactsTab contacts={customer.contacts ?? []} customerId={customer.id} />
@@ -765,32 +830,11 @@ export default function CustomerDetail() {
             {activeView === "jobs" && (
               <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
             )}
-            {activeView === "quotes" && (
-              <EstimatesView
-                quotes={customer.quotes ?? []}
-                customerId={customer.id}
-                canCreate={canQuoteThisAccount}
-                canConvert={canConvertEstimates}
-                isProspect={customer.lifecycleStatus === "prospect"}
-                onConvert={openConvert}
-                onDelete={canManageCustomer ? confirmDeleteRecord : undefined}
-              />
-            )}
             {activeView === "invoices" && (
               <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
             )}
             {activeView === "payments" && (
               <PaymentsTab payments={customer.payments ?? []} />
-            )}
-            {activeView === "files" && (
-              <FilesTab entityType="customer" entityId={customer.id} />
-            )}
-            {activeView === "activity" && (
-              <CommunicationActivityTab
-                messages={customer.messages}
-                logs={customer.activityLogs ?? []}
-                customerId={customer.id}
-              />
             )}
           </div>
 
@@ -802,11 +846,12 @@ export default function CustomerDetail() {
               {visibleViews.map((view) => {
                 const Icon = view.icon;
                 const count = getViewCount(view.id, customer);
-                const active = activeView === view.id;
+                const active = isSection(view.id) ? activeView === "profile" && !!openSections[view.id] : activeView === view.id;
                 return (
                   <button
                     key={view.id}
-                    onClick={() => (view.id === "profile" ? setActiveView("profile") : guard(() => setActiveView(view.id)))}
+                    data-testid={`jump-${view.id}`}
+                    onClick={() => jumpTo(view.id)}
                     className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors ${active ? "bg-primary/10 text-primary" : "text-slate-600 hover:bg-slate-50"}`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
