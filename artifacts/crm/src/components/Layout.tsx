@@ -25,6 +25,7 @@ import {
   LineChart,
   Inbox,
   Activity,
+  PhoneCall,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useAuth } from "@workspace/replit-auth-web";
@@ -42,6 +43,7 @@ const NAV_SECTIONS = [
       { href: "/jobs",      label: "Jobs",       icon: Briefcase, requiredCapability: "jobs.view" },
       { href: "/customers",       label: "Customers",     icon: Users, requiredCapability: "customers.view" },
       { href: "/prospects",       label: "Prospects",     icon: Target, requiredCapability: "leads.view" },
+      { href: "/callbacks",       label: "Callbacks",     icon: PhoneCall, requiredCapability: "customers.manage" },
     ],
   },
   {
@@ -85,6 +87,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/payments":         "Payments",
   "/reports/reconciliation": "Financial Reconciliation",
   "/tasks":            "Tasks",
+  "/callbacks":        "Callbacks",
   "/crews":            "Crews",
   "/properties":       "Properties",
   "/services":         "Service Catalog",

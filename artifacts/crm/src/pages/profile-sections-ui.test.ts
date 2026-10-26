@@ -11,9 +11,9 @@ const section = read("../components/ProfileSection.tsx");
 
 test("the sections sit under the profile, in Kyle's order", () => {
   const block = detail.slice(detail.indexOf('data-testid="profile-sections"'));
-  const order = ['id="files"', 'id="quotes"', 'id="activity"'].map((marker) => block.indexOf(marker));
+  const order = ['id="files"', 'id="quotes"', 'id="callbacks"', 'id="activity"'].map((marker) => block.indexOf(marker));
   assert.ok(order.every((at, i) => at > 0 && (i === 0 || at > order[i - 1])), order.join(","));
-  assert.match(detail, /const SECTION_VIEWS = \["files", "quotes", "activity"\] as const;/);
+  assert.match(detail, /const SECTION_VIEWS = \["files", "quotes", "callbacks", "activity"\] as const;/);
 });
 
 test("Jump To opens a section where it is, and only leaves the page for a view of its own", () => {

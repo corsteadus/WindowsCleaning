@@ -54,3 +54,9 @@ export function convertBlocker(quote: ProfileEstimate): string | null {
   }
   return null;
 }
+
+/** One line per estimate on the call screen (phase 4): the caller talks about it. */
+export function estimateCallLine(quote: ProfileEstimate): string {
+  const locations = (quote.summary?.locations ?? []).map((location) => location.label).join(", ");
+  return [`Estimate ${quote.quoteNumber}`, estimatePriceLabel(quote), locations].filter(Boolean).join(" · ");
+}

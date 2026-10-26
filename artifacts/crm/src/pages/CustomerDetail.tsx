@@ -34,7 +34,9 @@ import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEs
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
 import { ProfileSection } from "@/components/ProfileSection";
 import { EmailHistory } from "@/components/EmailHistory";
-import type { ProfileEstimate } from "@/lib/profile-estimates";
+import { ProfileCallbacks } from "@/components/ProfileCallbacks";
+import { estimateCallLine, type ProfileEstimate } from "@/lib/profile-estimates";
+import { bookingTarget } from "@/lib/callbacks";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -256,11 +258,12 @@ interface MessageLog {
 // and Properties are still here in full — the page edits the everyday parts
 // (names, numbers, addresses), and these keep the rest (sharing an address,
 // archiving, a contact's own details). Nothing that worked was taken away.
-type View = "profile" | "quotes" | "jobs" | "invoices" | "payments" | "activity" | "files" | "contacts" | "properties";
+type View = "profile" | "quotes" | "callbacks" | "jobs" | "invoices" | "payments" | "activity" | "files" | "contacts" | "properties";
 
 const VIEWS: { id: View; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "profile",    label: "Profile",       icon: User },
   { id: "quotes",     label: "Estimates",     icon: FileText },
+  { id: "callbacks",  label: "Callbacks",     icon: PhoneCall },
   { id: "jobs",       label: "Jobs",          icon: Briefcase },
   { id: "invoices",   label: "Invoices",      icon: Receipt },
   { id: "payments",   label: "Payments",      icon: CreditCard },
@@ -273,9 +276,9 @@ const VIEWS: { id: View; label: string; icon: React.ComponentType<{ className?: 
 const UNSAVED_WARNING = "You have changes that are not updated yet. Leave without saving them?";
 
 // Kyle (2026-10-26): these open under the profile, in his order, and Jump To
-// goes straight to them; the rest stay views of their own. Callbacks join
-// here when they are built (phase 4).
-const SECTION_VIEWS = ["files", "quotes", "activity"] as const;
+// goes straight to them; the rest stay views of their own. Callbacks are
+// phase 4 (Video 4).
+const SECTION_VIEWS = ["files", "quotes", "callbacks", "activity"] as const;
 type SectionView = (typeof SECTION_VIEWS)[number];
 const isSection = (view: View): view is SectionView => (SECTION_VIEWS as readonly string[]).includes(view);
 
@@ -308,6 +311,7 @@ export default function CustomerDetail() {
     && (view.id !== "activity" || hasClientCapability(user, "communication.view"))
     && (view.id !== "files" || canManageCustomer)
     && (view.id !== "activity" || canManageCustomer)
+    && (view.id !== "callbacks" || canManageCustomer)
   );
   const [activeView, setActiveView] = useState<View>("profile");
   // The page holds unsaved edits until Update; anything that would leave it
@@ -342,6 +346,14 @@ export default function CustomerDetail() {
   const [convertPicker, setConvertPicker] = useState<{ open: boolean; quoteId?: number }>({ open: false });
   const [schedulingQuoteId, setSchedulingQuoteId] = useState<number | null>(null);
   const openConvert = (quoteId?: number) => guard(() => setConvertPicker({ open: true, quoteId }));
+  // A callback where they said yes (phase 4): straight into booking the work.
+  const bookTheWork = () => {
+    if (!customer) return;
+    const target = bookingTarget({ list: customer.lifecycleStatus === "prospect" ? "prospect" : "customer", estimates: (customer.quotes ?? []).length });
+    if (target === "convert" && canConvertEstimates) openConvert();
+    else if (target === "job" && canScheduleJobs) guard(() => navigate(`/jobs/new?customerId=${customer.id}`));
+    else if (canCreateEstimates) guard(() => navigate(`/quotes/new?customerId=${customer.id}`));
+  };
   const guard = (action: () => void) => {
     if (sheetDirty && activeView === "profile" && !window.confirm(UNSAVED_WARNING)) return;
     setSheetDirty(false);
@@ -465,6 +477,15 @@ export default function CustomerDetail() {
 
   // The Edit / Save Changes mode is gone (Kyle, Video 1): every field on the
   // profile page is always editable, and its own Update button saves it.
+
+  // From the call list (phase 4): "book it" opens the profile and starts booking, once.
+  const [bookRequested, setBookRequested] = useState(() => new URLSearchParams(window.location.search).get("book") === "1");
+  useEffect(() => {
+    if (!bookRequested || !customer) return;
+    setBookRequested(false);
+    window.history.replaceState(null, "", window.location.pathname);
+    bookTheWork();
+  }, [bookRequested, customer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
     return (
@@ -806,6 +827,22 @@ export default function CustomerDetail() {
                       isProspect={customer.lifecycleStatus === "prospect"}
                       onConvert={openConvert}
                       onDelete={canManageCustomer ? confirmDeleteRecord : undefined}
+                    />
+                  </ProfileSection>
+                )}
+                {visibleViews.some((view) => view.id === "callbacks") && (
+                  <ProfileSection id="callbacks" title="Callbacks" icon={PhoneCall}
+                    open={!!openSections.callbacks} onToggle={() => toggleSection("callbacks")}>
+                    <ProfileCallbacks
+                      profile={{
+                        id: customer.id, name: accountName, list: customer.lifecycleStatus === "prospect" ? "prospect" : "customer",
+                        email: customer.email ?? null,
+                        phone: customer.cellPhone || customer.homePhone || customer.workPhone || customer.phone || null,
+                      }}
+                      estimates={(customer.quotes ?? []).map(estimateCallLine)}
+                      canManage={canManageCustomer && !isDeactivatedProfile(customer)}
+                      onBook={bookTheWork}
+                      onEmail={canSendEmail && customer.email ? () => openEmail(customer.email!) : undefined}
                     />
                   </ProfileSection>
                 )}

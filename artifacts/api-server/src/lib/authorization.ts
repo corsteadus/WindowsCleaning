@@ -351,6 +351,9 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { prefix: "/services", capability: "services.manage" },
   { prefix: "/crews", methods: ["GET"], capability: "crews.view" },
   { prefix: "/crews", capability: "crews.manage" },
+  // Phase 4: the office's call list (routes/profile-callbacks.ts).
+  { prefix: "/callbacks", methods: ["GET"], capability: "customers.view" },
+  { prefix: "/callbacks", capability: "customers.manage" },
   { prefix: "/tasks", methods: ["GET"], capability: "tasks.view" },
   { prefix: "/tasks", capability: "tasks.manage" },
   { prefix: "/invoices", methods: ["GET"], capability: "invoices.view" },

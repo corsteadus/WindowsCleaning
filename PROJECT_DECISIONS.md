@@ -164,6 +164,44 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 4 — callbacks — 2026-10-26
+
+**Built; browser-verified locally with the callbacks API stubbed (19/19; regressions 1b
+13/13, phase 3 15/15); the real run waits for the republish** (it needs the new table).
+Kyle, Video 4: "someone in the office, or even a virtual assistant, going through a list and
+calling customers or prospects … whether we actually spoke to the prospect, left a message,
+or neither … scheduling a callback", booking the work from there if they say yes, and the
+notes to hand while on the phone.
+
+**Callbacks** is the fourth section under the profile, between Estimates and Email History,
+and in Jump To (`components/ProfileCallbacks.tsx`): the calls to make, soonest first and
+marked Overdue / Today / Coming up, with who and why; **Schedule a callback** (date, time in
+Chicago time, someone in the office, a reason); and **Calls made** with what happened. A
+deactivated profile's callbacks are read-only. **The call screen** (`components/CallbackDialog.tsx`):
+their phone to tap, email, each estimate with its price and location, the recent notes; then
+**Spoke with them / Left a message / No answer, no message**, what was said, an optional
+note about them or the property (to the specific notes), and **the next callback** — on by
+default unless they spoke, the next weekday at 10:00, the same person. **"They want to go
+ahead — book it"** records the call as spoken and starts booking: a prospect's estimate →
+the convert picker (phase 1); a prospect with no estimate → a new estimate; a customer → a
+new job. **The call list** (`pages/Callbacks.tsx`, in the sidebar for office staff):
+every open callback, Overdue / Today / Coming up, Everyone or Mine; Call opens the same
+screen, and book it opens the profile straight into booking (`?book=1`, used once).
+
+Server (`routes/profile-callbacks.ts`, `lib/callbacks.ts`): each call is a row — when,
+who, why, then the outcome, note, when and by whom; the next callback is a **new row**, so the
+history of attempts stays. Recording an outcome closes only an **open** callback, writes the
+call to the profile's **callback notes** (dated and signed, e.g. "Callback: Left a message …
+Next callback Oct 29, 10:00 AM."), and books the next one, **in one transaction**; a second
+save of the same call is refused. Only active office staff (customers.manage) can be given
+callbacks; technicians are refused the list and the profile routes; `/callbacks` is
+customers.view to read and customers.manage to change. Deleting a profile deletes its
+callbacks (purge order). **Migration `profile-callbacks-v1`**: creates `profile_callbacks`
+(customer cascade, assigned user set null, status and outcome checks) and two indexes. Dry-run
+on the shared database inside a rolled-back transaction: applies and verifies cleanly.
+
+---
+
 ## Phase 3 — photos, videos and files by location — 2026-10-26
 
 **Built; browser-verified locally with the storage bucket stubbed (15/15); the real run waits

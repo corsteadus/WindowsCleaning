@@ -68,6 +68,7 @@ import RecurringPlans from "@/pages/RecurringPlans";
 import RecurringPlanNew from "@/pages/RecurringPlanNew";
 import RecurringPlanDetail from "@/pages/RecurringPlanDetail";
 import Tasks from "@/pages/Tasks";
+import Callbacks from "@/pages/Callbacks";
 import Payments from "@/pages/Payments";
 import FinancialReconciliation from "@/pages/FinancialReconciliation";
 import FinancialPermissions from "@/pages/FinancialPermissions";
@@ -251,6 +252,7 @@ function Router({ user }: { user: AuthUser }) {
       <Route path="/prospects/:id" component={CustomerDetail} />
       <Route path="/prospects">{() => <Customers mode="prospects" />}</Route>
       <Route path="/tasks" component={Tasks} />
+      <Route path="/callbacks" component={Callbacks} />
       <Route path="/customers">{() => <Customers />}</Route>
       <Route path="/properties" component={Properties} />
       <Route path="/services" component={Services} />
