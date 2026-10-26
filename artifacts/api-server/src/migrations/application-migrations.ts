@@ -11,6 +11,7 @@ import { calendarQueueEntriesV1Migration } from "./calendar-queue-entries-v1.ts"
 import { calendarEntrySyncV1Migration } from "./calendar-entry-sync-v1.ts";
 import { profileNoteEntriesV1Migration } from "./profile-note-entries-v1.ts";
 import { kyleAnswers20261024V1Migration } from "./kyle-answers-2026-10-24-v1.ts";
+import { emailLogSenderV1Migration } from "./email-log-sender-v1.ts";
 
 export type MigrationEnvironment =
   | "sandbox"
@@ -88,6 +89,7 @@ export const REQUIRED_MIGRATIONS = [
   calendarEntrySyncV1Migration,
   profileNoteEntriesV1Migration,
   kyleAnswers20261024V1Migration,
+  emailLogSenderV1Migration,
 ] as const;
 
 export class MigrationGateError extends Error {

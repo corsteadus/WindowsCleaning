@@ -26,6 +26,8 @@ export const emailLogsTable = pgTable("email_logs", {
   provider: text("provider"),               // "sendgrid" | "mailgun" | "smtp" | "mock"
   providerMessageId: text("provider_message_id"),
   errorMessage: text("error_message"),
+  // Who sent it (Kyle, Video 4); null before migrations/email-log-sender-v1.ts.
+  sentBy: text("sent_by"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   // Retry tracking
   retryCount: integer("retry_count").notNull().default(0),

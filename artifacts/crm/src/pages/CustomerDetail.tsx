@@ -32,6 +32,7 @@ import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
 import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEstimates";
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
 import { ProfileSection } from "@/components/ProfileSection";
+import { EmailHistory } from "@/components/EmailHistory";
 import type { ProfileEstimate } from "@/lib/profile-estimates";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -685,6 +686,7 @@ export default function CustomerDetail() {
                       if (!res.ok) throw new Error("Send failed");
                       toast({ title: "Email sent!", description: `Sent to ${emailTo ?? customer.email}` });
                       queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
+                      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["profile-emails"]) });
                       setEmailModal(false);
                       setEmailSubject("");
                       setEmailBody("");
@@ -808,6 +810,19 @@ export default function CustomerDetail() {
                 {visibleViews.some((view) => view.id === "activity") && (
                   <ProfileSection id="activity" title="Email History & Activity" icon={Activity} count={getViewCount("activity", customer)}
                     open={!!openSections.activity} onToggle={() => toggleSection("activity")}>
+                    {/* Phase 2 (Kyle, Video 4): each email openable, and resendable. */}
+                    <div className="mb-5">
+                      <EmailHistory
+                        apiBase={apiBase}
+                        customerId={customer.id}
+                        onResend={canSendEmail ? (email) => {
+                          setEmailTo(email.to);
+                          setEmailSubject(email.subject);
+                          setEmailBody(email.bodyHtml);
+                          setEmailModal(true);
+                        } : undefined}
+                      />
+                    </div>
                     <CommunicationActivityTab
                       messages={customer.messages}
                       logs={customer.activityLogs ?? []}

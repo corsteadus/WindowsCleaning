@@ -106,9 +106,9 @@ describe("the migration — two additive columns", () => {
     await assert.rejects(kyleAnswers20261024V1Migration.rollback(context), /still to be quoted/);
   });
 
-  it("is Sandbox-only and registered last", async () => {
+  it("is Sandbox-only and registered", async () => {
     const { context } = run({ columns: 0, deactivated: 0, pending: 0 });
     await assert.rejects(kyleAnswers20261024V1Migration.preflight({ ...context, environment: "production" }), /Sandbox-only/);
-    assert.equal(REQUIRED_MIGRATIONS.at(-1), kyleAnswers20261024V1Migration);
+    assert.ok(REQUIRED_MIGRATIONS.includes(kyleAnswers20261024V1Migration as never));
   });
 });

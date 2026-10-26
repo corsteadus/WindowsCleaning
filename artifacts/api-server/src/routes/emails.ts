@@ -473,6 +473,13 @@ router.post("/emails/send", sendCommunication, async (req, res): Promise<void> =
 // ─── POST /emails/send-one — send a single one-off email from detail pages ───
 //
 // Body: { entityType, entityId, email, firstName, lastName, subject, bodyHtml }
+/** The person sending, as the email history shows them. */
+function senderName(req: { user?: { firstName?: string | null; lastName?: string | null; email?: string | null; username?: string | null } }): string | null {
+  if (!req.user) return null;
+  const name = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ").trim();
+  return name || req.user.username || req.user.email || null;
+}
+
 router.post("/emails/send-one", sendCommunication, async (req, res): Promise<void> => {
   const { entityType, entityId, email, firstName, lastName, subject, bodyHtml, relatedType, relatedId } = req.body;
 
@@ -566,6 +573,8 @@ router.post("/emails/send-one", sendCommunication, async (req, res): Promise<voi
       subject:        renderedSubject,
       bodyHtml:       renderedBodyHtml,
       status:         "pending",
+      // Kyle, Video 4: the history says who sent it.
+      sentBy:         senderName(req),
     }).returning();
     return { kind: "claimed" as const, claim, eligibility, logRow };
   });

@@ -166,6 +166,30 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 2 — email history: open any email, and resend it — 2026-10-26
+
+**Built and unit-tested; the browser walkthrough waits for the republish** (it needs the new
+column). Kyle, Video 4: "the date and time, what we emailed, and who sent the email … open
+the email and view its content … resend that same email."
+
+The activity feed only ever had a **redacted** line for an email (communication safety);
+the full message is in `email_logs`. So the Email History section now leads with **Emails
+sent** (`components/EmailHistory.tsx`): subject, status, time **in Chicago time**, recipient
+and **who sent it** — a person, "Automatic: Estimate sent", or "Campaign: …". **View** opens
+the message exactly as sent, in a **sandboxed frame** (no script in an email can run in
+Corstead). **Resend** opens the profile's composer with the subject and message filled in;
+it goes through the same send path and safety checks, and is logged as a new email.
+
+Routes: `GET /customers/:id/emails` and `/emails/:emailId` (and `/prospects`), which need
+**communication.view** and are refused to technicians; one email is only read through its
+own profile. **Migration `email-log-sender-v1`**: adds the nullable `email_logs.sent_by`,
+which the one-off send now fills in; older emails say "Sender not recorded". Dry-run on the
+shared database inside a rolled-back transaction: applies and verifies cleanly (4 emails,
+none rewritten). **Not covered:** event-driven automation emails write only the redacted
+line, never an `email_logs` row, so they do not appear here yet.
+
+---
+
 ## Phase 1b — sections under the profile, and Jump To to them — 2026-10-26
 
 **Built and browser-verified locally (13/13; regression Phase 1 19/19, A 33/33). No
