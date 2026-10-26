@@ -10,6 +10,8 @@ export interface BillingJobRow {
   totalAmount: string;
   /** Phase 5: what the estimate's discounts took off this job; totalAmount is after it. */
   discountTotal?: string | null;
+  /** Phase 6: this job's sales tax, on top of totalAmount. */
+  taxTotal?: string | null;
   lineItems?: string | null;
 }
 
@@ -65,7 +67,7 @@ export type GenerateInvoiceOutcome =
   | { kind: "notFound" }
   | { kind: "notCompleted"; status: string }
   | { kind: "existing"; invoice: BillingInvoiceRow }
-  | { kind: "created"; invoice: BillingInvoiceRow; job: BillingJobRow; total: string; discount: string; gross: string };
+  | { kind: "created"; invoice: BillingInvoiceRow; job: BillingJobRow; total: string; discount: string; gross: string; tax: string };
 
 export interface GenerateInvoiceOptions {
   now?: Date;
@@ -105,11 +107,14 @@ export async function generateInvoiceCore(
 
   let totalCents = parseBillingMoneyCents(job.totalAmount);
   let discountCents = 0n;
+  let taxCents = 0n;
   if (convertedPerLocation(job)) {
     // A job scheduled from an accepted estimate is one location's work: its own
-    // total, and its own share of the estimate's discounts (phase 5). The
-    // quote's total is the whole estimate's, every location together.
+    // total, and its own share of the estimate's discounts (phase 5) and sales
+    // tax (phase 6). The quote's total is the whole estimate's, every location
+    // together.
     discountCents = parseBillingMoneyCents(job.discountTotal ?? "0");
+    taxCents = parseBillingMoneyCents(job.taxTotal ?? "0");
   } else if (job.quoteId) {
     const quote = await adapter.findQuoteById(job.quoteId);
     if (quote) totalCents = parseBillingMoneyCents(quote.totalAmount);
@@ -120,7 +125,8 @@ export async function generateInvoiceCore(
   const invoiceNumber = options.invoiceNumber ?? `INV-${now.getTime()}`;
   // Keep the legacy core's integer-looking string shape while calculating the
   // amount with exact cents internally.
-  const totalString = formatBillingMoneyCents(totalCents).replace(/\.00$/, "");
+  const netString = formatBillingMoneyCents(totalCents).replace(/\.00$/, "");
+  const totalString = formatBillingMoneyCents(totalCents + taxCents).replace(/\.00$/, "");
 
   const invoice = await adapter.insertInvoice({
     customerId: job.customerId,
@@ -128,8 +134,8 @@ export async function generateInvoiceCore(
     propertyId: job.propertyId,
     invoiceNumber,
     status: "draft",
-    subtotal: totalString,
-    taxAmount: "0",
+    subtotal: netString,
+    taxAmount: formatBillingMoneyCents(taxCents),
     totalAmount: totalString,
     amountPaid: "0",
     balanceDue: totalString,
@@ -142,6 +148,7 @@ export async function generateInvoiceCore(
     kind: "created", invoice, job, total: totalString,
     discount: formatBillingMoneyCents(discountCents),
     gross: formatBillingMoneyCents(totalCents + discountCents),
+    tax: formatBillingMoneyCents(taxCents),
   };
 }
 

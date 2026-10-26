@@ -38,7 +38,7 @@ interface Preview {
   accepted: boolean;
   requiresVerbalAcceptance: boolean;
   revisionNumber: number;
-  snapshot: { quote: { notes?: string | null }; locations: Location[]; lineItems: SnapshotLine[]; discounts?: Discount[] };
+  snapshot: { quote: { notes?: string | null }; locations: Location[]; lineItems: SnapshotLine[]; discounts?: Discount[]; tax?: { rate: number; label: string | null } | null };
   existingJobs: Array<{ id: number; jobNumber: string }>;
   /** Why it cannot be scheduled while a service is still to be quoted, or null. */
   unpriced?: string | null;
@@ -175,6 +175,12 @@ export function EstimateConversionDialog({ quoteId, open: openProp, onOpenChange
             <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0" />
             <div><p className="text-sm font-bold text-emerald-900">Revision {preview.data.revisionNumber} is the scheduling source</p><p className="text-xs text-emerald-700 mt-1">Services, quantities, and prices below are copied unchanged into each location job.</p></div>
           </div>
+          {preview.data.snapshot.tax && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm" data-testid="convert-tax">
+              <p className="font-semibold text-slate-800">Sales tax: {preview.data.snapshot.tax.label ?? `${preview.data.snapshot.tax.rate}%`}</p>
+              <p className="mt-1 text-xs text-slate-500">Each location's job carries the tax on its own taxable services; its invoice adds it.</p>
+            </div>
+          )}
           {(preview.data.snapshot.discounts ?? []).length > 0 && (() => {
             // Phase 5: what the customer's discounts take off, shared between the jobs.
             const lines = preview.data!.snapshot.lineItems;

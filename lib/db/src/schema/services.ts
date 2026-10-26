@@ -12,6 +12,8 @@ export const servicesTable = pgTable("services", {
   // service that already carries one does not lose it.
   pricingType: text("pricing_type"),
   basePrice: numeric("base_price", { precision: 10, scale: 2 }),
+  // Phase 6 (Kyle #2): "each service has a Taxable setting". Off unless set.
+  taxable: boolean("taxable").notNull().default(false),
   unit: text("unit"),
   estimatedDuration: integer("estimated_duration"),
   isActive: boolean("is_active").notNull().default(true),

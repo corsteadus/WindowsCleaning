@@ -36,6 +36,8 @@ export interface BillableJob {
   serviceType: string | null;
   /** The job's total as the database holds it: a decimal string. */
   totalAmount: string;
+  /** Phase 6: the job's sales tax from its estimate, on top of its total. */
+  taxTotal?: string | null;
   /** Already on an invoice. */
   hasInvoice: boolean;
   propertyId: number | null;
@@ -56,6 +58,8 @@ export interface BulkInvoiceLine {
   description: string;
   /** Integer cents, so the review screen and the invoice cannot disagree. */
   amountCents: number;
+  /** Phase 6: the job's sales tax, in cents, on top of amountCents. */
+  taxCents?: number;
 }
 
 export interface BulkInvoiceGroup {
@@ -194,8 +198,9 @@ export function planBulkInvoices(input: {
       // still names its own job.
       group.propertyId = null;
     }
-    group.lines.push({ jobId: job.id, description: lineDescription(job), amountCents: cents });
-    group.totalCents += cents;
+    const taxCents = amountCents(job.taxTotal ?? "0");
+    group.lines.push({ jobId: job.id, description: lineDescription(job), amountCents: cents, ...(taxCents ? { taxCents } : {}) });
+    group.totalCents += cents + taxCents;
   }
 
   const groups = [...byCustomer.values()];

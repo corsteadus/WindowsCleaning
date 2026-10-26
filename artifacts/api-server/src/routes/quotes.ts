@@ -42,7 +42,7 @@ import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, norm
 import { readQuoteSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
 import { priceOf, shownPrice } from "../lib/estimate-pricing.ts";
 import { discountsOf, type DiscountInput } from "../lib/discounts.ts";
-import { copyProfileDiscountsTx, readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
+import { copyProfileDiscountsTx, readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, serviceTaxability, taxChoiceOf, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
 
 function getPerformedBy(req: Request): string | null {
   if (!req.user) return null;
@@ -203,6 +203,7 @@ function serializeQuote(q: typeof quotesTable.$inferSelect) {
     taxTotal: Number(q.taxTotal),
     discountTotal: Number(q.discountTotal),
     totalAmount: Number(q.totalAmount),
+    taxRate: q.taxRate == null ? null : Number(q.taxRate),
     createdAt: q.createdAt.toISOString(),
     updatedAt: q.updatedAt.toISOString(),
   };
@@ -278,7 +279,8 @@ async function getQuoteWithDetails(id: number) {
       displayName = `${c.firstName} ${c.lastName}`;
       email = c.email ?? null;
       phone = c.phone ?? null;
-      customerForQuote = { id: c.id, firstName: c.firstName, lastName: c.lastName, displayName, email, phone };
+      // taxExempt and county: the estimate's sales tax choice needs them (phase 6).
+      customerForQuote = { id: c.id, firstName: c.firstName, lastName: c.lastName, displayName, email, phone, taxExempt: c.taxExempt, county: c.county ?? null };
     }
   } else if (quote.leadId) {
     const [l] = await db.select().from(leadsTable).where(eq(leadsTable.id, quote.leadId));
@@ -333,6 +335,7 @@ async function getQuoteWithDetails(id: number) {
       city: property.city,
       state: property.state,
       zip: property.zip,
+      county: property.county ?? null,
     } : null,
   };
 }
@@ -361,6 +364,8 @@ type QuoteCreateBody = {
   }>;
   /** Phase 5. Absent: the profile's own discounts are added. */
   discounts?: unknown;
+  /** Phase 6: { stateRateId?, countyRateId? }. Absent or null: no tax (never by default). */
+  tax?: unknown;
 };
 
 export async function createQuoteTx(
@@ -388,6 +393,9 @@ export async function createQuoteTx(
   // Kyle #11: nobody types a Valid Until date. It is calculated from the
   // company's validity setting, and an explicit date is only honoured if one
   // is sent (an import, or a caller correcting a single quote).
+  const taxChoice = await taxChoiceOf(tx, body.tax ?? null, requestedCustomerId);
+  if ("error" in taxChoice) throw new AccountRelationError(400, taxChoice.error);
+  const taxableByService = await serviceTaxability(tx, lineItemsInput.map((li) => li.serviceId));
   const settings = await readQuoteSettings(tx);
   const validUntil = body.validUntil
     || quoteExpiryFor(new Date(), settings.validityDays).validUntil;
@@ -401,6 +409,7 @@ export async function createQuoteTx(
     taxTotal: "0",
     discountTotal: "0",
     totalAmount: String(subtotal),
+    ...taxChoice,
     notes: body.notes || null,
     // #13: the company's own terms, when it has written any. Never Corstead's.
     terms: body.terms || settings.terms || null,
@@ -417,6 +426,9 @@ export async function createQuoteTx(
         unitPrice: String(prices[i].unitPrice),
         totalPrice: String(li.quantity * prices[i].unitPrice),
         pricePending: prices[i].pricePending,
+        // Phase 6: as the sender says, else as the service is set up.
+        taxable: typeof (li as { taxable?: unknown }).taxable === "boolean"
+          ? Boolean((li as { taxable?: boolean }).taxable) : taxableByService.get(Number(li.serviceId)) ?? false,
         sortOrder: i,
       })),
     ).returning();
@@ -877,6 +889,12 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
       if (body.validUntil !== undefined) updateData.validUntil = body.validUntil;
 
       let moneyChanged = false;
+      if (body.tax !== undefined) {
+        const choice = await taxChoiceOf(tx, body.tax, current.customerId);
+        if ("error" in choice) throw new AccountRelationError(400, choice.error);
+        Object.assign(updateData, choice);
+        moneyChanged = true;
+      }
       if (body.discounts !== undefined) {
         const sent = discountsOf(body.discounts);
         if ("error" in sent) throw new AccountRelationError(400, sent.error);
@@ -891,15 +909,16 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
       if (body.lineItems !== undefined) {
         const lineItemsInput: Array<{
           serviceId?: number; description: string; quantity: number; unitPrice: number | null;
-          serviceNotes?: string | null; propertyId?: number | null; isUpsell?: boolean;
+          serviceNotes?: string | null; propertyId?: number | null; isUpsell?: boolean; taxable?: boolean;
         }> = body.lineItems;
         const prices = lineItemsInput.map((li) => linePrice(li.unitPrice));
         // Editing replaces the lines. A line's location and upsell flag, and
         // its description when not sent, are carried over by position, as
         // Finalize does — found 2026-10-24: every edit dropped each line's
         // location.
-        const previousLines = await tx.select({ id: quoteLineItemsTable.id }).from(quoteLineItemsTable)
+        const previousLines = await tx.select({ id: quoteLineItemsTable.id, taxable: quoteLineItemsTable.taxable }).from(quoteLineItemsTable)
           .where(eq(quoteLineItemsTable.quoteId, id)).orderBy(asc(quoteLineItemsTable.sortOrder));
+        const taxableByService = await serviceTaxability(tx, lineItemsInput.map((li) => li.serviceId));
         const previousMeta = previousLines.length
           ? await tx.select().from(estimateLineMetadataTable)
             .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.map((line) => line.id)))
@@ -919,6 +938,9 @@ router.patch("/quotes/:id", async (req, res): Promise<void> => {
             unitPrice: String(prices[i].unitPrice),
             totalPrice: String(Number(li.quantity) * prices[i].unitPrice),
             pricePending: prices[i].pricePending,
+            // Phase 6: as sent; else as it was (by position, like the location); else the service's.
+            taxable: typeof li.taxable === "boolean" ? li.taxable
+              : previousLines[i]?.taxable ?? taxableByService.get(Number(li.serviceId)) ?? false,
             sortOrder: i,
           }))).returning();
           await saveLineServiceNotes(tx, rewritten.map((row, i) => {
@@ -1229,6 +1251,8 @@ router.post("/quotes/:id/line-items", async (req, res): Promise<void> => {
         quoteId, serviceId: body.serviceId ? Number(body.serviceId) : null, description: body.description,
         quantity: String(qty), unitPrice: String(price.unitPrice), totalPrice: String(qty * price.unitPrice),
         pricePending: price.pricePending, sortOrder: body.sortOrder ?? 0,
+        taxable: typeof body.taxable === "boolean" ? body.taxable
+          : (await serviceTaxability(tx, [Number(body.serviceId)])).get(Number(body.serviceId)) ?? false,
       }).returning();
       await saveLineServiceNotes(tx, [{
         lineItemId: created.id,

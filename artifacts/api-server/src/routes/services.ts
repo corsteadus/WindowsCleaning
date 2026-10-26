@@ -81,6 +81,8 @@ router.post("/services", async (req, res): Promise<void> => {
       unit: body.unit,
       estimatedDuration: body.estimatedDuration,
       isActive: body.isActive,
+      // Phase 6 (Kyle #2): each service is Taxable or not; off unless said.
+      taxable: req.body?.taxable === true,
     }).returning();
     await completeIdempotencyKey(tx, claim.record.id, {
       resourceType: "service",
@@ -128,6 +130,7 @@ router.patch("/services/:id", async (req, res): Promise<void> => {
   const [service] = await db.update(servicesTable).set({
     ...merged,
     basePrice: merged.basePrice === null ? null : String(merged.basePrice),
+    ...(typeof req.body?.taxable === "boolean" ? { taxable: req.body.taxable } : {}),
   }).where(eq(servicesTable.id, id)).returning();
   res.json(serialize(service));
 });

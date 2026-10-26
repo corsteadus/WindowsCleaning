@@ -19,7 +19,8 @@ test("the estimate screen edits its discounts and saves them with the estimate",
 
 test("while editing, the total is worked out by the server's own rule", () => {
   assert.match(detail, /const editMoney = applyDiscounts\(editSubtotal,/);
-  assert.match(detail, /const totalAmount = editing \? editMoney\.total : Number\(quote\.totalAmount \?\? quote\.subtotal\);/);
+  // Phase 6 adds the sales tax on top.
+  assert.match(detail, /const totalAmount = editing \? \(Math\.round\(editMoney\.total \* 100\) \+ Math\.round\(editTaxAmount \* 100\)\) \/ 100 : Number\(quote\.totalAmount \?\? quote\.subtotal\);/);
 });
 
 test("every total shows each discount by name", () => {
@@ -29,7 +30,8 @@ test("every total shows each discount by name", () => {
 });
 
 test("the customer's page works the discounts out on the services they choose", () => {
-  assert.match(publicPage, /applyDiscounts\(sumOf\(lines\.filter\(\(line\) => shownIds\.has\(line\.id\)\)\), discounts\)/);
+  assert.match(publicPage, /const money = applyDiscounts\(sumOf\(some\), discounts\);/);
+  assert.match(publicPage, /\(\) => priced\(lines\.filter\(\(line\) => shownIds\.has\(line\.id\)\)\),/);
 });
 
 test("a new estimate shows the profile's discounts it will start with", () => {

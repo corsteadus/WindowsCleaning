@@ -139,11 +139,11 @@ describe("the wiring", () => {
   });
 
   it("the revision a customer sees carries the discounts", () => {
-    assert.match(read("../routes/estimates.ts"), /return \{\s*discounts,\s*quote: \{/);
+    assert.match(read("../routes/estimates.ts"), /return \{\s*discounts,[\s\S]{0,300}quote: \{/);
   });
 
   it("the invoice line shows the job's discount", () => {
-    assert.match(read("../routes/jobs.ts"), /unitPrice: outcome\.discount === "0\.00" \? outcome\.total : outcome\.gross,\s*discountAmount: outcome\.discount,/);
+    assert.match(read("../routes/jobs.ts"), /unitPrice: outcome\.discount === "0\.00" && outcome\.tax === "0\.00" \? outcome\.total : outcome\.gross,\s*discountAmount: outcome\.discount,/);
   });
 
   it("a profile's discount is only its own, and technicians never see them", () => {

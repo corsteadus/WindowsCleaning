@@ -31,6 +31,8 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
 import { DiscountEditor, DiscountRows } from "@/components/DiscountEditor";
+import { chosenRate, SalesTaxPicker, useTaxRates, type TaxChoice } from "@/components/SalesTaxPicker";
+import { salesTax } from "@/lib/sales-tax";
 import { applyDiscounts, draftOf, draftsToDiscounts, type AppliedDiscount, type Discount, type DiscountDraft } from "@/lib/discounts";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -334,7 +336,16 @@ interface LineItemEdit {
   serviceNotes: string;
   quantity: string;
   unitPrice: string;
+  /** Phase 6: taxed when the estimate charges sales tax (from the service; editable here). */
+  taxable: boolean;
 }
+
+/** The estimate's saved tax choice, as the picker holds it. */
+function savedTaxChoice(quote: unknown): TaxChoice {
+  const q = quote as { taxStateRateId?: number | null; taxCountyRateId?: number | null };
+  return { stateRateId: q.taxStateRateId ? String(q.taxStateRateId) : "", countyRateId: q.taxCountyRateId ? String(q.taxCountyRateId) : "" };
+}
+const sameTaxChoice = (a: TaxChoice, b: TaxChoice) => a.stateRateId === b.stateRateId && a.countyRateId === b.countyRateId;
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
@@ -357,7 +368,7 @@ function LineItemEditCard({
 }: {
   item: LineItemEdit;
   index: number;
-  onUpdate: (key: string, field: keyof LineItemEdit, value: string) => void;
+  onUpdate: (key: string, field: keyof LineItemEdit, value: string | boolean) => void;
   onRemove: (key: string) => void;
 }) {
   const qty   = parseFloat(item.quantity)  || 0;
@@ -436,6 +447,11 @@ function LineItemEditCard({
           </div>
         </div>
       </div>
+      {/* Phase 6 (Kyle, Video 5): materials taxed, labour not — taxable per line. */}
+      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+        <input type="checkbox" data-testid="line-taxable" checked={item.taxable} onChange={(e) => onUpdate(item.key, "taxable", e.target.checked)} />
+        Taxable
+      </label>
     </div>
   );
 }
@@ -460,6 +476,9 @@ export default function QuoteDetail() {
   // Phase 5 (Kyle, Video 5): named $ / % discounts that stack.
   const [editDiscounts,   setEditDiscounts]    = useState<DiscountDraft[]>([]);
   const [discountError,   setDiscountError]    = useState<string | null>(null);
+  // Phase 6 (Kyle #2): sales tax, never on by default.
+  const [editTax,         setEditTax]          = useState<TaxChoice>({ stateRateId: "", countyRateId: "" });
+  const taxRates = useTaxRates(editing);
   const [showPicker,      setShowPicker]       = useState(false);
   // Only fetched once the picker is wanted; the page does not otherwise need
   // the catalogue.
@@ -511,6 +530,7 @@ export default function QuoteDetail() {
     setEditTerms(quote.terms ?? "");
     setEditPropertyId(quote.propertyId ?? "");
     setEditDiscounts(((quote as { discounts?: Discount[] }).discounts ?? []).map(draftOf));
+    setEditTax(savedTaxChoice(quote));
     setDiscountError(null);
     setEditLineItems(
       (quote.lineItems ?? []).map((li) => ({
@@ -522,18 +542,19 @@ export default function QuoteDetail() {
         quantity: String(li.quantity),
         // A line still to be quoted reads back as null, and stays blank.
         unitPrice: li.unitPrice == null ? "" : String(li.unitPrice),
+        taxable: Boolean((li as { taxable?: boolean }).taxable),
       }))
     );
     setEditing(true);
   };
 
-  const updateItem = (key: string, field: keyof LineItemEdit, value: string) =>
+  const updateItem = (key: string, field: keyof LineItemEdit, value: string | boolean) =>
     setEditLineItems((prev) => prev.map((li) => (li.key === key ? { ...li, [field]: value } : li)));
   const removeItem = (key: string) =>
     setEditLineItems((prev) => prev.filter((li) => li.key !== key));
   // Kyle #7: a line can only be a service. There is no blank custom line to
   // add any more — the Service Catalog is where one comes from.
-  const addFromCatalog = (service: { id: number; name: string; basePrice?: number | string | null }) => {
+  const addFromCatalog = (service: { id: number; name: string; basePrice?: number | string | null; taxable?: boolean }) => {
     setEditLineItems((prev) => [...prev, {
       key: crypto.randomUUID(),
       serviceId: service.id,
@@ -543,6 +564,8 @@ export default function QuoteDetail() {
       unitPrice: service.basePrice === null || service.basePrice === undefined
         ? ""
         : String(service.basePrice),
+      // Phase 6: as the service is set up in the catalog.
+      taxable: Boolean(service.taxable),
     }]);
     setShowPicker(false);
   };
@@ -569,8 +592,14 @@ export default function QuoteDetail() {
           serviceNotes: li.serviceNotes.trim() || null,
           quantity: parseFloat(li.quantity) || 1,
           unitPrice: li.unitPrice.trim() === "" ? null : parseFloat(li.unitPrice),
+          taxable: li.taxable,
         })),
         discounts: discounts.discounts,
+        // Sent only when changed, so a save never quietly re-freezes the rate.
+        ...(sameTaxChoice(editTax, savedTaxChoice(quote)) ? {} : {
+          tax: editTax.stateRateId || editTax.countyRateId
+            ? { stateRateId: editTax.stateRateId || null, countyRateId: editTax.countyRateId || null } : null,
+        }),
       } as Parameters<typeof updateMutation.mutate>[0]["data"],
     });
   };
@@ -624,8 +653,16 @@ export default function QuoteDetail() {
   const editDiscountList = draftsToDiscounts(editDiscounts);
   const editMoney = applyDiscounts(editSubtotal, "error" in editDiscountList ? [] : editDiscountList.discounts);
   const subtotal = editing ? editMoney.subtotal : Number(quote.subtotal);
-  const totalAmount = editing ? editMoney.total : Number(quote.totalAmount ?? quote.subtotal);
   const shownDiscounts: AppliedDiscount[] = editing ? editMoney.discounts : ((quote as { discounts?: AppliedDiscount[] }).discounts ?? []);
+  // Phase 6: the tax, on the taxable lines after discounts; never for a Tax Exempt customer.
+  const taxExempt = Boolean((quote as { customer?: { taxExempt?: boolean } | null }).customer?.taxExempt);
+  const editRate = taxExempt ? null : chosenRate(taxRates.data ?? [], editTax);
+  const editTaxAmount = salesTax(editLineItems.map((li) => ({ totalPrice: (parseFloat(li.quantity) || 0) * (parseFloat(li.unitPrice) || 0), taxable: li.taxable })), editMoney.discountTotal, editRate).tax;
+  const shownTax = editing ? editTaxAmount : Number((quote as { taxTotal?: number }).taxTotal ?? 0);
+  const shownTaxLabel = editing
+    ? (editRate ? `${editRate}%` : null)
+    : ((quote as { taxLabel?: string | null }).taxLabel ?? null);
+  const totalAmount = editing ? (Math.round(editMoney.total * 100) + Math.round(editTaxAmount * 100)) / 100 : Number(quote.totalAmount ?? quote.subtotal);
 
   const isDraft    = quote.status === "draft";
   const isSent     = quote.status === "sent";
@@ -843,6 +880,12 @@ export default function QuoteDetail() {
                     <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
                   </div>
                   <DiscountRows discounts={shownDiscounts} />
+                  {shownTax > 0 && (
+                    <div className="flex justify-between text-sm text-slate-500" data-testid="tax-total-row">
+                      <span>Sales tax{shownTaxLabel ? ` (${shownTaxLabel})` : ""}</span>
+                      <span className="font-semibold text-slate-800">{formatCurrency(shownTax)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-end pt-1 border-t border-slate-100">
                     <span className="text-base font-bold text-slate-900">Total</span>
                     <span className="text-xl font-bold text-primary">{formatCurrency(totalAmount)}</span>
@@ -859,6 +902,21 @@ export default function QuoteDetail() {
               <DiscountEditor drafts={editDiscounts} onChange={(next) => { setEditDiscounts(next); setDiscountError(null); }}
                 saved={savedDiscounts} />
               {discountError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="discount-error">{discountError}</p>}
+            </div>
+          )}
+
+          {editing && (
+            <div className="bg-white rounded-2xl border border-slate-100 p-5 space-y-3" data-testid="quote-sales-tax">
+              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Sales tax</h2>
+              <SalesTaxPicker value={editTax} onChange={setEditTax} taxExempt={taxExempt}
+                place={{
+                  state: (quote as { property?: { state?: string | null } | null }).property?.state,
+                  county: (quote as { property?: { county?: string | null } | null }).property?.county
+                    ?? (quote as { customer?: { county?: string | null } | null }).customer?.county,
+                }} />
+              {!taxExempt && (editTax.stateRateId || editTax.countyRateId) && !editLineItems.some((li) => li.taxable) && (
+                <p className="text-xs text-amber-700" data-testid="tax-nothing-taxable">No service on this estimate is Taxable, so no tax is added. Tick Taxable on the services that are.</p>
+              )}
             </div>
           )}
 
@@ -953,6 +1011,12 @@ export default function QuoteDetail() {
                 <span className="font-semibold text-slate-800">{formatCurrency(subtotal)}</span>
               </div>
               <DiscountRows discounts={shownDiscounts} />
+              {shownTax > 0 && (
+                <div className="flex justify-between gap-4 text-sm">
+                  <span className="text-slate-500">Sales tax{shownTaxLabel ? ` (${shownTaxLabel})` : ""}</span>
+                  <span className="font-semibold text-slate-800">{formatCurrency(shownTax)}</span>
+                </div>
+              )}
             </div>
             <div className="flex justify-between items-end mt-3 mb-4">
               <span className="text-base font-bold text-slate-800">Total</span>

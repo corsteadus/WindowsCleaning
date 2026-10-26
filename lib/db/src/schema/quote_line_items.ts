@@ -14,6 +14,8 @@ export const quoteLineItemsTable = pgTable("quote_line_items", {
   // $0.00 is a real price. unit_price holds 0 for both, so this says which.
   // Added by migrations/kyle-answers-2026-10-24-v1.ts.
   pricePending: boolean("price_pending").notNull().default(false),
+  // Phase 6: taxed when the estimate charges sales tax. From the service; editable per line.
+  taxable: boolean("taxable").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

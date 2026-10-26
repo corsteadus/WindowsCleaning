@@ -567,7 +567,19 @@ router.get("/invoices", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/invoices", createInvoicePostHandler(productionInvoiceCreateDependencies));
+// Phase 6: a Tax Exempt customer's invoice carries no sales tax (Kyle's default).
+router.post("/invoices", async (req, res, next): Promise<void> => {
+  const taxed = Array.isArray(req.body?.lines) && req.body.lines.some((line: { taxAmount?: unknown }) => Number(line?.taxAmount ?? 0) > 0);
+  const customerId = Number(req.body?.customerId);
+  if (taxed && Number.isInteger(customerId) && customerId > 0) {
+    const [customer] = await db.select({ taxExempt: customersTable.taxExempt }).from(customersTable).where(eq(customersTable.id, customerId));
+    if (customer?.taxExempt) {
+      res.status(400).json({ error: "This customer is Tax Exempt, so the invoice cannot charge sales tax", code: "tax_exempt" });
+      return;
+    }
+  }
+  next();
+}, createInvoicePostHandler(productionInvoiceCreateDependencies));
 
 /**
  * POST /invoices/bulk — invoice a range of finished work in one go.
@@ -598,6 +610,7 @@ router.post("/invoices/bulk", async (req, res): Promise<void> => {
           jobs.status,
           jobs.service_type AS "serviceType",
           jobs.total_amount AS "totalAmount",
+          jobs.tax_total AS "taxTotal",
           jobs.property_id AS "propertyId",
           COALESCE(
             NULLIF(TRIM(CONCAT_WS(' ', cu.first_name, cu.last_name)), ''),
@@ -651,6 +664,8 @@ router.post("/invoices/bulk", async (req, res): Promise<void> => {
             description: line.description,
             quantity: "1",
             unitPrice: centsToAmount(line.amountCents),
+            // Phase 6: the job's sales tax from its estimate.
+            ...(line.taxCents ? { taxAmount: centsToAmount(line.taxCents) } : {}),
           })),
           dueDate,
           invoiceNumber: `INV-${numberBase + index}`,

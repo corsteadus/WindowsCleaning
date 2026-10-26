@@ -4,16 +4,19 @@ import { useParams } from "wouter";
 import { formatCurrency } from "@/lib/utils";
 import { DiscountRows } from "@/components/DiscountEditor";
 import { applyDiscounts, type Discount } from "@/lib/discounts";
+import { salesTax } from "@/lib/sales-tax";
 
 type Line = {
   id: number; description: string; quantity: number; unitPrice: number | null; totalPrice: number;
-  isUpsell?: boolean; serviceNotes?: string | null;
+  isUpsell?: boolean; serviceNotes?: string | null; taxable?: boolean;
 };
 type Snapshot = {
   quote: { quoteNumber: string; totalAmount: number; notes?: string | null; terms?: string | null; validUntil?: string | null };
   lineItems: Line[];
   /** Phase 5: the estimate's discounts. Absent on estimates finalized before them. */
   discounts?: Discount[];
+  /** Phase 6: the sales tax the estimate charges; null or absent, none. */
+  tax?: { rate: number; label: string | null } | null;
   locations: Array<{ id: number; name?: string | null; address: string; city?: string | null; state?: string | null; zip?: string | null; notes?: string | null }>;
 };
 type Estimate = {
@@ -57,13 +60,20 @@ export default function PublicEstimate() {
   // own rule — a percentage of less is less; a dollar discount stays.
   const discounts = estimate?.snapshot?.discounts ?? [];
   const sumOf = (some: Line[]) => some.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100;
-  const offeredTotal = useMemo(() => applyDiscounts(sumOf(lines), discounts).total, [lines, discounts]);
+  // Phase 6: plus the sales tax on the taxable services chosen, after discounts.
+  const taxRate = estimate?.snapshot?.tax?.rate ?? null;
+  const priced = (some: Line[]) => {
+    const money = applyDiscounts(sumOf(some), discounts);
+    const tax = salesTax(some.map((line) => ({ totalPrice: Number(line.totalPrice), taxable: Boolean(line.taxable) })), money.discountTotal, taxRate).tax;
+    return { ...money, tax, total: (Math.round(money.total * 100) + Math.round(tax * 100)) / 100 };
+  };
+  const offeredTotal = useMemo(() => priced(lines).total, [lines, discounts, taxRate]);
   // Once decided, the figure that matters is what was taken, not what was asked.
   const settled = accepted !== null;
   const shownIds = settled ? new Set(accepted) : chosen;
   const shownMoney = useMemo(
-    () => applyDiscounts(sumOf(lines.filter((line) => shownIds.has(line.id))), discounts),
-    [lines, shownIds, discounts],
+    () => priced(lines.filter((line) => shownIds.has(line.id))),
+    [lines, shownIds, discounts, taxRate],
   );
   const shownTotal = shownMoney.total;
   const partial = shownIds.size > 0 && shownIds.size < lines.length;
@@ -168,12 +178,18 @@ export default function PublicEstimate() {
               );
             })}
           </div>
-          {discounts.length > 0 && (
+          {(discounts.length > 0 || shownMoney.tax > 0) && (
             <div className="space-y-1.5 border-t px-5 pt-4" data-testid="public-discounts">
               <div className="flex justify-between text-sm text-slate-500">
                 <span>Subtotal</span><span className="font-semibold text-slate-800">{formatCurrency(shownMoney.subtotal)}</span>
               </div>
               <DiscountRows discounts={shownMoney.discounts} />
+              {shownMoney.tax > 0 && (
+                <div className="flex justify-between text-sm text-slate-500" data-testid="public-tax">
+                  <span>Sales tax{estimate?.snapshot?.tax?.label ? ` (${estimate.snapshot.tax.label})` : ""}</span>
+                  <span className="font-semibold text-slate-800">{formatCurrency(shownMoney.tax)}</span>
+                </div>
+              )}
             </div>
           )}
           <div className="border-t bg-slate-50 px-5 py-4 flex items-baseline justify-between text-lg font-bold">

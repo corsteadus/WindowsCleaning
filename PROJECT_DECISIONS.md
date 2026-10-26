@@ -164,6 +164,52 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 6 — sales tax — 2026-10-26
+
+**Built; browser-tested through the Playwright MCP with the new routes stubbed (Settings rates,
+the estimate's tax choice and totals, Tax Exempt, Taxable services, the invoice form, phone and
+desktop); the real run, through the jobs and the invoice, waits for the republish.** Kyle's
+answer #2: "optional, never by default, on estimates and invoices"; state and county rates set
+up by the business, "either rate alone or both added together"; "each service has a Taxable
+setting".
+
+**The rule** (`api-server lib/sales-tax.ts`, the same in `crm lib/sales-tax.ts`, checked to agree
+on 2,000 random estimates): tax is on the amount **after discounts** — the discounts are shared
+between taxable and untaxed lines by amount — on **taxable lines only**, rounded once to the
+cent; a **Tax Exempt customer is never taxed** (the estimate screen shows why; the server refuses
+a tax choice for them, an estimate's frozen rate is ignored for them, and an invoice with tax
+for them is refused). Rates are 0–20%; an estimate's combined rate is frozen onto it
+(`quotes.tax_rate`, `tax_label`, and the chosen rate ids), so changing a rate in Settings never
+changes an estimate already made, and a save that does not change the choice never re-freezes.
+
+**Where it is.** **Settings → Sales tax** (administrators): state and county rates, turned off
+rather than deleted. **Service Catalog**: Taxable on each card and in Add service (off unless
+ticked). **Estimate screen**: a Sales tax card (state rate, county rate, or both; "Use this
+location's" suggests them from the location's state and county; "Turn tax off"; a warning when
+nothing on it is Taxable) and **Taxable on each line** — Kyle's materials-taxed/labour-not case;
+a line starts as its service is set up. The tax shows by name on every total: the estimate, the
+print, the **customer's page** (worked out again on the services they tick), the convert dialog.
+**Jobs and invoices**: a partial accept taxes only what was accepted; converting shares the tax
+by each location's taxable work (`jobs.tax_total`); the job's generated invoice puts the tax on
+its line and header; **bulk invoicing** adds each job's tax; the **manual invoice form** fills a
+job's tax and can add a chosen rate to the lines ticked Taxable.
+
+**Found and fixed while testing:** the New invoice form's customer picker was always empty (it
+read `data` but the list answers `{ customers, … }`), so no invoice could be started from it.
+
+**Migration `sales-tax-v1`**: creates `tax_rates` (kind/state/rate checks) and adds
+`services.taxable`, `quote_line_items.taxable` (false), `quotes.tax_rate`, `tax_label`,
+`tax_state_rate_id`, `tax_county_rate_id` (null) and `jobs.tax_total` (0) — every existing
+total is unchanged. Dry-run on the shared database with the phase 5 migration first, inside a
+rolled-back transaction and **running the real code**: $500 − Senior 10%, $200 of it taxable at
+Missouri 4.225% + Jackson County 1.25% = tax $9.86, total $459.86 stored; Tax Exempt → tax 0 and
+the choice refused; a 25% rate refused by the database; nothing left after ROLLBACK.
+
+**For Kyle (defaults built):** tax after discounts; per-line Taxable starting from the service;
+invoices round tax per line, estimates once on the whole.
+
+---
+
 ## Phase 5 — discounts on estimates, and discounts that follow the profile — 2026-10-26
 
 **Built; browser-verified locally with the discount routes stubbed (9/9; regressions phase 1

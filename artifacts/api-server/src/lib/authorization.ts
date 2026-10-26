@@ -325,6 +325,9 @@ const ROUTE_RULES: readonly RouteRule[] = [
   // Kyle (#11, #13): the company's quote validity and terms. Anyone who may see
   // a quote may read them — the builder shows the expiry and fills in the terms —
   // but only an administrator may change what the whole company quotes on.
+  // Phase 6: the estimate screen chooses from the rates; only an administrator sets them up.
+  { prefix: "/tax-rates", methods: ["GET"], capability: "quotes.view" },
+  { prefix: "/tax-rates", capability: "admin.settings" },
   { prefix: "/quote-settings", methods: ["GET"], capability: "quotes.view" },
   { prefix: "/quote-settings", capability: "admin.settings" },
   { prefix: "/quotes", methods: ["GET"], capability: "quotes.view" },

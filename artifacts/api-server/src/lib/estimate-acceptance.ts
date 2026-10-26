@@ -15,6 +15,7 @@
  */
 import type { AcceptedEstimateSnapshot } from "./estimate-conversion.ts";
 import { applyDiscounts } from "./discounts.ts";
+import { salesTax } from "./sales-tax.ts";
 
 export class EstimateAcceptanceError extends Error {}
 
@@ -67,7 +68,9 @@ function outcome(
   // Phase 5: the discounts are worked out again on what was accepted — a
   // percentage of less is less; a dollar discount stays, never past the subtotal.
   const priced = applyDiscounts(round2(lineItems.reduce((sum, line) => sum + Number(line.totalPrice), 0)), snapshot.discounts ?? []);
-  const acceptedTotal = priced.total;
+  // Phase 6: and the tax on what was accepted, after its discounts.
+  const tax = salesTax(lineItems.map((line) => ({ totalPrice: Number(line.totalPrice), taxable: Boolean(line.taxable) })), priced.discountTotal, snapshot.tax?.rate ?? null).tax;
+  const acceptedTotal = round2(priced.total + tax);
 
   // A line that names no location belongs to the only location there is; that is
   // the rule buildLocationJobPlans works by, so location trimming follows it.
@@ -80,7 +83,7 @@ function outcome(
   return {
     snapshot: {
       ...snapshot,
-      quote: { ...snapshot.quote, subtotal: priced.subtotal, discountTotal: priced.discountTotal, totalAmount: acceptedTotal },
+      quote: { ...snapshot.quote, subtotal: priced.subtotal, discountTotal: priced.discountTotal, taxTotal: tax, totalAmount: acceptedTotal },
       ...(snapshot.discounts ? { discounts: priced.discounts } : {}),
       lineItems,
       locations,

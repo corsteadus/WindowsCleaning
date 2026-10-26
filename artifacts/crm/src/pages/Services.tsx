@@ -23,6 +23,7 @@ import {
   serviceDraftToBody, serviceIdempotencyHeaders, type ServiceDraft,
 } from "@/lib/service-form";
 import { ServiceCategoryPicker, useServiceCategoryName } from "@/components/ServiceCategoryPicker";
+import { estimateCall } from "@/lib/estimate-actions";
 
 export default function Services() {
   const { data: services, isLoading } = useListServices();
@@ -36,6 +37,20 @@ export default function Services() {
   const [draft, setDraft] = useState<ServiceDraft>(emptyServiceDraft);
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
+  // Phase 6 (Kyle #2): "each service has a Taxable setting". Off unless set.
+  const [taxable, setTaxable] = useState(false);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const setServiceTaxable = async (service: Service, next: boolean) => {
+    setTogglingId(service.id);
+    try {
+      await estimateCall(`/services/${service.id}`, { method: "PATCH", body: JSON.stringify({ taxable: next }) });
+      await queryClient.invalidateQueries({ queryKey: getListServicesQueryKey() });
+    } catch (cause) {
+      toast({ title: "Could not change the service", description: cause instanceof Error ? cause.message : undefined, variant: "destructive" });
+    } finally {
+      setTogglingId(null);
+    }
+  };
   const create = useCreateService({
     request: { headers: serviceIdempotencyHeaders(idempotencyKey) },
     mutation: {
@@ -65,6 +80,7 @@ export default function Services() {
   };
   const start = () => {
     setDraft(emptyServiceDraft());
+    setTaxable(false);
     setError(null);
     setIdempotencyKey(newIdempotencyKey());
     setOpen(true);
@@ -77,7 +93,7 @@ export default function Services() {
       setError(prepared.error);
       return;
     }
-    create.mutate({ data: prepared.body });
+    create.mutate({ data: { ...prepared.body, taxable } as typeof prepared.body });
   };
   const update = (field: keyof ServiceDraft, value: string | boolean) => {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -106,7 +122,13 @@ export default function Services() {
               {service.basePrice !== null && service.basePrice !== undefined && <span className="text-xs text-slate-400" title="A price this service was given before. The quote decides what is charged.">was {formatCurrency(service.basePrice)}</span>}
             </div><CardTitle className="text-xl mt-3 text-slate-900">{service.name}</CardTitle></CardHeader>
             <CardContent className="pt-4"><p className="text-sm text-slate-600 line-clamp-2 min-h-[40px]">{service.description || "No description provided."}</p>
-              <div className="mt-4 flex items-center justify-between text-sm"><span />
+              <div className="mt-4 flex items-center justify-between text-sm">
+                {canManage ? (
+                  <label className="flex items-center gap-2 text-slate-600" data-testid="service-taxable">
+                    <input type="checkbox" checked={Boolean((service as { taxable?: boolean }).taxable)} disabled={togglingId === service.id}
+                      onChange={(e) => void setServiceTaxable(service, e.target.checked)} /> Taxable
+                  </label>
+                ) : (service as { taxable?: boolean }).taxable ? <span className="text-xs font-semibold text-slate-500">Taxable</span> : <span />}
                 {service.estimatedDuration !== null && <span className="text-slate-500 flex items-center"><Wrench className="w-3.5 h-3.5 mr-1" />{service.estimatedDuration} mins</span>}
               </div></CardContent>
           </Card>)}
@@ -136,6 +158,7 @@ export default function Services() {
             <label className="block text-sm font-medium">Duration (minutes)<Input type="number" min="0" step="1" value={draft.estimatedDuration} onChange={(e) => update("estimatedDuration", e.target.value)} disabled={create.isPending} /></label>
             <p className="text-xs text-slate-400">The price is entered when this service is put on a quote or a job.</p>
             <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={draft.isActive} onChange={(e) => update("isActive", e.target.checked)} disabled={create.isPending} /> Active in catalog</label>
+            <label className="flex gap-2 items-center text-sm"><input type="checkbox" data-testid="input-service-taxable" checked={taxable} onChange={(e) => setTaxable(e.target.checked)} disabled={create.isPending} /> Taxable <span className="text-xs text-slate-400">— charged sales tax when an estimate charges it</span></label>
             {error && <p role="alert" className="text-sm text-destructive" data-testid="text-service-form-error">{error}</p>}
             <DialogFooter><Button type="button" variant="outline" onClick={close} disabled={create.isPending}>Cancel</Button><Button type="submit" disabled={create.isPending} data-testid="button-save-service">{create.isPending ? "Adding…" : "Add Service"}</Button></DialogFooter>
           </form>

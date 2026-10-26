@@ -1,5 +1,6 @@
 import { isDateOnly, isTimeOnly } from "./date.ts";
 import { applyDiscounts, shareDiscount, type AppliedDiscount } from "./discounts.ts";
+import { salesTax } from "./sales-tax.ts";
 
 export interface AcceptedEstimateSnapshot {
   quote: {
@@ -11,7 +12,10 @@ export interface AcceptedEstimateSnapshot {
     notes: string | null;
     subtotal?: number;
     discountTotal?: number;
+    taxTotal?: number;
   };
+  /** Phase 6: the sales tax the estimate charges; null or absent, none. */
+  tax?: { rate: number; label: string | null } | null;
   /** Phase 5. Absent on a revision finalized before discounts existed. */
   discounts?: AppliedDiscount[];
   lineItems: Array<{
@@ -24,6 +28,8 @@ export interface AcceptedEstimateSnapshot {
     propertyId: number | null;
     isUpsell: boolean;
     serviceNotes: string | null;
+    /** Phase 6. Absent on a revision finalized before sales tax: not taxed. */
+    taxable?: boolean;
   }>;
   locations: Array<{
     id: number;
@@ -53,8 +59,10 @@ export interface LocationJobPlan extends LocationScheduleInput {
   subtotal: number;
   /** This location's share of the estimate's discounts (phase 5). */
   discountTotal: number;
-  /** After discounts: what the job is worth. */
+  /** After discounts: what the job is worth, before tax. */
   totalAmount: number;
+  /** This location's share of the estimate's sales tax (phase 6). */
+  taxTotal: number;
 }
 
 export class EstimateConversionValidationError extends Error {}
@@ -111,6 +119,11 @@ export function buildLocationJobPlans(
   // shared between the locations' jobs in proportion to each one's work.
   const discount = applyDiscounts(centsSum(grouped.map((group) => group.subtotal)), snapshot.discounts ?? []).discountTotal;
   const shares = shareDiscount(discount, grouped.map((group) => group.subtotal));
+  // Phase 6: the estimate's tax on what is converted, shared by each location's taxable work.
+  const tax = salesTax(snapshot.lineItems.filter((line) => grouped.some((g) => g.lineItems.includes(line)))
+    .map((line) => ({ totalPrice: Number(line.totalPrice), taxable: Boolean(line.taxable) })), discount, snapshot.tax?.rate ?? null).tax;
+  const taxShares = shareDiscount(tax, grouped.map((group) =>
+    centsSum(group.lineItems.filter((line) => line.taxable).map((line) => Number(line.totalPrice)))));
   return grouped.map(({ location, lineItems, subtotal }, i) => {
     const schedule = byProperty.get(location.id)!;
     return {
@@ -121,6 +134,7 @@ export function buildLocationJobPlans(
       subtotal,
       discountTotal: shares[i],
       totalAmount: (Math.round(subtotal * 100) - Math.round(shares[i] * 100)) / 100,
+      taxTotal: taxShares[i],
     };
   });
 }
@@ -182,6 +196,7 @@ export async function persistAcceptedEstimateJobsCore<TJob extends { id: number 
       isRecurring: false,
       totalAmount: String(plan.totalAmount),
       discountTotal: String(plan.discountTotal),
+      taxTotal: String(plan.taxTotal),
       notes: [input.snapshot.quote.notes, plan.location.notes, plan.jobNotes].filter(Boolean).join("\n\n") || null,
       lineItems: JSON.stringify(lineItems),
     });

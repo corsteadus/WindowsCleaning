@@ -10,6 +10,7 @@ import { createInvoice, type CreateInvoiceBody } from "@workspace/api-client-rea
 import { createIdempotencyKey, idempotencyRequest } from "@/lib/idempotency";
 import { PropertyPicker } from "@/components/PropertyPicker";
 import { protectedFetch } from "@/lib/auth-scope";
+import { chosenRate, SalesTaxPicker, useTaxRates, type TaxChoice } from "@/components/SalesTaxPicker";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -243,12 +244,17 @@ type CustomerOption = {
   firstName: string;
   lastName: string;
   effectiveDefaultPropertyId?: number | null;
+  taxExempt?: boolean;
+  billingState?: string | null;
+  county?: string | null;
 };
 type JobOption = {
   id: number;
   jobNumber: string;
   status: string;
   totalAmount?: number;
+  /** Phase 6: the sales tax the job carries from its estimate. */
+  taxTotal?: number | string | null;
   scheduledDate?: string | null;
   propertyId?: number | null;
   propertyName?: string | null;
@@ -262,6 +268,8 @@ type DraftLine = {
   unitPrice: string;
   discountAmount: string;
   taxAmount: string;
+  /** Phase 6: whether "Add sales tax" taxes this line. */
+  taxable: boolean;
 };
 
 function cents(value: string): bigint {
@@ -292,13 +300,18 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Phase 6 (Kyle #2): sales tax on invoices, never by default.
+  const [taxChoice, setTaxChoice] = useState<TaxChoice>({ stateRateId: "", countyRateId: "" });
+  const taxRates = useTaxRates();
   const submitKey = useRef<string | null>(null);
   const submitInFlight = useRef(false);
 
   useEffect(() => {
-    protectedFetch(`${BASE}/api/customers`)
+    // The list answers { customers, total, … } (found 2026-10-26: reading `data`
+    // left the picker empty, so no invoice could be started here). 200 is its most.
+    protectedFetch(`${BASE}/api/customers?limit=200`)
       .then((response) => response.json())
-      .then((data) => setCustomers(Array.isArray(data) ? data : (data.data ?? [])))
+      .then((data) => setCustomers(Array.isArray(data) ? data : (data.customers ?? data.data ?? [])))
       .catch(() => setCustomers([]));
   }, []);
 
@@ -325,6 +338,16 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
   const tax = lines.reduce((sum, line) => sum + cents(line.taxAmount), 0n);
   const total = subtotal + tax;
   const displayCents = (amount: bigint) => formatCurrency(Number(amount) / 100);
+  const taxExempt = Boolean(selectedCustomer?.taxExempt);
+  const invoiceRate = chosenRate(taxRates.data ?? [], taxChoice);
+  // Each taxable line's tax: its amount after its discount, at the chosen rate, to the cent.
+  const applyTax = () => setLines((current) => current.map((line) => {
+    if (!line.taxable || !invoiceRate) return { ...line, taxAmount: "" };
+    const gross = (quantityScale(line.quantity) * cents(line.unitPrice) + 5_000n) / 10_000n;
+    const base = gross - cents(line.discountAmount);
+    const tax = base > 0n ? Math.round((Number(base) * invoiceRate) / 100) : 0;
+    return { ...line, taxAmount: tax ? (tax / 100).toFixed(2) : "" };
+  }));
 
   const addJob = (job: JobOption) => {
     if (selectedJobIds.includes(job.id)) return;
@@ -336,7 +359,9 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
       quantity: "1",
       unitPrice: String(job.totalAmount ?? 0),
       discountAmount: "",
-      taxAmount: "",
+      // The tax the job carries from its estimate (phase 6), already worked out.
+      taxAmount: Number(job.taxTotal ?? 0) > 0 ? Number(job.taxTotal).toFixed(2) : "",
+      taxable: Number(job.taxTotal ?? 0) > 0,
     }]);
   };
   const addGeneralLine = () => setLines((current) => [...current, {
@@ -347,6 +372,7 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
     unitPrice: "0.00",
     discountAmount: "",
     taxAmount: "",
+    taxable: false,
   }]);
   const removeLine = (line: DraftLine) => {
     setLines((current) => current.filter((candidate) => candidate.id !== line.id));
@@ -360,6 +386,7 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
     setError("");
     if (!customerId) return setError("Choose a customer.");
     if (!lines.length) return setError("Add at least one job or general line.");
+    if (taxExempt && lines.some((line) => cents(line.taxAmount) > 0n)) return setError("This customer is Tax Exempt, so the invoice cannot charge sales tax.");
     if (lines.some((line) => !line.description.trim() || previewLineTotal(line) < 0n)) {
       return setError("Each line needs a description and a non-negative total.");
     }
@@ -369,7 +396,7 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
       customerId: Number(customerId),
       propertyId: propertyId === "" ? null : propertyId,
       jobIds: selectedJobIds,
-      lines: lines.map(({ id: _id, ...line }) => ({
+      lines: lines.map(({ id: _id, taxable: _taxable, ...line }) => ({
         ...line,
         discountAmount: line.discountAmount || null,
         taxAmount: line.taxAmount || null,
@@ -454,10 +481,31 @@ function InvoiceCreateDialog({ onClose, onCreated }: { onClose: () => void; onCr
                 <label className="col-span-5 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-slate-400">Discount</span><input inputMode="decimal" value={line.discountAmount} onChange={(event) => updateLine(line.id, { discountAmount: event.target.value })} className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-2 text-sm" /></label>
                 <label className="col-span-5 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-slate-400">Tax</span><input inputMode="decimal" value={line.taxAmount} onChange={(event) => updateLine(line.id, { taxAmount: event.target.value })} className="mt-1 w-full h-9 rounded-lg border border-slate-200 px-2 text-sm" /></label>
                 <button type="button" onClick={() => removeLine(line)} className="col-span-2 sm:col-span-1 h-9 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50"><X className="w-4 h-4 mx-auto" /></button>
+                <label className="col-span-12 flex items-center gap-2 text-xs font-semibold text-slate-500">
+                  <input type="checkbox" data-testid="invoice-line-taxable" checked={line.taxable} disabled={taxExempt}
+                    onChange={(event) => updateLine(line.id, { taxable: event.target.checked })} /> Taxable
+                </label>
               </div>)}
               {!lines.length && <div className="py-7 rounded-xl border border-dashed border-slate-200 text-center text-sm text-slate-400">Choose a completed job or add a general line.</div>}
             </div>
           </div>
+
+          {customerId && lines.length > 0 && (
+            <div className="rounded-2xl border border-slate-100 p-4 space-y-2" data-testid="invoice-sales-tax">
+              <p className="font-bold text-slate-800 text-sm">Sales tax</p>
+              <SalesTaxPicker value={taxChoice} onChange={setTaxChoice} taxExempt={taxExempt}
+                place={{ state: selectedCustomer?.billingState, county: selectedCustomer?.county }} />
+              {!taxExempt && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" data-testid="invoice-apply-tax" disabled={!invoiceRate || !lines.some((line) => line.taxable)} onClick={applyTax}
+                    className="h-9 rounded-lg bg-primary px-3 text-xs font-semibold text-white disabled:opacity-40">
+                    Add {invoiceRate ? `${invoiceRate}% ` : ""}tax to the taxable lines
+                  </button>
+                  <span className="text-xs text-slate-400">Tick Taxable on the lines that are; each line's tax is on its amount after its discount. You can still change a line's Tax.</span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Due date</span><input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} className="mt-2 w-full h-10 rounded-xl border border-slate-200 px-3 text-sm" /></label>

@@ -60,3 +60,4 @@ export * from "./profile_details.ts";
 export * from "./profile_notes.ts";
 export * from "./profile_callbacks.ts";
 export * from "./discounts.ts";
+export * from "./tax_rates.ts";

@@ -41,9 +41,18 @@ import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
 import { priceOf, shownPrice, unpricedRefusal, type PricedLine } from "../lib/estimate-pricing.ts";
 import { applyDiscounts, discountsOf, type DiscountInput } from "../lib/discounts.ts";
-import { readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
+import { readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, serviceTaxability, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
+import { salesTax } from "../lib/sales-tax.ts";
 
 const router: IRouter = Router();
+
+/** What the customer was offered: after the discounts (phase 5), with the sales tax (phase 6). */
+function offeredTotalOf(snapshot: { lineItems: Array<{ totalPrice: number; taxable?: boolean }>; discounts?: DiscountInput[]; tax?: { rate: number } | null }) {
+  const subtotal = snapshot.lineItems.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100;
+  const discounted = applyDiscounts(subtotal, snapshot.discounts ?? []);
+  const tax = salesTax(snapshot.lineItems.map((line) => ({ totalPrice: Number(line.totalPrice), taxable: Boolean(line.taxable) })), discounted.discountTotal, snapshot.tax?.rate ?? null);
+  return (Math.round(discounted.total * 100) + Math.round(tax.tax * 100)) / 100;
+}
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 const numericId = (value: unknown) => {
   const parsed = Number(value);
@@ -66,11 +75,18 @@ async function quoteSnapshot(tx: any, quoteId: number) {
     ? await tx.select().from(estimateLineMetadataTable).where(inArray(estimateLineMetadataTable.lineItemId, lines.map((x: any) => x.id)))
     : [];
   const metadataByLine = new Map<number, any>(metadata.map((x: any) => [x.lineItemId, x]));
+  const [owner] = quote.customerId
+    ? await tx.select({ taxExempt: customersTable.taxExempt }).from(customersTable).where(eq(customersTable.id, quote.customerId))
+    : [null];
+  const taxExempt = Boolean(owner?.taxExempt);
   // Phase 5: the discounts as offered, so a partial accept can work them out again.
   const discounts = serializeDiscounts(await readQuoteDiscounts(tx, quoteId))
     .map(({ name, kind, value, amount }) => ({ name, kind, value, amount }));
   return {
     discounts,
+    // Phase 6: the sales tax the estimate charges (null: none), frozen with it.
+    // A Tax Exempt customer is never taxed, whatever rate the estimate was given.
+    tax: quote.taxRate == null || taxExempt ? null : { rate: Number(quote.taxRate), label: quote.taxLabel ?? null },
     quote: {
       id: quote.id, quoteNumber: quote.quoteNumber, customerId: quote.customerId,
       leadId: quote.leadId, subtotal: Number(quote.subtotal), taxTotal: Number(quote.taxTotal),
@@ -81,6 +97,7 @@ async function quoteSnapshot(tx: any, quoteId: number) {
       id: line.id, serviceId: line.serviceId, description: line.description,
       quantity: Number(line.quantity), unitPrice: shownPrice(line), totalPrice: Number(line.totalPrice),
       pricePending: Boolean(line.pricePending),
+      taxable: Boolean(line.taxable),
       propertyId: metadataByLine.get(line.id)?.propertyId ?? null,
       isUpsell: metadataByLine.get(line.id)?.isUpsell ?? false,
       serviceNotes: metadataByLine.get(line.id)?.serviceNotes ?? null,
@@ -419,7 +436,7 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
       (line) => !snapshot.lineItems.some((accepted) => accepted.id === line.id),
     ),
     // After the estimate's discounts (phase 5), as the customer was offered it.
-    offeredTotal: applyDiscounts(offered.lineItems.reduce((sum, line) => sum + Math.round(Number(line.totalPrice) * 100), 0) / 100, (offered as { discounts?: DiscountInput[] }).discounts ?? []).total,
+    offeredTotal: offeredTotalOf(offered as never),
     existingJobs: existingJobs.map(conversionJobResponse),
   });
 });
@@ -677,8 +694,9 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
     // carried over from the line it replaces, by position, so finalizing can
     // never quietly wipe it. Found 2026-10-23: the estimate page sent no
     // descriptions, and every finalized estimate lost them.
-    const previousLines = await tx.select({ id: quoteLineItemsTable.id }).from(quoteLineItemsTable)
+    const previousLines = await tx.select({ id: quoteLineItemsTable.id, taxable: quoteLineItemsTable.taxable }).from(quoteLineItemsTable)
       .where(eq(quoteLineItemsTable.quoteId, quoteId)).orderBy(asc(quoteLineItemsTable.sortOrder));
+    const taxableByService = await serviceTaxability(tx, lines.map((line: any) => numericId(line.serviceId)));
     const previousMeta = previousLines.length
       ? await tx.select().from(estimateLineMetadataTable)
         .where(inArray(estimateLineMetadataTable.lineItemId, previousLines.map((line) => line.id)))
@@ -695,6 +713,9 @@ router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
         quoteId, serviceId: numericId(line.serviceId), description: String(line.description ?? "").trim(),
         quantity: String(quantity), unitPrice: String(price.unitPrice), totalPrice: String(quantity * price.unitPrice),
         pricePending: price.pricePending, sortOrder,
+        // Phase 6: as sent; else as it was, by position; else as the service is set up.
+        taxable: typeof line.taxable === "boolean" ? line.taxable
+          : previousLines[sortOrder]?.taxable ?? taxableByService.get(Number(numericId(line.serviceId))) ?? false,
       };
     })).returning();
     await tx.update(quotesTable).set({

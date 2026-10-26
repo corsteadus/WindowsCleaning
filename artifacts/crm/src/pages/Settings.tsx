@@ -1,5 +1,6 @@
 import { ScheduleNotificationSettings } from "@/components/ScheduleNotificationSettings";
 import { QuoteSettingsCard } from "@/components/QuoteSettingsCard";
+import { SalesTaxCard } from "@/components/SalesTaxCard";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -210,6 +211,9 @@ export default function Settings() {
       {/* Kyle (#11, #13): quote validity and the company's own terms, decided
           once for the business instead of on every quote. */}
       <QuoteSettingsCard canManage={canManageQuoteSettings} />
+
+      {/* Phase 6 (Kyle #2): the business's state and county sales tax rates. */}
+      <SalesTaxCard canManage={canManageQuoteSettings} />
 
       <CatalogManagement canManage={canManageCatalogs} />
 

@@ -33,6 +33,8 @@ interface Quote {
   discountTotal: number;
   /** Phase 5: each discount by name. */
   discounts?: Array<{ name: string; kind: "amount" | "percent"; value: number; amount: number }>;
+  /** Phase 6: how the estimate's sales tax reads, e.g. "Missouri 4.225% + Jackson County 1.25%". */
+  taxLabel?: string | null;
   totalAmount: number;
   notes?: string | null;
   terms?: string | null;
@@ -197,7 +199,7 @@ export default function QuotePrint() {
           )}
           {quote.taxTotal > 0 && (
             <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Tax</span>
+              <span className="text-slate-500">Sales tax{quote.taxLabel ? ` (${quote.taxLabel})` : ""}</span>
               <span>{formatCurrency(quote.taxTotal)}</span>
             </div>
           )}
