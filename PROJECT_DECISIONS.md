@@ -166,6 +166,124 @@ steps 05–08 will not complete.
 
 ﻿
 ﻿
+## Phase 1 — estimates on the profile, and converting from one — 2026-10-24
+
+**Built and browser-verified locally (19/19; regression: B2 18/18, A 33/33). Not yet
+pushed. No migration.** Kyle, Videos 4 and 5.
+
+**The Estimates view** (`components/ProfileEstimates.tsx`) is a card per estimate: number,
+status, **price or "To be quoted"**, the appointment **in Chicago time**, **the estimator**,
+**every location by name**, created and valid-until dates, and whether jobs were made from
+it; Open, Convert (or Schedule, for a customer) and Delete. The server sends a `summary`
+with each estimate (`api-server lib/profile-estimates.ts`): locations from the appointment,
+the lines and the quote; estimator and time from the appointment; lines still to be
+quoted; latest revision; jobs made.
+
+**Convert to Customer** — in the header of a prospect with estimates, and on each card.
+Choose the estimate they are going ahead with; **see what is in it** (each service, its
+location, its customer description, its price); an estimate never finalized is finalized
+on the way ("Finalize & continue"); then the estimate page's own scheduling dialog opens
+(a date per location, crew, technician, job notes, the verbal yes on the phone). One job
+per location; the prospect becomes a customer. An estimate already scheduled is not
+offered again. Finalizing from outside the estimate page is one helper now,
+`crm/src/lib/estimate-actions.ts`, also used by the Add form's Save and email.
+
+**No job from a service still to be quoted** (Kyle's blank rule, 2026-10-24): the picker
+says so and holds the button, the scheduling dialog says so first, and
+`POST /quotes/:id/convert-and-schedule` refuses (409 `estimate_unpriced`).
+
+Found on the way: appointment times showed in the **viewer's** time zone (1:00 AM in
+Pakistan for a 3 pm Chicago visit); the card and picker now show the business's time.
+
+---
+
+## Logins on Sandbox 2, and Lute's "view as" idea — 2026-10-24
+
+**Checked:** the three team logins (`team_admin` super admin, `team_office` office admin,
+`team_tech` field tech) all sign in on Sandbox 2. **Created** a login for Lute through
+`POST /admin/users` as `team_admin`: username `lute` (sign-in accepts "Lute"), role
+**owner**, verified in a browser. The password was given to Toheed only; it is in no file.
+
+**Lute then asked for admin.** Not done: Corstead refuses by design to promote an existing
+account to Super Admin (`PATCH /admin/users/:id` → 403 "Existing users cannot be promoted to
+Super Admin"); Super Admin can only be given when an account is created. Choices for Toheed:
+keep Owner, or have `team_admin` deactivate `lute` and create a new Super Admin account
+(a new username, since `lute` is taken). No database edit was made around the rule.
+**Toheed chose a second account:** `lute_admin`, **Super Admin**, created through
+`POST /admin/users` (the permitted path) and verified; `lute` stays as Owner.
+
+**Future, not now (Lute):** a Super Admin control — an icon or drop-down — to **view the app
+as another role** (Owner, Office Admin, Sales, Field Tech), as learning-management systems
+do. Build note: do it on the server, as a per-session "view as" that can only **lower** the
+capabilities the session has, never raise them, with a banner that says it is on; a
+client-only switch would show screens the server still answers at Super Admin level.
+
+---
+
+## Videos 4, 5 and 6 — analysed against the code, 2026-10-24
+
+Sources: the three PDFs (summary + cleaned transcript), read in full. **Reference walkthroughs
+of The Customer Factor, not approvals of every feature.** "Luke" in the transcripts is Lute
+(speech-to-text); in Video 4 "Luke" is also the sample prospect. Nothing built yet.
+
+| Video | What Kyle shows | Corstead today |
+|---|---|---|
+| 4 | Collapsible sections under the profile: files, estimates, callbacks, email/text history, convert | The same tools sit behind **Jump To** (his answer #6). Inline collapsible sections: ask once he has reviewed the screenshots |
+| 4, 5 | Photos, documents, **videos**, organised **by job location** | Files are per profile only, shown as an icon list with no preview; no video type allowed; no location |
+| 5 | Photos **must not be squished** | No image preview at all yet, so nothing distorts — but any preview built must keep the aspect ratio and original file |
+| 4, 5 | Estimate history on the profile: price, location, who it was assigned to; open, edit, delete | The Estimates view lists number, status, total and delete. **No location or assignee in the list** |
+| 4 | **Callbacks** for office staff or a VA: pop-up with contact details, record the outcome (spoke / left message / neither), schedule the next callback; book the work from there if they say yes | **Missing.** Pieces exist: dated callback notes (piece C), `tasks` (due date, assignee, linked record), and convert-and-schedule |
+| 4 | Convert a prospect by **picking one of their estimates**, viewing it, carrying it into the job, assigning the crew | **Exists on the estimate page** (`EstimateConversionDialog`: per location, crew, technician, times, job notes) once an estimate is finalized. Not offered from the profile, and no "choose among the estimates" step |
+| 4 | Email/text history: date, time, sender, **open the content, resend** | The Communication & Activity feed shows date, sender, title and one truncated line. **No full view, no resend.** No SMS provider |
+| 5 | Estimate screen: update, print, email, text, delete, **save as PDF** | Update, print (browser print, so PDF only by the browser), email (queued delivery), delete exist. Text needs an SMS provider. **No real PDF file** |
+| 5 | "Estimate to Invoice" in one click | **Conflicts with Corstead's flow** (estimate → manual convert → job → invoice). Ask Kyle; default: keep estimate → job |
+| 5 | **Customer-visible** job notes on the estimate | Exists per service (#31). An estimate-wide customer note is not shown on the public page — to check |
+| 5 | **Discounts**: $ or %, named, stacked; **customer-linked** (senior, military) that follow the customer | `quotes.discount_total` column exists, always 0; **no UI, no rules**. Customer-linked discounts: nothing |
+| 5 | **Tax**: county % from the profile automatically, manual % on the estimate, **on the total or per item** (materials taxed, labour not) | `tax_total` always 0; **no rate anywhere**. Kyle earlier: optional, never on by default, on invoices (piece D). Now estimates too |
+| 5 | **Deposit** ($ or %) **paid when the customer accepts** | **Blocked: no payment provider.** Recording a deposit by hand would be possible |
+| 6 | Basic estimate email: sender shown, attach or not, **estimate-link tag**, service templates, several recipients with "save this address", attach files and **company-wide general uploads** (insurance, service sheets), **preview** | One-off composer exists (one recipient, no templates, no attachments). Delivery creates a secure link and raises `quote.sent` (the automation template sends it). Templates and `{{…}}` placeholders exist. **Missing:** estimate-link placeholder in the composer, templates there, several recipients, attachments, general uploads, preview |
+| 6 | Basic = a plain **PDF, no Accept button**; premium "estimate package" next video | Corstead's link opens an **interactive** page with Accept/Decline — closer to his premium. **The basic, PDF-only option is missing** |
+| 6 | Businesses format their own estimate: what is shown, footer, terms, **logo** | Terms exist (company setting). No logo, no field choices, no footer |
+
+**Order I would build in** (each a phase; several need an announced migration):
+1. Estimates on the profile with location and assignee, and **"Convert using this estimate"**
+   from the profile (the business-flow spine; mostly UI over what exists).
+2. **Callbacks**: outcome + next callback, a callback list for the VA, booking from it.
+3. **Communication history**: open the full message, resend.
+4. **Files by location**, photo/video previews that keep their proportions.
+5. **Basic estimate email**: templates, link placeholder, recipients, attachments, general
+   uploads, preview, and a view-only (PDF) estimate.
+6. **Discounts**, then **tax**, then estimate **branding** (logo, footer, fields).
+7. **Deposits** — after a payment provider is chosen (Lute).
+
+**To ask Kyle:** "Estimate to Invoice" vs estimate → job; tax on estimates and invoices or
+invoices only, and a county rate table vs one rate; which taxes per item (a flag on the
+service?); customer-linked discounts now or later; collapsible sections under the profile
+vs Jump To (after his screenshot review); PDF attachment in the email vs a link only.
+
+---
+
+## Live on Sandbox 2 and verified — 2026-10-24
+
+Commits `a1c873f` (pieces A, B1, B2) and `94efde0` (piece C, blank vs $0, one Deactivated)
+were pushed and republished by Toheed. **The startup gate applied both migrations**
+(`profile-note-entries-v1`, `kyle-answers-2026-10-24-v1`: `applied`, 2026-10-23 18:27 UTC);
+bundle `index-BDp2QkLH.js`. Verified **against the deployed app** in a headed browser:
+
+| | Result |
+|---|---|
+| A — the one-page profile | **33/33** |
+| B1 — the Add form | **23/23** |
+| B2 — the estimate on the Add form (blank refused, **$0 sent**) | **18/18** |
+| C, Deactivated, blank vs $0 on the estimate page, edit keeps locations | **24/24** |
+
+Three failures on the way were **the tests, not the app**, each fixed in the test: A still
+expected an Archive button; B1 unticked the estimate box by its old name; the new walkthrough
+typed the deactivation reason into the wrong box. All ZZ records were removed; 124, 125, 297
+and quotes 62/63/92 untouched. Note times show in the viewer's own time zone.
+
+---
+
 ## Kyle's answers of 2026-10-24, built — blank vs $0, and one "Deactivated"
 
 **Built and tested in the working tree; waits on the republish.** CRM 756/756, API 858

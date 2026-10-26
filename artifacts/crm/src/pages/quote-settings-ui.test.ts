@@ -56,7 +56,7 @@ test("an expiry is never printed as a bare ISO date", () => {
   for (const [label, source] of [
     ["the quote page", quoteDetail],
     ["the printed quote", read("./QuotePrint.tsx")],
-    ["the profile", read("./CustomerDetail.tsx")],
+    ["the profile", read("../components/ProfileEstimates.tsx")],
   ] as const) {
     assert.doesNotMatch(source, /\$\{(?:quote|q)\.validUntil\}/, `${label} prints a raw date`);
     assert.match(source, /formatDateOnly\(/, `${label} does not format the date`);

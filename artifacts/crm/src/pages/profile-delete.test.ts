@@ -49,13 +49,17 @@ test("after deleting, the page leaves rather than showing a profile that is gone
 test("a single job or estimate deletes from its own section", () => {
   assert.match(source, /protectedFetch\(`\/api\/\$\{kind\}\/\$\{recordId\}`, \{ method: "DELETE" \}\)/);
   assert.match(source, /aria-label=\{`Delete job \$\{j\.jobNumber\}`\}/);
-  assert.match(source, /aria-label=\{`Delete estimate \$\{q\.quoteNumber\}`\}/);
+  assert.match(readFileSync(fileURLToPath(new URL("../components/ProfileEstimates.tsx", import.meta.url)), "utf8"), /aria-label=\{`Delete estimate \$\{quote\.quoteNumber\}`\}/);
   assert.match(source, /window\.confirm\(`Delete \$\{label\}\? This cannot be undone\.`\)/);
 });
 
 test("those buttons do not open the record they sit on", () => {
+  // The job row is a link, so its button stops it. The estimate card is not a
+  // link since 2026-10-24 — it has its own Open — so there is nothing to stop.
   const rows = source.match(/onClick=\{\(event\) => \{ event\.preventDefault\(\); event\.stopPropagation\(\); onDelete\(/g) ?? [];
-  assert.equal(rows.length, 2, "both the job and the estimate button must stop the link");
+  assert.equal(rows.length, 1, "the job button must stop the link");
+  const estimates = readFileSync(fileURLToPath(new URL("../components/ProfileEstimates.tsx", import.meta.url)), "utf8");
+  assert.doesNotMatch(estimates, /<Link key=\{quote\.id\}/, "an estimate card is not itself a link");
 });
 
 test("the delete controls are hidden without customers.manage", () => {

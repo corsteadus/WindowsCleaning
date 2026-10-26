@@ -16,6 +16,7 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const quotes = read("./Quotes.tsx");
 const quoteDetail = read("./QuoteDetail.tsx");
 const customerDetail = read("./CustomerDetail.tsx");
+const profileEstimates = readFileSync(fileURLToPath(new URL("../components/ProfileEstimates.tsx", import.meta.url)), "utf8");
 const badge = read("../components/StatusBadge.tsx");
 
 test("the derived status is preferred, with the old column as the fallback", () => {
@@ -67,7 +68,9 @@ test("every status Kyle listed has a label and a badge", () => {
 
 test("the list, the profile and the estimate page all read the derived status", () => {
   assert.match(quotes, /<StatusBadge status=\{estimateStatusOf\(quote\)\}/);
-  assert.match(customerDetail, /<StatusBadge status=\{estimateStatusOf\(q\)\}/);
+  // The profile's estimates moved into components/ProfileEstimates.tsx (2026-10-24).
+  assert.match(profileEstimates, /const status = estimateStatusOf\(quote\);/);
+  assert.match(profileEstimates, /<StatusBadge status=\{status\} label=\{estimateStatusLabel\(status\)\} \/>/);
   assert.match(quoteDetail, /estimateStatusLabel\(status\)/);
 });
 
@@ -76,7 +79,7 @@ test("the list, the profile and the estimate page all read the derived status", 
 // own wording rather than renaming it for everyone.
 test("the estimate badges carry the estimate wording", () => {
   assert.match(quotes, /label=\{estimateStatusLabel\(estimateStatusOf\(quote\)\)\}/);
-  assert.match(customerDetail, /label=\{estimateStatusLabel\(estimateStatusOf\(q\)\)\}/);
+  assert.match(profileEstimates, /label=\{estimateStatusLabel\(status\)\}/);
   assert.match(badge, /label\?: string;/, "StatusBadge has to accept an override");
   assert.match(badge, /\{label \?\? cfg\.label\}/);
 });

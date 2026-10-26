@@ -49,9 +49,9 @@ test("#22 a service can be added from the estimate's picker and from the job for
 test("#16 prospects get New Estimate too, in the header and in the Quotes tab", () => {
   assert.match(detail, /customer\.lifecycleStatus === "prospect"/);
   assert.match(detail, /\{canQuoteThisAccount && \(\s*<button[\s\S]{0,400}New Estimate/);
-  assert.match(detail, /<QuotesTab [^>]*canCreate=\{canQuoteThisAccount\}/);
-  const tab = detail.slice(detail.indexOf("function QuotesTab("));
-  assert.match(tab.slice(0, 1200), /href=\{`\/quotes\/new\?customerId=\$\{customerId\}`\}/);
+  // The Estimates view is components/ProfileEstimates.tsx since 2026-10-24.
+  assert.match(detail, /<EstimatesView[\s\S]{0,200}canCreate=\{canQuoteThisAccount\}/);
+  assert.match(read("../components/ProfileEstimates.tsx"), /href=\{`\/quotes\/new\?customerId=\$\{customerId\}`\}/);
 });
 
 // #15 was first built as a jump to the estimate page after saving. Kyle's

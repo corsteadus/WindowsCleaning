@@ -29,6 +29,9 @@ import {
 import { FilesTab } from "@/components/FilesTab";
 import { CommunicationSafetyCard } from "@/components/CommunicationSafetyCard";
 import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
+import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEstimates";
+import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
+import type { ProfileEstimate } from "@/lib/profile-estimates";
 import { CustomerCombobox, type CustomerComboboxRecord } from "@/components/CustomerCombobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -145,14 +148,8 @@ interface Job {
   lineItems?: string | null;
 }
 
-interface Quote {
-  id: number;
-  quoteNumber: string;
-  status: string;
-  totalAmount: string;
-  createdAt: string;
-  validUntil?: string | null;
-}
+// With where, who and when for each (Kyle, Videos 4 and 5).
+type Quote = ProfileEstimate;
 
 interface Invoice {
   id: number;
@@ -307,6 +304,11 @@ export default function CustomerDetail() {
   // asks first rather than throwing them away.
   const [sheetDirty, setSheetDirty] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  // Kyle, Video 4: choose one of their estimates, check it, schedule it.
+  const canConvertEstimates = hasClientCapability(user, "estimates.convert") && canScheduleJobs;
+  const [convertPicker, setConvertPicker] = useState<{ open: boolean; quoteId?: number }>({ open: false });
+  const [schedulingQuoteId, setSchedulingQuoteId] = useState<number | null>(null);
+  const openConvert = (quoteId?: number) => guard(() => setConvertPicker({ open: true, quoteId }));
   const guard = (action: () => void) => {
     if (sheetDirty && activeView === "profile" && !window.confirm(UNSAVED_WARNING)) return;
     setSheetDirty(false);
@@ -534,6 +536,15 @@ export default function CustomerDetail() {
                   <FileText className="w-3.5 h-3.5" /> New Estimate
                 </button>
               )}
+              {canConvertEstimates && customer.lifecycleStatus === "prospect" && (customer.quotes ?? []).length > 0 && (
+                <button
+                  data-testid="header-convert"
+                  onClick={() => openConvert()}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-emerald-300 text-emerald-700 bg-white text-xs font-semibold hover:bg-emerald-50"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Convert to Customer
+                </button>
+              )}
               {canScheduleJobs && (customer.lifecycleStatus === "customer" || customer.status === "active") && customer.lifecycleStatus !== "prospect" && (
                 <button
                   onClick={() => guard(() => navigate(`/jobs/new?customerId=${customer.id}`))}
@@ -755,7 +766,15 @@ export default function CustomerDetail() {
               <JobsTab jobs={customer.jobs} customerId={customer.id} canSchedule={canScheduleJobs} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
             )}
             {activeView === "quotes" && (
-              <QuotesTab quotes={customer.quotes ?? []} customerId={customer.id} canCreate={canQuoteThisAccount} onDelete={canManageCustomer ? confirmDeleteRecord : undefined} />
+              <EstimatesView
+                quotes={customer.quotes ?? []}
+                customerId={customer.id}
+                canCreate={canQuoteThisAccount}
+                canConvert={canConvertEstimates}
+                isProspect={customer.lifecycleStatus === "prospect"}
+                onConvert={openConvert}
+                onDelete={canManageCustomer ? confirmDeleteRecord : undefined}
+              />
             )}
             {activeView === "invoices" && (
               <InvoicesTab invoices={customer.invoices ?? []} customerId={customer.id} />
@@ -799,6 +818,27 @@ export default function CustomerDetail() {
             </nav>
           </aside>
         </div>
+      <ConvertFromEstimateDialog
+        quotes={customer.quotes ?? []}
+        open={convertPicker.open}
+        initialQuoteId={convertPicker.quoteId}
+        isProspect={customer.lifecycleStatus === "prospect"}
+        onOpenChange={(open) => setConvertPicker((current) => ({ ...current, open }))}
+        onReady={(quoteId) => {
+          setConvertPicker({ open: false });
+          queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
+          setSchedulingQuoteId(quoteId);
+        }}
+      />
+      {schedulingQuoteId != null && (
+        <EstimateConversionDialog
+          key={schedulingQuoteId}
+          quoteId={schedulingQuoteId}
+          hideTrigger
+          open
+          onOpenChange={(open) => { if (!open) setSchedulingQuoteId(null); }}
+        />
+      )}
       {/* Permanent, so it asks first — but only once, and plainly. Kyle (Testing
           Edits, 2026-10-01, #6) asked for the typed name to go: a confirmation
           and two buttons, with the warning about what else is erased kept. */}
@@ -1982,55 +2022,7 @@ function PaymentsTab({ payments }: { payments: PaymentRecord[] }) {
 }
 
 // ─── Quotes Tab ───────────────────────────────────────────────────────────────
-function QuotesTab({ quotes, customerId, canCreate, onDelete }: { quotes: Quote[]; customerId: number; canCreate: boolean; onDelete?: (kind: "jobs" | "quotes", recordId: number, label: string) => void }) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-slate-500">{quotes.length} quote{quotes.length !== 1 ? "s" : ""}</p>
-        {canCreate && (
-          <Link
-            href={`/quotes/new?customerId=${customerId}`}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary/90"
-          >
-            <Plus className="w-3.5 h-3.5" /> New Estimate
-          </Link>
-        )}
-      </div>
-      {quotes.length === 0 ? (
-        <Empty icon={FileText} message="No quotes yet" />
-      ) : (
-        quotes.map(q => (
-          <Link key={q.id} href={`/quotes/${q.id}`}>
-            <div className="bg-white rounded-2xl border border-slate-200 px-5 py-4 hover:shadow-md transition-shadow cursor-pointer flex items-center gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="font-bold text-slate-900 text-sm">{q.quoteNumber}</p>
-                  <StatusBadge status={estimateStatusOf(q)} label={estimateStatusLabel(estimateStatusOf(q))} />
-                </div>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Created {new Date(q.createdAt).toLocaleDateString()}
-                  {q.validUntil && ` · Valid until ${formatDateOnly(q.validUntil)}`}
-                </p>
-              </div>
-              <p className="font-bold text-slate-900 text-sm shrink-0">${parseFloat(q.totalAmount).toFixed(2)}</p>
-              {onDelete && (
-                <button
-                  type="button"
-                  aria-label={`Delete estimate ${q.quoteNumber}`}
-                  onClick={(event) => { event.preventDefault(); event.stopPropagation(); onDelete("quotes", q.id, `estimate ${q.quoteNumber}`); }}
-                  className="shrink-0 rounded-md p-1 text-red-500 hover:bg-red-50"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
-            </div>
-          </Link>
-        ))
-      )}
-    </div>
-  );
-}
+// The Estimates view is components/ProfileEstimates.tsx (Kyle, Videos 4 and 5).
 
 // ─── Invoices Tab ─────────────────────────────────────────────────────────────
 function InvoicesTab({ invoices, customerId }: { invoices: Invoice[]; customerId: number }) {

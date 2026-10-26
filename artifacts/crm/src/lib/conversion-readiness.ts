@@ -29,6 +29,8 @@ export interface ConversionReadinessInput {
   requiresVerbalAcceptance: boolean;
   verbalRecorded: boolean;
   verbalNote: string;
+  /** The server's refusal while a service is still to be quoted (Kyle, 2026-10-24). */
+  unpriced?: string | null;
 }
 
 /** Matches the server's own minimum for acceptance documentation. */
@@ -42,6 +44,12 @@ const plural = (count: number, one: string, many: string) => (count === 1 ? one 
  */
 export function conversionBlockers(input: ConversionReadinessInput): string[] {
   const blockers: string[] = [];
+
+  // First: no date or crew makes a $0 job from a service nobody has priced.
+  if (input.unpriced) {
+    blockers.push(`${input.unpriced}. Open the estimate, add the price, and finalize it again.`);
+    return blockers;
+  }
 
   if (input.locationCount === 0) {
     // Not reachable from an estimate built through the normal flow, but a

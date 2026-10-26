@@ -44,6 +44,7 @@ import {
   type EstimateAppointmentDraft, type EstimateLineDraft,
 } from "@/lib/intake-estimate";
 import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
+import { estimateCall, finalizeEstimate } from "@/lib/estimate-actions";
 import {
   ACCOUNT_OWNER, INTAKE_PHONES, buildIntake, intakeProblems, namedPeople,
   type IntakeEmailRow, type IntakeLocationRow, type IntakeSlot, type Owner,
@@ -318,28 +319,9 @@ function FormSection({ icon: Icon, title, children }: { icon: React.ElementType;
  * reason it was not sent, or null.
  */
 async function sendNewEstimate(estimate: { id: number }, email: string): Promise<string | null> {
-  const BASE = import.meta.env.BASE_URL.replace(/\/+$/, "");
-  const call = async (path: string, init?: RequestInit) => {
-    const response = await protectedFetch(`${BASE}/api${path}`, {
-      credentials: "include", headers: { "Content-Type": "application/json" }, ...init,
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error((body as { error?: string }).error ?? "Request failed");
-    return body as any;
-  };
   try {
-    const quote = await call(`/quotes/${estimate.id}`);
-    await call(`/quotes/${estimate.id}/finalize`, {
-      method: "POST",
-      body: JSON.stringify({
-        notes: quote.notes, terms: quote.terms,
-        lineItems: (quote.lineItems ?? []).map((line: any) => ({
-          serviceId: line.serviceId, description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
-          serviceNotes: line.serviceNotes ?? null, propertyId: line.propertyId ?? quote.propertyId,
-        })),
-      }),
-    });
-    await call(`/quotes/${estimate.id}/deliver`, { method: "POST", body: JSON.stringify({ channels: ["email"], email }) });
+    await finalizeEstimate(estimate.id);
+    await estimateCall(`/quotes/${estimate.id}/deliver`, { method: "POST", body: JSON.stringify({ channels: ["email"], email }) });
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : "The estimate could not be sent";

@@ -393,6 +393,9 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
   res.json({
     quoteId,
     quoteNumber: source.quote.quoteNumber,
+    // Kyle (2026-10-24): a service still to be quoted is not a price, and no
+    // job is made at $0 from it. Shown before the office fills in the dates.
+    unpriced: unpricedRefusal((snapshot.lineItems ?? []) as PricedLine[]),
     revisionId: source.revision.id,
     revisionNumber: source.revision.revisionNumber,
     accepted,
@@ -459,6 +462,11 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
       }
 
       const snapshot = (source.acceptedLink?.acceptedSnapshot ?? source.revision.snapshot) as AcceptedEstimateSnapshot;
+      const unpriced = unpricedRefusal((snapshot.lineItems ?? []) as PricedLine[]);
+      if (unpriced) {
+        await releaseIdempotencyKey(tx, claim.record.id);
+        return { kind: "unpriced" as const, message: unpriced.replace("before sending", "before scheduling") };
+      }
       const plans = buildLocationJobPlans(snapshot, schedules);
 
       let customerId = source.quote.customerId;
@@ -609,6 +617,7 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
     if (result.kind === "alreadyAccepted") return res.status(400).json({ error: "Do not use a verbal override for an estimate already accepted by the customer" });
     if (result.kind === "accountRequired") return res.status(409).json({ error: "The estimate is not linked to a canonical customer account" });
     if (result.kind === "dayBlocked") return res.status(409).json({ error: result.message, code: "day_blocked" });
+    if (result.kind === "unpriced") return res.status(409).json({ error: result.message, code: "estimate_unpriced" });
     if (result.kind !== "created" && result.kind !== "existing") {
       return res.status(500).json({ error: "Unexpected conversion result" });
     }

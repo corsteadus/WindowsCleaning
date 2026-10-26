@@ -29,7 +29,8 @@ interface Location {
   id: number; name?: string | null; address: string; city: string; state: string; zip: string; notes?: string | null;
 }
 interface SnapshotLine {
-  id: number; description: string; quantity: number; unitPrice: number; totalPrice: number; propertyId: number | null;
+  /** null while still to be quoted (Kyle, 2026-10-24). */
+  id: number; description: string; quantity: number; unitPrice: number | null; totalPrice: number; propertyId: number | null;
 }
 interface Preview {
   accepted: boolean;
@@ -37,14 +38,24 @@ interface Preview {
   revisionNumber: number;
   snapshot: { quote: { notes?: string | null }; locations: Location[]; lineItems: SnapshotLine[] };
   existingJobs: Array<{ id: number; jobNumber: string }>;
+  /** Why it cannot be scheduled while a service is still to be quoted, or null. */
+  unpriced?: string | null;
 }
 interface ScheduleRow {
   propertyId: number; scheduledDate: string; scheduledStartTime: string; scheduledEndTime: string;
   crewId: string; assignedUserId: string; jobNotes: string;
 }
 
-export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
-  const [open, setOpen] = useState(false);
+export function EstimateConversionDialog({ quoteId, open: openProp, onOpenChange, hideTrigger }: {
+  quoteId: number;
+  /** Controlled from outside — the profile's "Convert to Customer" picker. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+}) {
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean) => { setOpenState(next); onOpenChange?.(next); };
   const [rows, setRows] = useState<ScheduleRow[]>([]);
   const [verbal, setVerbal] = useState(false);
   const [verbalNote, setVerbalNote] = useState("");
@@ -133,19 +144,20 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
       requiresVerbalAcceptance: preview.data.requiresVerbalAcceptance,
       verbalRecorded: verbal,
       verbalNote,
+      unpriced: preview.data.unpriced ?? null,
     })
     : [];
   const ready = !!preview.data && blockers.length === 0;
 
   return <>
-    <Button onClick={() => {
+    {!hideTrigger && <Button onClick={() => {
       // The query is mounted for the life of the page, so toggling `enabled`
       // alone would serve whatever it read the first time.
       queryClient.invalidateQueries({ queryKey: ["estimate-conversion-preview", quoteId] });
       setOpen(true);
     }} className="bg-emerald-600 hover:bg-emerald-700">
       <CalendarCheck2 className="mr-2 h-4 w-4" /> Convert to Customer & Schedule
-    </Button>
+    </Button>}
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl">
         <DialogHeader>
@@ -174,7 +186,7 @@ export function EstimateConversionDialog({ quoteId }: { quoteId: number }) {
               );
               return <div key={location.id} className="rounded-xl border border-slate-200 p-4">
                 <div className="flex gap-2"><MapPin className="h-4 w-4 text-primary mt-0.5" /><div><p className="font-bold text-sm">{location.name || location.address}</p><p className="text-xs text-slate-500">{location.address}, {location.city}, {location.state} {location.zip}</p></div></div>
-                <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs space-y-1">{lines.map((line) => <div key={line.id} className="flex justify-between gap-3"><span>{line.quantity} × {line.description}</span><strong>${Number(line.totalPrice).toFixed(2)}</strong></div>)}</div>
+                <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs space-y-1">{lines.map((line) => <div key={line.id} className="flex justify-between gap-3"><span>{line.quantity} × {line.description}</span><strong>{line.unitPrice == null ? "To be quoted" : `${Number(line.totalPrice).toFixed(2)}`}</strong></div>)}</div>
                 {row && <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div><Label>Date</Label><Input type="date" value={row.scheduledDate} onChange={(event) => update(location.id, { scheduledDate: event.target.value })} /></div>
                   <div><Label>Start</Label><TimeSelect aria-label="Start time" value={row.scheduledStartTime} onChange={(value) => update(location.id, { scheduledStartTime: value })} /></div>

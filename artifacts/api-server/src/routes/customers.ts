@@ -23,6 +23,10 @@ import {
   estimateRevisionsTable,
   estimatePublicLinksTable,
   estimateDeliveryRequestsTable,
+  estimateLocationsTable,
+  estimateLineMetadataTable,
+  quoteLineItemsTable,
+  usersTable,
 } from "@workspace/db";
 import {
   maskCommunicationDestination,
@@ -69,6 +73,7 @@ import {
 import { purgeStatements, remainingReferenceQuery } from "../lib/customer-purge.js";
 import { decideMainProfile, describeMainProfileChange } from "../lib/customer-hierarchy.ts";
 import { neighborsOf } from "../lib/profile-neighbors.ts";
+import { summarizeEstimates } from "../lib/profile-estimates.ts";
 import { DEACTIVATED_LIFECYCLES, isDeactivated, listOf, resolvedLifecycle, type ProfileList } from "../lib/profile-lists.ts";
 import {
   IntakeError, estimateLocationIds, intakeFlatFields, parseIntake, parseIntakeEstimate,
@@ -941,7 +946,11 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
   const quoteIds = quotes.map((q) => q.id);
   const [quoteAppointments, quoteRevisions, quoteLinks, quoteJobs] = quoteIds.length
     ? await Promise.all([
-      db.select({ quoteId: estimateAppointmentsTable.quoteId }).from(estimateAppointmentsTable)
+      db.select({
+        quoteId: estimateAppointmentsTable.quoteId,
+        startsAt: estimateAppointmentsTable.startsAt,
+        assignedUserId: estimateAppointmentsTable.assignedUserId,
+      }).from(estimateAppointmentsTable)
         .where(inArray(estimateAppointmentsTable.quoteId, quoteIds)),
       db.select({ quoteId: estimateRevisionsTable.quoteId, id: estimateRevisionsTable.id, revisionNumber: estimateRevisionsTable.revisionNumber })
         .from(estimateRevisionsTable).where(inArray(estimateRevisionsTable.quoteId, quoteIds)),
@@ -955,6 +964,36 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
     : [[], [], [], []];
   const quoteStatuses = deriveQuoteStatuses({
     quotes, appointments: quoteAppointments, revisions: quoteRevisions, links: quoteLinks, jobs: quoteJobs,
+  });
+  // Videos 4 and 5: each estimate in the list says where, who, when, and
+  // whether it can be scheduled yet.
+  const assigneeIds = [...new Set(quoteAppointments.map((row) => row.assignedUserId).filter((value): value is string => !!value))];
+  const [estimateLocations, estimateLines, estimators] = quoteIds.length
+    ? await Promise.all([
+      db.select({ quoteId: estimateLocationsTable.quoteId, propertyId: estimateLocationsTable.propertyId })
+        .from(estimateLocationsTable).where(inArray(estimateLocationsTable.quoteId, quoteIds)),
+      db.select({
+        quoteId: quoteLineItemsTable.quoteId,
+        propertyId: estimateLineMetadataTable.propertyId,
+        pricePending: quoteLineItemsTable.pricePending,
+      }).from(quoteLineItemsTable)
+        .leftJoin(estimateLineMetadataTable, eq(estimateLineMetadataTable.lineItemId, quoteLineItemsTable.id))
+        .where(inArray(quoteLineItemsTable.quoteId, quoteIds)),
+      assigneeIds.length
+        ? db.select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName, username: usersTable.username })
+          .from(usersTable).where(inArray(usersTable.id, assigneeIds))
+        : Promise.resolve([]),
+    ])
+    : [[], [], []];
+  const estimateSummaries = summarizeEstimates({
+    quotes,
+    appointments: quoteAppointments,
+    users: estimators,
+    locations: estimateLocations,
+    lines: estimateLines,
+    revisions: quoteRevisions,
+    jobs: quoteJobs,
+    properties,
   });
 
   // Kyle's answer #5: the profile above this one, and the profiles beneath it.
@@ -993,7 +1032,11 @@ router.get(["/customers/:id", "/prospects/:id"], async (req, res): Promise<void>
     effectiveDefaultPropertyId,
     defaultPropertySource,
     jobs: jobs.map(j => ({ ...j, createdAt: j.createdAt.toISOString(), updatedAt: j.updatedAt.toISOString() })),
-    quotes: quotes.map(q => ({ ...q, displayStatus: quoteStatuses.get(q.id) ?? q.status, createdAt: q.createdAt.toISOString(), updatedAt: q.updatedAt.toISOString() })),
+    quotes: quotes.map(q => ({
+      ...q, displayStatus: quoteStatuses.get(q.id) ?? q.status,
+      summary: estimateSummaries.get(q.id) ?? null,
+      createdAt: q.createdAt.toISOString(), updatedAt: q.updatedAt.toISOString(),
+    })),
     invoices: invoices.map(i => ({ ...i, createdAt: i.createdAt.toISOString(), updatedAt: i.updatedAt.toISOString() })),
     payments: payments.map((payment) => ({
       ...payment,
