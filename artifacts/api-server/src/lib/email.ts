@@ -16,11 +16,19 @@ export interface EmailRecipient {
   name?: string;
 }
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 export interface EmailPayload {
   to: EmailRecipient[];
   subject: string;
   html: string;
   text?: string;
+  /** Phase 7: e.g. the estimate as a PDF (Kyle's answer #5: attaching it is an option). */
+  attachments?: EmailAttachment[];
 }
 
 export interface SendResult {
@@ -62,6 +70,11 @@ async function sendViaSendGrid(payload: EmailPayload): Promise<SendResult> {
       { type: "text/html", value: payload.html },
       ...(payload.text ? [{ type: "text/plain", value: payload.text }] : []),
     ],
+    ...(payload.attachments?.length ? {
+      attachments: payload.attachments.map((a) => ({
+        content: a.content.toString("base64"), filename: a.filename, type: a.contentType, disposition: "attachment",
+      })),
+    } : {}),
   };
 
   const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
@@ -98,14 +111,18 @@ async function sendViaMailgun(payload: EmailPayload): Promise<SendResult> {
   if (payload.text) form.set("text", payload.text);
 
   const credentials = Buffer.from(`api:${apiKey}`).toString("base64");
-  const res = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: form.toString(),
-  });
+  // Attachments need a multipart body; without them the plain form is kept.
+  let body: string | FormData = form.toString();
+  const headers: Record<string, string> = { Authorization: `Basic ${credentials}` };
+  if (payload.attachments?.length) {
+    const multipart = new FormData();
+    for (const [key, value] of form) multipart.append(key, value);
+    for (const a of payload.attachments) multipart.append("attachment", new Blob([new Uint8Array(a.content)], { type: a.contentType }), a.filename);
+    body = multipart;
+  } else {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+  }
+  const res = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, { method: "POST", headers, body });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText);
@@ -139,6 +156,7 @@ async function sendViaSmtp(payload: EmailPayload): Promise<SendResult> {
       subject: payload.subject,
       html: payload.html,
       text: payload.text,
+      attachments: payload.attachments?.map((a) => ({ filename: a.filename, content: a.content, contentType: a.contentType })),
     });
     return { success: true, provider: "smtp", messageId: info.messageId };
   } catch (err: unknown) {
@@ -153,6 +171,7 @@ function sendViaMock(payload: EmailPayload): SendResult {
   console.log("[email:mock] Would send email:", {
     to: payload.to.map((r) => r.email),
     subject: payload.subject,
+    attachments: payload.attachments?.map((a) => `${a.filename} (${a.content.length} bytes)`) ?? [],
   });
   return {
     success: true,

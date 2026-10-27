@@ -16,6 +16,7 @@ import { attachmentLocationV1Migration } from "./attachment-location-v1.ts";
 import { profileCallbacksV1Migration } from "./profile-callbacks-v1.ts";
 import { estimateDiscountsV1Migration } from "./estimate-discounts-v1.ts";
 import { salesTaxV1Migration } from "./sales-tax-v1.ts";
+import { companyProfileV1Migration } from "./company-profile-v1.ts";
 
 export type MigrationEnvironment =
   | "sandbox"
@@ -98,6 +99,7 @@ export const REQUIRED_MIGRATIONS = [
   profileCallbacksV1Migration,
   estimateDiscountsV1Migration,
   salesTaxV1Migration,
+  companyProfileV1Migration,
 ] as const;
 
 export class MigrationGateError extends Error {

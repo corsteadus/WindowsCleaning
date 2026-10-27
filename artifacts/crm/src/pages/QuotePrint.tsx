@@ -5,6 +5,7 @@ import { protectedFetch } from "@/lib/auth-scope";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { formatCurrency } from "@/lib/utils";
 import { discountLabel } from "@/lib/discounts";
+import { formatPhoneAsTyped } from "@/lib/phone-format";
 import { format } from "date-fns";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -16,6 +17,8 @@ interface LineItem {
   /** null while still to be quoted. */
   unitPrice: number | null;
   totalPrice: number;
+  /** The customer-visible description for this service on this estimate. */
+  serviceNotes?: string | null;
 }
 
 interface QuoteContact {
@@ -64,12 +67,21 @@ export default function QuotePrint() {
     },
   });
 
+  // Phase 8 (Kyle, Video 6): the business's own name, details and logo.
+  const { data: brand, isFetched: brandLoaded } = useQuery<{
+    businessName: string; contactLines: string[]; logoUrl: string | null;
+    showUnitPrices?: boolean; showServiceDescriptions?: boolean; estimateFooter?: string | null;
+  }>({
+    queryKey: ["public-branding"],
+    queryFn: async () => (await protectedFetch(`${BASE}/api/public/branding`)).json(),
+  });
+
   useEffect(() => {
-    if (quote) {
+    if (quote && brandLoaded) {
       document.title = `Quote ${quote.quoteNumber}`;
       setTimeout(() => window.print(), 600);
     }
-  }, [quote]);
+  }, [quote, brandLoaded]);
 
   if (isLoading) {
     return (
@@ -84,6 +96,9 @@ export default function QuotePrint() {
   }
 
   const contact = quote.customer ?? quote.lead;
+  // Phase 8: as the business chose for its estimates, the same as the PDF.
+  const showUnitPrices = brand?.showUnitPrices !== false;
+  const showDescriptions = brand?.showServiceDescriptions !== false;
   const propertyLines: string[] = [];
   if (quote.property) {
     if (quote.property.address) propertyLines.push(quote.property.address);
@@ -104,12 +119,13 @@ export default function QuotePrint() {
 
       {/* Header */}
       <div className="flex justify-between items-start mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Superior Professional Window Cleaning</h1>
-          <p className="text-sm text-slate-500">Window Cleaning Professionals</p>
+        <div data-testid="print-branding">
+          {brand?.logoUrl && <img src={`${BASE}${brand.logoUrl}`} alt={brand.businessName} className="mb-2 max-h-14 max-w-[220px] object-contain" />}
+          <h1 className="text-2xl font-bold text-slate-900">{brand?.businessName ?? ""}</h1>
+          {(brand?.contactLines ?? []).map((line) => <p key={line} className="text-sm text-slate-500">{line}</p>)}
         </div>
         <div className="text-right">
-          <h2 className="text-3xl font-bold text-primary">QUOTE</h2>
+          <h2 className="text-3xl font-bold text-primary">ESTIMATE</h2>
           <p className="text-sm text-slate-500 font-mono">{quote.quoteNumber}</p>
           <p className="text-xs text-slate-400 mt-1">
             {format(new Date(quote.createdAt), "MMMM d, yyyy")}
@@ -127,7 +143,7 @@ export default function QuotePrint() {
             <>
               <p className="font-semibold text-slate-800">{contact.displayName}</p>
               {contact.email && <p className="text-sm text-slate-500">{contact.email}</p>}
-              {contact.phone && <p className="text-sm text-slate-500">{contact.phone}</p>}
+              {contact.phone && <p className="text-sm text-slate-500">{formatPhoneAsTyped(contact.phone)}</p>}
             </>
           ) : (
             <p className="text-slate-400 italic">No contact</p>
@@ -136,7 +152,7 @@ export default function QuotePrint() {
         {propertyLines.length > 0 && (
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Service Location</p>
-            {quote.property?.name && (
+            {quote.property?.name && !/^primary service property$/i.test(quote.property.name.trim()) && (
               <p className="font-semibold text-slate-700">{quote.property.name}</p>
             )}
             {propertyLines.map((line, i) => (
@@ -159,18 +175,21 @@ export default function QuotePrint() {
         <thead>
           <tr className="bg-slate-50">
             <th className="text-left text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 rounded-l">Description</th>
-            <th className="text-center text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 w-20">Qty</th>
-            <th className="text-right text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 w-28">Unit Price</th>
+            {showUnitPrices && <th className="text-center text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 w-20">Qty</th>}
+            {showUnitPrices && <th className="text-right text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 w-28">Unit Price</th>}
             <th className="text-right text-xs font-bold text-slate-500 uppercase tracking-wider py-2 px-3 rounded-r w-28">Total</th>
           </tr>
         </thead>
         <tbody>
           {quote.lineItems.map((li, i) => (
             <tr key={li.id} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
-              <td className="py-2.5 px-3 text-sm text-slate-800">{li.description}</td>
-              <td className="py-2.5 px-3 text-sm text-center text-slate-600">{li.quantity}</td>
-              <td className="py-2.5 px-3 text-sm text-right text-slate-600">{li.unitPrice == null ? "To be quoted" : formatCurrency(li.unitPrice)}</td>
-              <td className="py-2.5 px-3 text-sm text-right font-medium">{li.unitPrice == null ? "—" : formatCurrency(li.totalPrice)}</td>
+              <td className="py-2.5 px-3 text-sm text-slate-800">
+                {li.description}
+                {showDescriptions && li.serviceNotes && <span className="mt-0.5 block text-xs text-slate-500">{li.serviceNotes}</span>}
+              </td>
+              {showUnitPrices && <td className="py-2.5 px-3 text-sm text-center text-slate-600">{li.quantity}</td>}
+              {showUnitPrices && <td className="py-2.5 px-3 text-sm text-right text-slate-600">{li.unitPrice == null ? "To be quoted" : formatCurrency(li.unitPrice)}</td>}
+              <td className="py-2.5 px-3 text-sm text-right font-medium">{li.unitPrice == null ? (showUnitPrices ? "—" : "To be quoted") : formatCurrency(li.totalPrice)}</td>
             </tr>
           ))}
         </tbody>
@@ -237,6 +256,11 @@ export default function QuotePrint() {
           <p className="text-xs text-slate-400">Date</p>
         </div>
       </div>
+
+      {/* Phase 8: the business's own footer (licence, insurance …), as on the PDF. */}
+      {brand?.estimateFooter && (
+        <p className="mt-8 text-center text-[11px] text-slate-400 whitespace-pre-line" data-testid="print-footer">{brand.estimateFooter}</p>
+      )}
 
       <div className="no-print mt-8 text-center">
         <button

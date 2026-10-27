@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/utils";
 import { DiscountEditor, DiscountRows } from "@/components/DiscountEditor";
+import { SendEstimateDialog } from "@/components/SendEstimateDialog";
 import { chosenRate, SalesTaxPicker, useTaxRates, type TaxChoice } from "@/components/SalesTaxPicker";
 import { salesTax } from "@/lib/sales-tax";
 import { applyDiscounts, draftOf, draftsToDiscounts, type AppliedDiscount, type Discount, type DiscountDraft } from "@/lib/discounts";
@@ -117,9 +118,7 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
   const [appointmentNotes, setAppointmentNotes] = useState("");
   const [estimateNotes, setEstimateNotes] = useState("");
   const initializedAppointmentRef = useRef("");
-  const [email, setEmail] = useState(quote.customer?.email ?? quote.lead?.email ?? "");
-  const [phone, setPhone] = useState(quote.customer?.phone ?? quote.lead?.phone ?? "");
-  const [deliveryMethod, setDeliveryMethod] = useState("email");
+  const [sendOpen, setSendOpen] = useState(false);
   const [publicPath, setPublicPath] = useState("");
   const { data: estimateEmployees = [] } = useQuery({
     queryKey: ["estimate-employees"],
@@ -229,10 +228,6 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       })),
     },
   });
-  const deliver = () => action.mutate({
-    path: `/quotes/${quote.id}/deliver`,
-    body: { channels: deliveryMethod === "both" ? ["email", "sms"] : [deliveryMethod], email, phone },
-  });
   const secureUrl = publicPath ? `${window.location.origin}${BASE}${publicPath}` : "";
   return (
     <>
@@ -272,13 +267,22 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
         </div>
         <div className="rounded-xl border p-4">
           <h3 className="flex items-center gap-2 text-sm font-bold"><Mail className="h-4 w-4 text-primary" /> Customer delivery</h3>
-          <Select value={deliveryMethod} onValueChange={setDeliveryMethod}><SelectTrigger className="mt-3" aria-label="How to send it"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="email">Email</SelectItem><SelectItem value="sms">SMS</SelectItem><SelectItem value="both">Email + SMS</SelectItem></SelectContent></Select>
-          {(deliveryMethod === "email" || deliveryMethod === "both") && <Input className="mt-2" aria-label="Email recipient" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email recipient" />}
-          {(deliveryMethod === "sms" || deliveryMethod === "both") && <Input className="mt-2" aria-label="Text message recipient" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="SMS recipient" />}
-          <Button className="mt-3 w-full" disabled={!data?.revision || action.isPending} onClick={deliver}><MessageSquare className="mr-2 h-4 w-4" /> Queue delivery</Button>
+          {/* Phase 7 (Kyle, Video 6; answer #5): the estimate email — recipients, message,
+              the PDF link, the PDF attached if wanted, a preview. */}
+          <p className="mt-2 text-sm text-slate-500">Email the finalized estimate: a link that opens it as a PDF, and the PDF attached if you want.</p>
+          <Button className="mt-3 w-full" data-testid="email-estimate" disabled={!data?.revision || locked} onClick={() => setSendOpen(true)}>
+            <Send className="mr-2 h-4 w-4" /> Email the estimate…
+          </Button>
           {!data?.revision && (
-            <p className="mt-2 text-xs text-slate-500">Finalize the estimate first — delivery sends the finalized snapshot.</p>
+            <p className="mt-2 text-xs text-slate-500">Finalize the estimate first — the email sends the finalized estimate.</p>
           )}
+          <SendEstimateDialog quoteId={quote.id} open={sendOpen} onOpenChange={setSendOpen}
+            onSent={(result) => {
+              setSendOpen(false);
+              setPublicPath(result.path);
+              void refetch();
+              toast({ title: result.sent === 1 ? "Estimate emailed" : `Estimate emailed to ${result.sent} addresses` });
+            }} />
         </div>
       </div>
       {secureUrl && <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><Input readOnly aria-label="The customer's secure link" value={secureUrl} /><Button size="icon" variant="outline" aria-label="Copy secure link" onClick={() => { navigator.clipboard.writeText(secureUrl); toast({ title: "Secure link copied" }); }}><Copy className="h-4 w-4" /></Button></div>}
@@ -743,6 +747,18 @@ export default function QuoteDetail() {
           >
             <Printer className="w-4 h-4" /> Print
           </button>
+          {/* Phase 7 (Kyle, Video 5: "save it as a PDF"): a real PDF, the one the customer is sent. */}
+          <a
+            href={`${BASE}/api/quotes/${quoteId}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="quote-pdf"
+            className="flex items-center gap-2 h-11 px-4 rounded-xl
+                       border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 active:scale-[.98]
+                       text-sm font-semibold transition-all"
+          >
+            <FileText className="w-4 h-4" /> PDF
+          </a>
           {!acceptedLocked && <button
             onClick={startEdit}
             className="flex items-center gap-2 h-11 px-4 rounded-xl

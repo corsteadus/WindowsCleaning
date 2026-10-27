@@ -15,6 +15,8 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const quoteDetail = read("./QuoteDetail.tsx");
+// Phase 7: the estimate's recipients moved into the email dialog.
+const sendEstimate = read("../components/SendEstimateDialog.tsx");
 const quoteNew = read("./QuoteNew.tsx");
 const settings = read("./Settings.tsx");
 const services = read("./Services.tsx");
@@ -82,8 +84,9 @@ test("every control a person types into has a name", () => {
     [quoteNew, 'aria-label="Assigned employee"', "the employee"],
     [quoteNew, 'htmlFor="appointment-notes"', "the appointment notes"],
     [quoteNew, 'htmlFor="estimate-notes"', "the estimate notes"],
-    [quoteDetail, 'aria-label="Email recipient"', "the email recipient"],
-    [quoteDetail, 'aria-label="Text message recipient"', "the text recipient"],
+    [sendEstimate, 'aria-label="Add an email address"', "the new email recipient"],
+    [sendEstimate, 'aria-label="Subject"', "the estimate email's subject"],
+    [sendEstimate, 'aria-label="Message"', "the estimate email's message"],
     [quoteDetail, 'htmlFor="quote-edit-notes"', "the edited notes"],
     [quoteDetail, 'htmlFor="quote-edit-terms"', "the edited terms"],
     [settings, 'htmlFor="quiet-hours-timezone"', "the quiet-hours timezone"],

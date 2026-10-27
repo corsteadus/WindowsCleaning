@@ -43,8 +43,46 @@ import { priceOf, shownPrice, unpricedRefusal, type PricedLine } from "../lib/es
 import { applyDiscounts, discountsOf, type DiscountInput } from "../lib/discounts.ts";
 import { readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, serviceTaxability, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
 import { salesTax } from "../lib/sales-tax.ts";
+import { renderEstimatePdf, type EstimatePdfSnapshot } from "../lib/estimate-pdf.ts";
+import { createEstimateLinkTx, EstimateLinkError } from "../lib/estimate-link.ts";
+import { contactLines, readCompanyProfile } from "../lib/company-profile.ts";
 
 const router: IRouter = Router();
+
+/** Who an estimate is from and how it looks (phase 8): the company profile, for every PDF. */
+export async function estimateBranding() {
+  const profile = await readCompanyProfile();
+  return {
+    businessName: profile.businessName,
+    branding: {
+      contactLines: contactLines(profile), logo: profile.logo, footer: profile.estimateFooter,
+      showUnitPrices: profile.showUnitPrices, showServiceDescriptions: profile.showServiceDescriptions,
+    },
+  };
+}
+
+export function estimatePdfFilename(quoteNumber: string) {
+  return `Estimate-${quoteNumber.replace(/[^A-Za-z0-9-]/g, "")}.pdf`;
+}
+
+async function sendEstimatePdf(
+  res: import("express").Response,
+  snapshot: EstimatePdfSnapshot,
+  opts: { customer: { firstName?: string | null; lastName?: string | null; companyName?: string | null; email?: string | null; cellPhone?: string | null; phone?: string | null } | null;
+    date: Date; revisionNumber: number | null; draft?: boolean; download?: boolean },
+) {
+  const c = opts.customer;
+  const pdf = renderEstimatePdf(snapshot, {
+    ...(await estimateBranding()),
+    customerName: c ? (c.companyName?.trim() || [c.firstName, c.lastName].filter(Boolean).join(" ").trim() || null) : null,
+    customerEmail: c?.email ?? null, customerPhone: c?.cellPhone || c?.phone || null,
+    date: opts.date, revisionNumber: opts.revisionNumber, draft: opts.draft,
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `${opts.download ? "attachment" : "inline"}; filename="${estimatePdfFilename(snapshot.quote.quoteNumber)}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(pdf);
+}
 
 /** What the customer was offered: after the discounts (phase 5), with the sales tax (phase 6). */
 function offeredTotalOf(snapshot: { lineItems: Array<{ totalPrice: number; taxable?: boolean }>; discounts?: DiscountInput[]; tax?: { rate: number } | null }) {
@@ -67,14 +105,21 @@ async function quoteSnapshot(tx: any, quoteId: number) {
     .where(eq(quoteLineItemsTable.quoteId, quoteId)).orderBy(asc(quoteLineItemsTable.sortOrder));
   const locations = await tx.select().from(estimateLocationsTable)
     .where(eq(estimateLocationsTable.quoteId, quoteId));
-  const propertyIds = locations.length ? locations.map((x: any) => x.propertyId) : quote.propertyId ? [quote.propertyId] : [];
-  const properties = propertyIds.length
-    ? await tx.select().from(propertiesTable).where(inArray(propertiesTable.id, propertyIds))
-    : [];
   const metadata = lines.length
     ? await tx.select().from(estimateLineMetadataTable).where(inArray(estimateLineMetadataTable.lineItemId, lines.map((x: any) => x.id)))
     : [];
   const metadataByLine = new Map<number, any>(metadata.map((x: any) => [x.lineItemId, x]));
+  // The estimate's locations: the appointment's (or the estimate's own property),
+  // and every location a service is for. Found 2026-10-27: a service at a second
+  // location, with no appointment there, left that location out of the snapshot,
+  // so the estimate could never be converted ("Location #… is not in the accepted estimate").
+  const propertyIds = [...new Set([
+    ...(locations.length ? locations.map((x: any) => x.propertyId) : quote.propertyId ? [quote.propertyId] : []),
+    ...metadata.map((x: any) => x.propertyId).filter((id: unknown): id is number => typeof id === "number"),
+  ])];
+  const properties = propertyIds.length
+    ? await tx.select().from(propertiesTable).where(inArray(propertiesTable.id, propertyIds))
+    : [];
   const [owner] = quote.customerId
     ? await tx.select({ taxExempt: customersTable.taxExempt }).from(customersTable).where(eq(customersTable.id, quote.customerId))
     : [null];
@@ -661,6 +706,28 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
 router.use(createEstimateAppointmentRouter());
 router.use(createEstimateEmployeesRouter());
 
+// Phase 7 (Kyle, Video 5: "print it … save it as a PDF"): the latest finalized
+// revision — what the customer is sent — or, before one exists, the estimate as
+// it stands, marked as a draft.
+router.get("/quotes/:id/pdf", async (req, res): Promise<any> => {
+  const quoteId = numericId(req.params.id);
+  if (!quoteId) return res.status(400).json({ error: "Invalid quote id" });
+  const [quote] = await db.select().from(quotesTable).where(eq(quotesTable.id, quoteId)).limit(1);
+  if (!quote) return res.status(404).json({ error: "Estimate not found" });
+  const [revision] = await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.quoteId, quoteId))
+    .orderBy(desc(estimateRevisionsTable.revisionNumber)).limit(1);
+  const wantDraft = req.query.draft === "1" || !revision;
+  const snapshot = wantDraft ? await quoteSnapshot(db, quoteId) : revision.snapshot;
+  if (!snapshot) return res.status(404).json({ error: "Estimate not found" });
+  const [customer] = quote.customerId
+    ? await db.select().from(customersTable).where(eq(customersTable.id, quote.customerId)).limit(1) : [];
+  await sendEstimatePdf(res, snapshot as EstimatePdfSnapshot, {
+    customer: customer ?? null, date: wantDraft ? new Date() : revision!.finalizedAt,
+    revisionNumber: wantDraft ? null : revision!.revisionNumber, draft: wantDraft,
+    download: req.query.download === "1",
+  });
+});
+
 router.post("/quotes/:id/finalize", async (req, res): Promise<any> => {
   const quoteId = numericId(req.params.id);
   if (!quoteId) return res.status(400).json({ error: "Invalid quote id" });
@@ -790,54 +857,37 @@ router.post("/quotes/:id/deliver", async (req, res): Promise<any> => {
   const recipients: Record<string, string | null | undefined> = { email: req.body.email || customer?.email, sms: req.body.phone || customer?.phone };
   const missing = channels.find((channel) => !recipients[channel]);
   if (missing) return res.status(400).json({ error: `A ${missing} recipient is required` });
-  const token = randomBytes(32).toString("base64url");
   // Kyle #11: the validity comes from the company setting, not from a number
-  // typed here. #12: the link then dies at the end of that last day, so the
-  // date the customer reads on the estimate is the date it stops working.
-  //
-  // The clock starts at delivery rather than at creation: a draft can sit for
-  // weeks, and the customer is entitled to the whole validity period from the
-  // moment they are given it. The quote's own Valid Until is moved to match.
+  // typed here. #12: the link then dies at the end of that last day. The clock
+  // starts at delivery (lib/estimate-link.ts), not at creation.
   const quoteSettings = await readQuoteSettings();
   const validityDays = normaliseValidityDays(req.body.expiresInDays) ?? quoteSettings.validityDays;
-  const expiry = quoteExpiryFor(new Date(), validityDays);
-  const expiresAt = expiry.expiresAt;
   const result = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${quoteId})`);
-    const [lockedQuote] = await tx.select().from(quotesTable).where(eq(quotesTable.id, quoteId)).limit(1);
-    if (!lockedQuote) throw Object.assign(new Error("Estimate not found"), { statusCode: 404 });
-    if (isTerminalEstimateStatus(lockedQuote.status)) {
-      throw Object.assign(new Error("Accepted estimate terms are locked; create a revision before delivering again"), { statusCode: 409 });
-    }
-    const [lockedRevision] = await tx.select().from(estimateRevisionsTable)
-      .where(eq(estimateRevisionsTable.quoteId, quoteId))
-      .orderBy(desc(estimateRevisionsTable.revisionNumber)).limit(1);
-    if (!lockedRevision) throw Object.assign(new Error("Finalize the estimate before sending"), { statusCode: 400 });
-    const [link] = await tx.insert(estimatePublicLinksTable).values({
-      quoteId, revisionId: lockedRevision.id, tokenHash: tokenHash(token), expiresAt, sendMethods: channels.join(","),
-    }).returning();
-    const deliveries = await tx.insert(estimateDeliveryRequestsTable).values(channels.map((channel) => ({
-      quoteId, publicLinkId: link.id, channel, recipient: recipients[channel]!,
-      status: "provider_unconfigured", lastError: "No live delivery provider is configured in this Sandbox", requestedBy: actorId(req),
-    }))).returning();
-    await tx.update(quotesTable).set({ status: "sent", validUntil: expiry.validUntil }).where(eq(quotesTable.id, quoteId));
-    await tx.insert(estimateActivitiesTable).values({
-      quoteId, publicLinkId: link.id, activityType: "estimate_sent", actorId: actorId(req),
-      detail: { channels, expiresAt: expiresAt.toISOString() },
+    const created = await createEstimateLinkTx(tx, {
+      quoteId, validityDays, actorId: actorId(req),
+      deliveries: channels.map((channel) => ({
+        channel, recipient: recipients[channel]!,
+        status: "provider_unconfigured", lastError: "No live delivery provider is configured in this Sandbox",
+      })),
     });
     await enqueueCommunicationEvent(tx, {
       eventType: "quote.sent", aggregateType: "quote", aggregateId: quoteId,
       payload: {
-        quoteId, customerId: lockedQuote.customerId, status: "sent",
-        estimatePath: `/estimate/${token}`,
+        quoteId, customerId: created.quote.customerId, status: "sent",
+        estimatePath: `/estimate/${created.token}`,
         deliveryRequests: channels.map((channel) => ({ channel, recipient: recipients[channel] })),
       },
-      source: "estimate_lifecycle", actorId: actorId(req), dedupeKey: `estimate-delivery:${link.id}`,
+      source: "estimate_lifecycle", actorId: actorId(req), dedupeKey: `estimate-delivery:${created.link.id}`,
     });
-    return { link, deliveries };
+    return created;
+  }).catch((error: unknown) => {
+    if (error instanceof EstimateLinkError) return error;
+    throw error;
   });
+  if (result instanceof EstimateLinkError) return res.status(result.statusCode).json({ error: result.message });
+  const token = result.token;
   // This is intentionally the only response containing the raw token.
-  res.status(201).json({ ...result, token, path: `/estimate/${token}` });
+  res.status(201).json({ link: result.link, deliveries: result.deliveries, token, path: `/estimate/${token}` });
 });
 
 router.get("/estimate-calendar", async (req, res): Promise<any> => {
@@ -1024,6 +1074,22 @@ router.get("/public/estimates/:token", async (req, res): Promise<any> => {
       : null,
     decision: found.link.decision, decisionAt: found.link.decisionAt,
     expiresAt: found.link.expiresAt,
+  });
+});
+
+// Phase 7 (Kyle's answer #5): "a link that opens the estimate as a PDF is the
+// standard". The PDF of exactly what was offered on this link; opening it
+// counts as opening the estimate.
+router.get("/public/estimates/:token/pdf", async (req, res): Promise<any> => {
+  const found = await publicEstimate(req.params.token);
+  if (!found || !found.offered) return res.status(404).json({ error: "This estimate link is invalid or expired" });
+  const now = new Date();
+  await db.update(estimatePublicLinksTable).set({
+    firstOpenedAt: found.link.firstOpenedAt ?? now, lastActivityAt: now,
+  }).where(eq(estimatePublicLinksTable.id, found.link.id));
+  const [revision] = await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.id, found.link.revisionId)).limit(1);
+  await sendEstimatePdf(res, found.offered as EstimatePdfSnapshot, {
+    customer: found.customer ?? null, date: revision?.finalizedAt ?? found.link.createdAt, revisionNumber: revision?.revisionNumber ?? null,
   });
 });
 

@@ -164,6 +164,93 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase 8 — branding: the business's name, details and logo on its estimates — 2026-10-27
+
+**Built and browser-tested through the Playwright MCP against the real new server** (the local
+disposable database). Kyle's Video 6: "businesses format their own estimate: what is shown,
+footer, terms, logo." (Terms were already in Quote settings.)
+
+**Settings → Company & branding** (administrators; `components/CompanyBrandingCard.tsx`):
+business name, phone (formatted as typed), email, website, address, **logo**, a **footer on every
+estimate page** (licence, insurance …, up to 1,000 characters), and two choices — **show quantity
+and unit price** (off: only each service's amount) and **show each service's description**. The
+logo is converted in the browser (PNG, JPEG or WebP) to a JPEG at its own proportions, at most
+600 × 200, transparent parts white, and kept in the database (≤ 500 KB; the server reads its real
+size from the file), so it needs no file store and the PDF can embed it.
+
+**Where it shows:** the **estimate PDF** (logo, name, address, phone · email · website, the
+footer, the choices), the **customer's estimate page** (logo, name, contact lines; it follows the
+same choices), the **printed estimate** — which until now had "Superior Professional Window
+Cleaning" written into the code and said QUOTE; it now says ESTIMATE, is the business's, follows
+the choices, shows descriptions and the footer — and the **estimate email** (the logo at the
+top; `{{business_name}}` is the profile's name). Until the profile is filled in, the name falls
+back to the email sender name and nothing else is shown. "Primary service property" is never
+shown to a customer. Public, for the customer's page and emails only: `/api/public/branding`
+(name, contact lines, choices, footer) and `/api/public/branding/logo.jpg`; everything else
+about the profile needs sign-in, and only an administrator can change it (an office admin
+gets 403).
+
+**Migration `company-profile-v1`**: creates `company_profile` (one row per organization; logo
+and footer size checks). Dry-run on the shared database inside a rolled-back transaction:
+applies and verifies cleanly; nothing left.
+
+**For Kyle (defaults built):** unit prices and descriptions shown unless turned off; the
+footer prints small on every page.
+
+---
+
+## Phase 7 — the estimate as a PDF, and the estimate email — 2026-10-27
+
+**Built and browser-tested through the Playwright MCP against the real new server** (a local
+disposable database, below). Kyle's Video 6 and answer #5: "a link that opens the estimate as a
+PDF is the standard; attaching the PDF is an option."
+
+**The PDF** (`lib/pdf-writer.ts`, `lib/estimate-pdf.ts`): Corstead writes it itself — no new
+dependency — in the standard Helvetica fonts with their real widths, so text is measured,
+right-aligned and wrapped exactly. It is drawn from the same snapshot as the customer's page,
+so the services (grouped by location when there are several), each description, "To be
+quoted", each discount by name, the sales tax and the total always agree. Several pages are
+numbered; a draft says "DRAFT ESTIMATE". Phones print as (816) 555-0177 and "Primary service
+property" is never printed. **Routes:** `GET /quotes/:id/pdf` for the office (the latest
+finalized revision, else the estimate as it stands, marked draft) — the estimate page's new
+**PDF** button; `GET /public/estimates/:token/pdf` for the customer, behind the same link guard
+and rate limits as their page, and opening it counts as opening the estimate.
+
+**The email** (Kyle's Video 6): the estimate page's delivery card is now **Email the
+estimate…** (`components/SendEstimateDialog.tsx`, `routes/estimate-email.ts`). **To:** any of
+the profile's own addresses, several at once; another address is **saved to the profile
+first** ("save this address") — an email still never goes to an address that is not on the
+profile. **Message:** Corstead's own, or **start from a template**; written as plain text, with
+tag buttons (`{{estimate_link}}` the PDF, `{{estimate_page_link}}` accept online, first name,
+total, valid until, sender, business …); Corstead turns it into HTML and escapes what was
+typed. **Attach the estimate as a PDF** is an option; an email with neither a link nor the PDF
+is refused. **Preview** shows it filled in, sandboxed. **Send:** each address passes the same
+communication safety as any email (unsubscribed / blocked / quiet hours are skipped and
+said so); one secure link is made for the send; each email is written to the profile's
+**Email History** (who sent it) and the estimate's delivery state says sent or failed; an
+Idempotency-Key makes a double click send once. Attachments now work for SMTP, SendGrid and
+Mailgun (`lib/email.ts`). The old "Queue delivery" (which sent nothing in Sandbox) is gone; its
+link-making is now shared (`lib/estimate-link.ts`).
+
+**Found and fixed:** an estimate with a service at a second location and no appointment there
+left that location out of its snapshot, so it could never be converted ("Location #… is not in
+the accepted estimate"). The snapshot now includes every location a service is for.
+
+**Not yet:** attaching other files and company-wide general uploads (insurance, service
+sheets) — they need the object storage bucket, which only Replit has; building them after the
+republish so they can be tested for real.
+
+**How this was tested (new):** a disposable Postgres on this machine (port 5433, in the
+scratchpad) with the shared database's **schema only** plus logins, services and settings — no
+customer data — and the pending migrations applied to that copy only; the new server runs
+against it. The shared database was only read. This also ran the phase 4 and 5 walkthroughs for
+real (20/20 and 13/13, through conversion to two discounted jobs and a $255 invoice), and the 14
+database tests that never run without a database: 89 of 94 pass; 2 files cannot load in this
+runner (`.js` imports) and 3 jobs-route tests are stale against the current delete and PATCH
+code (they expect `jobs` before `schedule_entries`) — older than these phases, to fix separately.
+
+---
+
 ## Phase 6 — sales tax — 2026-10-26
 
 **Built; browser-tested through the Playwright MCP with the new routes stubbed (Settings rates,

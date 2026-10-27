@@ -38,6 +38,12 @@ export default function PublicEstimate() {
   const [submitting, setSubmitting] = useState(false);
   // Everything starts ticked, so taking the whole estimate is still one click.
   const [chosen, setChosen] = useState<Set<number>>(new Set());
+  const [branding, setBranding] = useState<{
+    businessName: string; contactLines: string[]; logoUrl: string | null; showUnitPrices?: boolean; showServiceDescriptions?: boolean;
+  } | null>(null);
+  useEffect(() => {
+    fetch(`${BASE}/api/public/branding`).then((r) => (r.ok ? r.json() : null)).then(setBranding).catch(() => setBranding(null));
+  }, []);
 
   useEffect(() => {
     // Public estimate links intentionally work without an authenticated session.
@@ -111,7 +117,17 @@ export default function PublicEstimate() {
     <main className="min-h-screen bg-slate-50 pb-24">
       <header className="bg-slate-950 text-white">
         <div className="mx-auto max-w-3xl px-5 py-9">
-          <p className="text-xs font-bold uppercase tracking-[.18em] text-sky-300">Window Cleaning Estimate</p>
+          {/* Phase 8 (Kyle, Video 6): the business's own name and logo. */}
+          <div className="flex flex-wrap items-center gap-3" data-testid="public-branding">
+            {branding?.logoUrl && (
+              <span className="flex h-12 items-center rounded-lg bg-white px-2"><img src={`${BASE}${branding.logoUrl}`} alt={branding.businessName} className="max-h-10 max-w-[180px] object-contain" /></span>
+            )}
+            <span>
+              <span className="block text-sm font-semibold text-white">{branding?.businessName ?? ""}</span>
+              {(branding?.contactLines ?? []).map((line) => <span key={line} className="block text-xs text-slate-400">{line}</span>)}
+            </span>
+          </div>
+          <p className="mt-6 text-xs font-bold uppercase tracking-[.18em] text-sky-300">Window Cleaning Estimate</p>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
             <div><h1 className="text-3xl font-bold">{estimate.customerName || "Your estimate"}</h1><p className="mt-1 text-sm text-slate-400">{estimate.quoteNumber}</p></div>
             <div className="text-right">
@@ -139,7 +155,7 @@ export default function PublicEstimate() {
           </section>
         )}
 
-        {snapshot.locations?.length > 0 && <section className="rounded-2xl border bg-white p-5"><h2 className="flex items-center gap-2 font-bold"><MapPin className="h-4 w-4 text-primary" /> Service locations</h2><div className="mt-3 space-y-3">{snapshot.locations.map((location) => <div key={location.id} className="rounded-xl bg-slate-50 p-3"><p className="font-semibold">{location.name || location.address}</p><p className="text-sm text-slate-500">{[location.address, location.city, location.state, location.zip].filter(Boolean).join(", ")}</p>{location.notes && <p className="mt-1 text-sm text-slate-600">{location.notes}</p>}</div>)}</div></section>}
+        {snapshot.locations?.length > 0 && <section className="rounded-2xl border bg-white p-5"><h2 className="flex items-center gap-2 font-bold"><MapPin className="h-4 w-4 text-primary" /> Service locations</h2><div className="mt-3 space-y-3">{snapshot.locations.map((location) => <div key={location.id} className="rounded-xl bg-slate-50 p-3"><p className="font-semibold">{location.name?.trim() && !/^primary service property$/i.test(location.name.trim()) ? location.name : location.address}</p><p className="text-sm text-slate-500">{[location.address, location.city, location.state, location.zip].filter(Boolean).join(", ")}</p>{location.notes && <p className="mt-1 text-sm text-slate-600">{location.notes}</p>}</div>)}</div></section>}
 
         <section className="rounded-2xl border bg-white overflow-hidden">
           <div className="border-b px-5 py-4">
@@ -170,8 +186,11 @@ export default function PublicEstimate() {
                       {line.isUpsell && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">UPSELL</span>}
                       {settled && !on && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">NOT ACCEPTED</span>}
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{line.quantity} × {line.unitPrice == null ? "to be quoted" : formatCurrency(line.unitPrice)}</p>
-                    {line.serviceNotes && <p className="mt-1 text-sm text-slate-600">{line.serviceNotes}</p>}
+                    {/* Phase 8: as the business chose for its estimates, the same as the PDF. */}
+                    {(branding?.showUnitPrices !== false || line.unitPrice == null) && (
+                      <p className="mt-1 text-xs text-slate-500" data-testid="public-unit-price">{branding?.showUnitPrices === false ? "To be quoted" : <>{line.quantity} × {line.unitPrice == null ? "to be quoted" : formatCurrency(line.unitPrice)}</>}</p>
+                    )}
+                    {line.serviceNotes && branding?.showServiceDescriptions !== false && <p className="mt-1 text-sm text-slate-600">{line.serviceNotes}</p>}
                   </div>
                   <p className={`font-bold ${settled && !on ? "line-through text-slate-400" : ""}`}>{formatCurrency(line.totalPrice)}</p>
                 </label>

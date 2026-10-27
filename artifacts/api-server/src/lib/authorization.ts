@@ -326,6 +326,9 @@ const ROUTE_RULES: readonly RouteRule[] = [
   // a quote may read them — the builder shows the expiry and fills in the terms —
   // but only an administrator may change what the whole company quotes on.
   // Phase 6: the estimate screen chooses from the rates; only an administrator sets them up.
+  // Phase 8: the business's identity on estimates; only an administrator changes it.
+  { prefix: "/company-profile", methods: ["GET"], capability: "quotes.view" },
+  { prefix: "/company-profile", capability: "admin.settings" },
   { prefix: "/tax-rates", methods: ["GET"], capability: "quotes.view" },
   { prefix: "/tax-rates", capability: "admin.settings" },
   { prefix: "/quote-settings", methods: ["GET"], capability: "quotes.view" },
@@ -448,6 +451,9 @@ export function authorizeApiRequest(
     PUBLIC_PATHS.has(req.path)
     || req.path.startsWith("/public/estimates/")
     || req.path.startsWith("/public/unsubscribe/")
+    // Phase 8: the business's name, contact lines and logo, for the customer's
+    // estimate page and estimate emails (routes/company-profile.ts).
+    || req.path === "/public/branding" || req.path === "/public/branding/logo.jpg"
   ) {
     next();
     return;
