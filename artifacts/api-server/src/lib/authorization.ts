@@ -451,6 +451,8 @@ export function authorizeApiRequest(
     PUBLIC_PATHS.has(req.path)
     || req.path.startsWith("/public/estimates/")
     || req.path.startsWith("/public/unsubscribe/")
+    // A3: the customer's invoice page and PDF; the link's own secret token authorises it.
+    || req.path.startsWith("/public/invoices/")
     // Phase 8: the business's name, contact lines and logo, for the customer's
     // estimate page and estimate emails (routes/company-profile.ts).
     || req.path === "/public/branding" || req.path === "/public/branding/logo.jpg"

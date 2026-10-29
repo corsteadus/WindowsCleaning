@@ -42,6 +42,9 @@ import { resolveInvoiceJobReference } from "@/lib/invoice-job-reference";
 import { validateInvoicePayment } from "@/lib/payment-validation";
 import { useAuth } from "@workspace/replit-auth-web";
 import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
+import { SendInvoiceDialog } from "@/components/SendInvoiceDialog";
+import { openSummary, type HistoryActivity, type HistoryDelivery } from "@/lib/estimate-history";
+import { describeInvoiceActivity } from "@/lib/invoice-history";
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
@@ -440,87 +443,96 @@ function InvoicePaymentHistory({
   );
 }
 
+/**
+ * A3 (Kyle, Video 7): the invoice goes to the customer the way an estimate does —
+ * emailed with a link to their own invoice page (each address its own), or the
+ * link copied, or as a PDF — and the office sees who opened it and how often.
+ */
 function InvoiceCommunications({
-  invoiceId, customerId, invoiceNumber, communications, onSent,
+  invoiceId, communications, onSent,
 }: {
   invoiceId: number;
-  customerId: number;
-  invoiceNumber: string;
   communications: Array<{ id: number; channel: string; subject?: string | null; status: string; createdAt: string; recipient?: string | null }>;
   onSent: () => void;
 }) {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [composing, setComposing] = useState(false);
-  const [subject, setSubject] = useState(`Invoice ${invoiceNumber}`);
-  const [body, setBody] = useState(`Your invoice ${invoiceNumber} is ready. Please contact us if you have any questions.`);
-  const customer = useQuery<{ id: number; firstName: string; lastName: string; email?: string | null }>({
-    queryKey: authScopedQueryKey(user, ["invoice-customer", customerId]),
+  const queryClient = useQueryClient();
+  const [sending, setSending] = useState(false);
+  const historyKey = authScopedQueryKey(user, ["invoice-history", invoiceId]);
+  const history = useQuery<{
+    activities: HistoryActivity[];
+    deliveries: Array<HistoryDelivery & { status: string; openCount: number; lastOpenedAt?: string | null }>;
+    copiedLinkOpens: number;
+    actors: Record<string, string>;
+  }>({
+    queryKey: historyKey,
     queryFn: async () => {
-      const response = await protectedFetch(`/api/customers/${customerId}`);
-      if (!response.ok) throw new Error("Failed to load invoice customer");
+      const response = await protectedFetch(`/api/invoices/${invoiceId}/history`);
+      if (!response.ok) throw new Error("Failed to load the invoice history");
       return response.json();
     },
   });
-  const send = useMutation({
+  const copyLink = useMutation({
     mutationFn: async () => {
-      const recipient = customer.data;
-      if (!recipient?.email) throw new Error("Customer does not have an email address");
-      const response = await protectedFetch("/api/emails/send-one", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": createIdempotencyKey() },
-        body: JSON.stringify({
-          entityType: "customer",
-          entityId: recipient.id,
-          email: recipient.email,
-          firstName: recipient.firstName,
-          lastName: recipient.lastName,
-          subject,
-          bodyHtml: body,
-          relatedType: "invoice",
-          relatedId: invoiceId,
-        }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error || "Failed to send invoice email");
-      }
-      return response.json();
+      const response = await protectedFetch(`/api/invoices/${invoiceId}/customer-link`, { method: "POST", credentials: "include" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? "The link could not be made");
+      const url = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, "")}${body.path}`;
+      await navigator.clipboard?.writeText(url).catch(() => {});
+      return url;
     },
-    onSuccess: () => {
-      setComposing(false);
-      onSent();
-      toast({ title: "Invoice email sent" });
+    onSuccess: (url) => {
+      queryClient.invalidateQueries({ queryKey: historyKey });
+      toast({ title: "Customer link copied", description: url });
     },
     onError: (error: Error) => toast({ title: error.message, variant: "destructive" }),
   });
+  const pdfHref = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/invoices/${invoiceId}/pdf`;
+  const deliveries = history.data?.deliveries ?? [];
+  const copiedOpens = history.data?.copiedLinkOpens ?? 0;
   return (
     <div className="bg-white rounded-2xl border border-slate-100 p-5">
-      <div className="flex items-center justify-between gap-3 mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <Mail className="w-4 h-4 text-slate-400" />
           <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Invoice Communications</h3>
         </div>
-        <button disabled={customer.isLoading || !customer.data?.email} onClick={() => setComposing((value) => !value)}
-          className="text-xs font-bold text-primary hover:underline disabled:text-slate-300">
-          {composing ? "Cancel" : "Email invoice"}
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <a href={pdfHref} target="_blank" rel="noreferrer" data-testid="invoice-pdf" className="text-xs font-bold text-slate-500 hover:underline">PDF</a>
+          <button onClick={() => copyLink.mutate()} disabled={copyLink.isPending} data-testid="invoice-copy-link"
+            className="text-xs font-bold text-slate-500 hover:underline disabled:text-slate-300">Copy customer link</button>
+          <button onClick={() => setSending(true)} data-testid="invoice-email"
+            className="text-xs font-bold text-primary hover:underline">Email invoice</button>
+        </div>
       </div>
-      {customer.isError && <p className="text-xs text-red-600 mb-2">Customer contact failed to load.</p>}
-      {customer.data && !customer.data.email && <p className="text-xs text-amber-700 mb-2">Add an email address to the customer before sending.</p>}
-      {composing && (
-        <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-3 space-y-2 mb-3">
-          <input value={subject} onChange={(event) => setSubject(event.target.value)} aria-label="Invoice email subject"
-            className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm" />
-          <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={4} aria-label="Invoice email message"
-            className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm resize-none" />
-          <button onClick={() => send.mutate()} disabled={send.isPending || !subject.trim() || !body.trim()}
-            className="w-full h-9 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-50">
-            {send.isPending ? "Sending…" : "Send safely & record history"}
-          </button>
+      <SendInvoiceDialog invoiceId={invoiceId} open={sending} onOpenChange={setSending}
+        onSent={(result) => {
+          setSending(false);
+          onSent();
+          queryClient.invalidateQueries({ queryKey: historyKey });
+          toast(result.problems
+            ? { title: `Sent to ${result.sent}`, description: result.problems, variant: result.sent ? undefined : "destructive" }
+            : { title: result.sent === 1 ? "Invoice emailed" : `Invoice emailed to ${result.sent} addresses` });
+        }} />
+
+      {(deliveries.length > 0 || copiedOpens > 0) && (
+        <div className="mb-3 space-y-1.5" data-testid="invoice-deliveries">
+          {deliveries.map((item) => (
+            <div key={item.id} data-testid="invoice-delivery-row" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+              <span className="font-semibold text-slate-700">{item.recipient}{item.status === "failed" ? " · not delivered" : ""}</span>
+              <span data-testid="invoice-delivery-opens" className={item.openCount ? "text-sky-700 font-semibold" : "text-slate-400"}>{openSummary(item)}</span>
+            </div>
+          ))}
+          {copiedOpens > 0 && (
+            <div data-testid="invoice-copied-link-opens" className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
+              <span className="font-semibold text-slate-700">Copied link</span>
+              <span className="text-sky-700 font-semibold">{openSummary({ openCount: copiedOpens })}</span>
+            </div>
+          )}
         </div>
       )}
+
       {communications.length === 0 ? (
         <p className="text-sm text-slate-500">No communication has been recorded for this invoice.</p>
       ) : (
@@ -534,6 +546,24 @@ function InvoiceCommunications({
               <span className="text-[11px] font-bold uppercase text-slate-500">{message.status}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {(history.data?.activities.length ?? 0) > 0 && (
+        <div className="mt-4 pt-4 border-t border-slate-100" data-testid="invoice-history">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">History</p>
+          <div className="space-y-1.5">
+            {history.data!.activities.map((item) => {
+              const line = describeInvoiceActivity(item, { actors: history.data!.actors, deliveries });
+              const edge = line.by === "customer" ? "border-l-sky-400" : line.by === "system" ? "border-l-slate-300" : "border-l-indigo-400";
+              return (
+                <div key={item.id} data-testid="invoice-history-line" className={`border-l-2 ${edge} pl-3 py-1`}>
+                  <p className="text-sm text-slate-800"><span className="font-semibold">{line.title}</span>{line.detail ? <span className="text-slate-500"> — {line.detail}</span> : null}</p>
+                  <p className="text-[11px] text-slate-400">{line.who} · {new Date(item.occurredAt).toLocaleString()}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -1009,8 +1039,6 @@ export default function InvoiceDetail() {
           />
           <InvoiceCommunications
             invoiceId={invoice.id}
-            customerId={invoice.customerId}
-            invoiceNumber={invoice.invoiceNumber}
             communications={(invoice.communications ?? []) as Array<{ id: number; channel: string; subject?: string | null; status: string; createdAt: string; recipient?: string | null }>}
             onSent={refreshInvoice}
           />

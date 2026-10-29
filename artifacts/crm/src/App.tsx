@@ -58,6 +58,7 @@ import QuoteDetail from "@/pages/QuoteDetail";
 import QuotePrint from "@/pages/QuotePrint";
 import Schedule from "@/pages/Schedule";
 import PublicEstimate from "@/pages/PublicEstimate";
+import PublicInvoice from "@/pages/PublicInvoice";
 import Jobs from "@/pages/Jobs";
 import JobNew from "@/pages/JobNew";
 import JobDetail from "@/pages/JobDetail";
@@ -302,6 +303,14 @@ function AuthGate({ auth }: { auth: ReturnType<typeof useAuth> }) {
     return (
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
         <Route path="/estimate/:token" component={PublicEstimate} />
+      </WouterRouter>
+    );
+  }
+  // A3: the customer's invoice, opened from their email with no sign-in.
+  if (/^\/invoice\/[^/]+$/.test(publicPath)) {
+    return (
+      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+        <Route path="/invoice/:token" component={PublicInvoice} />
       </WouterRouter>
     );
   }

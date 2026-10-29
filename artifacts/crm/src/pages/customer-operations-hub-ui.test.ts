@@ -28,9 +28,9 @@ describe("customer operations hub UI", () => {
     assert.match(source, /InvoicePaymentHistory/);
     assert.match(source, /\/api\/payments\?invoiceId=/);
     assert.match(source, /Record & allocate to invoice/);
-    assert.match(source, /Idempotency-Key/);
+    assert.match(source, /idempotencyRequest\(recordIdempotencyKey\.current/);
     assert.match(source, /InvoiceCommunications/);
-    assert.match(source, /relatedType: "invoice"/);
-    assert.match(source, /Send safely & record history/);
+    // A3: the invoice is emailed through its own dialog (each address its own link).
+    assert.match(source, /<SendInvoiceDialog invoiceId=\{invoiceId\}/);
   });
 });

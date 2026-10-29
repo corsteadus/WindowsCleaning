@@ -58,6 +58,7 @@ import { committedJobScheduleMatches } from "@/lib/job-date-commit";
 import { canOfferPermanentJobDelete, isCompletedJobStatus } from "@/lib/job-delete-eligibility";
 import { TimeSelect } from "@/components/TimeSelect";
 import { formatTimeOfDay } from "@/lib/time-of-day";
+import { addMinutes } from "@/lib/conversion-times";
 
 // ─── Status config ────────────────────────────────────────────────────────────
 
@@ -996,6 +997,17 @@ export default function JobDetail() {
                       </p>
                     </div>
                   )}
+                  {/* A4: the window the customer was told, when it is not an exact time. */}
+                  {(() => {
+                    const windowMinutes = (job as { arrivalWindowMinutes?: number | null }).arrivalWindowMinutes;
+                    const close = windowMinutes && job.scheduledStartTime ? addMinutes(job.scheduledStartTime, windowMinutes) : null;
+                    return close ? (
+                      <div data-testid="job-arrival-window">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Arrival window</p>
+                        <p className="text-slate-700">Arrive between {formatTime(job.scheduledStartTime)} and {formatTime(close)}</p>
+                      </div>
+                    ) : null;
+                  })()}
                   {job.serviceType && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Service Type</p>

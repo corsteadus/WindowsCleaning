@@ -93,7 +93,16 @@ export function describeEstimateActivity(
       return line("Accepted by phone or in person, recorded by the office", text(d.note));
     case "estimate_converted_and_scheduled": {
       const jobs = Array.isArray(d.jobIds) ? d.jobIds.length : 0;
-      return line("Converted and scheduled", jobs ? plural(jobs, "job") : null);
+      // A4: what the office changed from the customer's choice, and the invoice made with the jobs.
+      const added = Array.isArray(d.addedLineItemIds) ? d.addedLineItemIds.length : 0;
+      const removed = Array.isArray(d.removedLineItemIds) ? d.removedLineItemIds.length : 0;
+      const parts = [
+        jobs ? plural(jobs, "job") : null,
+        added ? `${plural(added, "declined service")} added` : null,
+        removed ? `${plural(removed, "accepted service")} left out` : null,
+        text(d.invoiceNumber) ? `invoice ${text(d.invoiceNumber)} created` : null,
+      ].filter(Boolean);
+      return line("Converted and scheduled", parts.join(" · ") || null);
     }
     case "customer_thanked":
       return line("Thank-you email sent to the customer", text(d.to));

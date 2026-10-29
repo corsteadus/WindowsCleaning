@@ -20,7 +20,8 @@ import {
 } from "@workspace/db";
 import { enqueueCommunicationEvent } from "../lib/communication-outbox.ts";
 import {
-  buildLocationJobPlans, EstimateConversionValidationError, isAcceptedEstimate, persistAcceptedEstimateJobsCore,
+  ARRIVAL_WINDOW_MINUTES, buildLocationJobPlans, conversionInvoiceLines, conversionSelection, DURATION_MINUTES,
+  EstimateConversionValidationError, isAcceptedEstimate, persistAcceptedEstimateJobsCore,
   type AcceptedEstimateSnapshot, type LocationScheduleInput,
 } from "../lib/estimate-conversion.ts";
 import {
@@ -40,7 +41,9 @@ import {
   publicEstimateLimitKey,
   publicEstimateTokenLimiter,
 } from "../lib/public-estimate-guard.ts";
-import { businessDateStr } from "../lib/date.ts";
+import { addDaysToDateOnly, businessDateStr } from "../lib/date.ts";
+import { createInvoiceCore, InvoiceValidationError } from "../lib/invoice-core.ts";
+import { createInvoiceAdapter } from "./invoices.ts";
 import { normaliseValidityDays, quoteExpiryFor } from "../lib/quote-settings.ts";
 import { readQuoteSettings } from "../lib/quote-settings-store.ts";
 import { normalizeAuthorizationRole } from "../lib/role-normalization.ts";
@@ -491,6 +494,11 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
       lifecycleStatus: null,
     },
     snapshot,
+    // A4: every service offered, so the office can tick a declined one back in
+    // or untick one; the customer's own choice is where the ticks start.
+    offeredLineItems: offered.lineItems,
+    acceptedLineItemIds: snapshot.lineItems.map((line) => line.id),
+    limits: { duration: DURATION_MINUTES, arrivalWindow: ARRIVAL_WINDOW_MINUTES },
     // What the customer left behind, so the office can see the choice was partial
     // rather than wonder where a service went.
     declinedLineItems: offered.lineItems.filter(
@@ -509,12 +517,16 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
   if (!quoteId) return res.status(400).json({ error: "Invalid quote id" });
   const schedules = Array.isArray(req.body.schedules) ? req.body.schedules as LocationScheduleInput[] : [];
   const verbalAcceptance = req.body.verbalAcceptance === true;
+  // A4: which services become work (absent: what the customer accepted), and
+  // whether the invoice is made with the jobs.
+  const lineItemIds: unknown = req.body.lineItemIds ?? null;
+  const createInvoice = req.body.createInvoice === true;
   const verbalAcceptanceNote = typeof req.body.verbalAcceptanceNote === "string" ? req.body.verbalAcceptanceNote.trim() : "";
   if (verbalAcceptance && verbalAcceptanceNote.length < 10) {
     return res.status(400).json({ error: "Document the verbal acceptance in at least 10 characters" });
   }
   const idempotency = getIdempotencyContext(req, "estimates.convert_and_schedule", {
-    quoteId, schedules, verbalAcceptance, verbalAcceptanceNote,
+    quoteId, schedules, verbalAcceptance, verbalAcceptanceNote, lineItemIds, createInvoice,
   });
   if (!idempotency) return res.status(400).json({ error: "Idempotency-Key is required" });
 
@@ -548,7 +560,13 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
         return { kind: "alreadyAccepted" as const };
       }
 
-      const snapshot = (source.acceptedLink?.acceptedSnapshot ?? source.revision.snapshot) as AcceptedEstimateSnapshot;
+      const selection = conversionSelection(
+        source.revision.snapshot as AcceptedEstimateSnapshot,
+        (source.acceptedLink?.acceptedSnapshot ?? source.revision.snapshot) as AcceptedEstimateSnapshot,
+        lineItemIds,
+      );
+      const snapshot = selection.snapshot;
+      // Only what is being scheduled must be priced: an unticked "to be quoted" service is left for later.
       const unpriced = unpricedRefusal((snapshot.lineItems ?? []) as PricedLine[]);
       if (unpriced) {
         await releaseIdempotencyKey(tx, claim.record.id);
@@ -672,12 +690,39 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
       });
       const createdJobs = persisted.jobs;
 
+      // A4 "Schedule + create invoice": one draft invoice for the work just
+      // scheduled, in this same transaction — both are made, or neither is.
+      let invoice: { id: number; invoiceNumber: string } | null = null;
+      if (createInvoice) {
+        const created = await createInvoiceCore({
+          customerId,
+          propertyId: plans.length === 1 ? plans[0].propertyId : null,
+          jobIds: createdJobs.map((job) => job.id),
+          lines: conversionInvoiceLines(plans, createdJobs.map((job) => job.id)),
+          dueDate: addDaysToDateOnly(businessDateStr(now), 30),
+          invoiceNumber: `INV-${now.getTime()}`,
+        }, createInvoiceAdapter(tx), now);
+        const expected = plans.reduce((sum, plan) => sum + Math.round(plan.totalAmount * 100) + Math.round(plan.taxTotal * 100), 0);
+        if (Math.round(Number(created.invoice.totalAmount) * 100) !== expected) {
+          throw new EstimateConversionValidationError("The invoice did not come to the jobs' total, so nothing was saved. Please report this.");
+        }
+        invoice = { id: created.invoice.id, invoiceNumber: created.invoice.invoiceNumber };
+        await tx.insert(activityLogsTable).values({
+          entityType: "customer", entityId: customerId, action: "invoice_created", toValue: invoice.invoiceNumber,
+          note: `Invoice ${invoice.invoiceNumber} created for ${Number(created.invoice.totalAmount).toFixed(2)} when estimate ${source.quote.quoteNumber} was scheduled`,
+          performedBy: actor,
+        });
+      }
+
       await tx.insert(estimateActivitiesTable).values({
         quoteId, activityType: "estimate_converted_and_scheduled", actorType: "staff", actorId: actor,
         detail: {
           customerId, revisionId: source.revision.id, jobIds: createdJobs.map((job) => job.id),
           acceptanceMethod: verbalAcceptance ? "verbal" : "customer",
           verbalAcceptanceNote: verbalAcceptance ? verbalAcceptanceNote : null,
+          lineItemIds: snapshot.lineItems.map((line) => line.id),
+          addedLineItemIds: selection.added, removedLineItemIds: selection.removed,
+          invoiceId: invoice?.id ?? null, invoiceNumber: invoice?.invoiceNumber ?? null,
         },
       });
       await tx.insert(activityLogsTable).values({
@@ -688,7 +733,7 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
       await completeIdempotencyKey(tx, claim.record.id, {
         resourceType: "estimate_conversion", resourceId: createdJobs[0].id, responseStatus: 201,
       });
-      return { kind: "created" as const, jobs: createdJobs, customerId };
+      return { kind: "created" as const, jobs: createdJobs, customerId, invoice };
     });
 
     if (result.kind === "conflict") return res.status(409).json({ error: idempotencyConflictMessage() });
@@ -711,11 +756,13 @@ router.post("/quotes/:id/convert-and-schedule", async (req, res): Promise<any> =
     return res.status(result.kind === "created" ? 201 : 200).json({
       quoteId, customerId: "customerId" in result ? result.customerId : undefined,
       jobs: result.jobs.map(conversionJobResponse), replayed: result.kind === "existing",
+      invoice: "invoice" in result ? result.invoice : null,
     });
   } catch (error) {
     if (error instanceof EstimateConversionValidationError || error instanceof ActiveAssignmentReferenceError) {
       return res.status(400).json({ error: error.message });
     }
+    if (error instanceof InvoiceValidationError) return res.status(400).json({ error: error.message, code: error.code });
     console.error(error);
     return res.status(500).json({ error: "Failed to convert and schedule estimate; no changes were committed" });
   }

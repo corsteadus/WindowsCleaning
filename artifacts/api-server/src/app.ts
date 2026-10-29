@@ -25,7 +25,7 @@ app.use(
         return {
           id: req.id,
           method: req.method,
-          url: req.url?.split("?")[0]?.replace(/\/public\/estimates\/[^/]+/, "/public/estimates/[redacted]"),
+          url: req.url?.split("?")[0]?.replace(/\/public\/(estimates|invoices)\/[^/]+/, "/public/$1/[redacted]"),
         };
       },
       res(res) {

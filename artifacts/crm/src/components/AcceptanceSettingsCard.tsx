@@ -82,7 +82,7 @@ export function AcceptanceSettingsCard({ canManage }: { canManage: boolean }) {
           {/* A2, Video 7 (must-have): the business hears when its estimate is opened. */}
           <label className="flex items-start gap-2 border-b border-slate-100 pb-4 text-sm text-slate-700">
             <input type="checkbox" className="mt-1" data-testid="open-notification-enabled" checked={draft.opens} onChange={(e) => set({ opens: e.target.checked })} />
-            <span>Email the office when a customer opens an estimate
+            <span>Email the office when a customer opens an estimate or an invoice
               <span className="block text-[11px] text-slate-400">The first time each address opens it, then at most once a day. Opens by your own team are not counted.</span></span>
           </label>
 

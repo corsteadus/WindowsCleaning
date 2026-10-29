@@ -152,3 +152,29 @@ export function officeEmailAddress(env: Record<string, string | undefined>): str
   const address = (env.OFFICE_EMAIL_ADDRESS ?? env.EMAIL_FROM_ADDRESS ?? "").trim();
   return address && address.includes("@") ? address : null;
 }
+
+export interface InvoiceOpenedNoticeInput {
+  invoiceNumber: string;
+  customerName?: string | null;
+  recipient: string | null;
+  openCount: number;
+  /** What is still owed, as written ("$120.00"). */
+  balanceDue: string;
+  invoiceUrl?: string | null;
+}
+
+/** A3, Video 7: the business hears when a customer opens their invoice, as for an estimate. */
+export function officeInvoiceOpenedNotice(input: InvoiceOpenedNoticeInput): OfficeNotice {
+  const who = (input.customerName ?? "").trim() || "A customer";
+  const via = input.recipient ? `the link sent to ${input.recipient}` : "a copied link";
+  const times = input.openCount === 1 ? "for the first time" : `(${input.openCount} times so far)`;
+  const owed = `${input.balanceDue} is still due.`;
+  const lines = [`${who} opened invoice ${input.invoiceNumber} ${times}, through ${via}.`, "", owed];
+  if (input.invoiceUrl) lines.push("", input.invoiceUrl);
+  const html = [
+    `<p style="margin:0 0 12px"><strong>${escapeHtml(who)}</strong> opened invoice <strong>${escapeHtml(input.invoiceNumber)}</strong> ${escapeHtml(times)}, through ${escapeHtml(via)}.</p>`,
+    `<p style="margin:0;color:#64748b">${escapeHtml(owed)}</p>`,
+    input.invoiceUrl ? `<p style="margin:14px 0 0"><a href="${escapeHtml(input.invoiceUrl)}">Open the invoice</a></p>` : "",
+  ].join("");
+  return { subject: `${input.invoiceNumber} opened by ${who}`, text: lines.join("\n"), html };
+}

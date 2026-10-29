@@ -164,6 +164,106 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase A4 — conversion: choose the services, arrival window + duration, Schedule + invoice — 2026-10-29
+
+**Built and browser-tested (MCP, local server); API walkthrough 23/23** (`scratchpad/a4-walkthrough.mjs`).
+Toheed asked for this phase to be built "as a senior engineer": easy for the office, proper on
+the server. So every choice the screen offers is checked again on the server, the money is
+the server's own sum, and everything is one transaction and one click.
+
+- **Services ticked from the customer's choice** (`EstimateConversionDialog.tsx`): every service
+  offered is listed per location; the accepted ones start ticked, declined ones show **"Declined by
+  the customer"** unticked. The office can untick (not doing it now) or tick a declined one back
+  (customer changed their mind by phone). A location with nothing ticked gets **no job** and says
+  so. A live total (discounts, then tax, the server's rules) and an amber note **"Different from
+  what the customer accepted: adding X; leaving out Y"**, which also goes into the estimate's
+  history. An unticked "to be quoted" service no longer blocks scheduling the rest.
+  Server (`conversionSelection`): only the estimate's own services, at least one; the customer's
+  copy of a line when they took it; `addedLineItemIds` / `removedLineItemIds` recorded.
+- **Exact time or arrival window, plus how long the job takes** (`resolveScheduleTimes`): the office
+  picks a start, "Exact time" or "Arrival window" (1–4 h), and a duration (30 min–12 h); one line
+  says what the customer will be told ("Arrive between 9:00 AM and 11:00 AM · about 2 hours 30 min
+  of work"). **The server works out the end itself** (start + duration) and refuses durations
+  outside 15 min–12 h / 5-min steps, windows outside 30 min–8 h / 15-min steps, and anything past
+  midnight; errors name the address, not "Location #30". Older clients that send an end still
+  work. New column `jobs.arrival_window_minutes` (null = exact); the job page shows "Arrival window
+  — Arrive between …". *Not yet:* the window in appointment emails and on the calendar card.
+- **Schedule + create invoice**: a second button makes a **draft invoice, due in 30 days**, linked to
+  the jobs, in the **same transaction** (both or neither), **one line per service** with its share
+  of the discount and its tax to the cent (`conversionInvoiceLines`), and the server checks the
+  invoice total equals the jobs' total or saves nothing. The office lands on the invoice, ready to
+  "Email invoice" (A3). The same click again, or a second conversion, makes no second invoice.
+- **Invoices in documents**: the profile's **Photos & Files** lists its invoices (number, amount,
+  status, date), each opening the live PDF — drawn when opened, so never stale, and no storage needed.
+- **Already right before A4, kept**: the preview reads the accepted snapshot (not the live quote);
+  the conversion is idempotent, locked per estimate and checks blocked days.
+
+**Migration `job-arrival-window-v1`** (one nullable column on jobs; additive). Applied to the local
+copy only; Sandbox gets it through the gate at the next republish.
+
+**Browser (MCP):** dialog opened with the customer's two services ticked, Screens "Declined by the
+customer", $450 after 10%; ticked Screens, unticked Lake house → that location "no job", total
+$405, the change note; Arrival window 2 h + 2 h 30 → summary line; **Schedule + create invoice** →
+landed on the $405 draft invoice with both services, toast "1 job scheduled · invoice … created";
+the job shows its arrival window; the estimate history "1 job · 1 declined service added · 1
+accepted service left out · invoice … created"; Photos & Files lists the invoice PDF. At 375 px:
+nothing ticked → "Tick at least one service" with both buttons off; 2 PM + 12 h → "runs past
+midnight"; no sideways scroll. Fixed while testing: a duplicate test id and the Arrival label
+sitting beside its toggle. Tests: API +7, CRM +7; CRM 853/853; API only the 14 DATABASE_URL
+baseline files; typechecks clean. All ZZ rows and the throwaway local account removed.
+
+---
+
+## Phase A3 — the customer's invoice page, its PDF, and its opens — 2026-10-29
+
+**Built and browser-tested (MCP, local server); API walkthrough 25/25** (`scratchpad/a3-walkthrough.mjs`).
+Video 7: invoices had no customer link at all and only the browser's Print. Now an invoice goes
+out the way an estimate does.
+
+- **Email invoice** (`components/SendInvoiceDialog.tsx`, `routes/invoice-public.ts`) replaces the
+  old inline composer: any of the profile's addresses (a new one saved to the profile first), a
+  message with tags (`{{invoice_page_link}}`, `{{invoice_link}}` = PDF, `{{balance_due}}`,
+  `{{due_date}}` …), PDF attached as an option, a preview, communication safety, one email per
+  click (idempotency), Email History, and the invoice's own Communications list. An email that
+  cannot reach the invoice (no link, no PDF) is refused. **A voided or fully credited invoice
+  cannot be sent.** A **draft** that is emailed becomes **Sent**; the automatic "invoice sent"
+  event is **not** queued then (the customer has just been emailed it).
+- **The customer's page** `/invoice/:token` (`pages/PublicInvoice.tsx`), no sign-in: the business,
+  the lines, total, paid, credited, **balance due today** and a banner (due by / past due / paid
+  in full / cancelled), Print / PDF. **The invoice is live, not a snapshot**: an old email shows
+  today's balance. The invoice's **Notes are the office's and are never shown** to the customer
+  (page or PDF), nor the customer's email/phone on the page — *to ask Kyle whether he wants a
+  customer-facing message on invoices.*
+- **PDF** (`lib/invoice-document.ts`, our own PDF writer): INVOICE, dates, Bill to, service
+  address, lines with discounts/tax, totals, Paid/Credited, Balance due; PAID / OVERDUE / VOID
+  stamp; the company footer. The office has a **PDF** button on the invoice.
+- **Opens**, same rules as A2: each address its own key; staff opens not counted; a reload
+  within 30 min is one visit; office emailed "INV-… opened by …" on each address's first open,
+  then at most daily, **never once paid, voided or credited**. The A2 Settings switch now reads
+  "opens an estimate **or an invoice**". **Copy customer link** makes a link whose opens count as
+  a copied link.
+- **History** on the invoice: emailed (to whom, PDF attached), link copied, opened (which
+  address, visit n), printed, office emailed — with who did it.
+- Links are kept only as hashes; `/public/invoices/` tokens are redacted from the request log;
+  public routes rate-limited like the estimate's.
+
+**Migration `invoice-public-v1`** (additive: three new tables `invoice_public_links`,
+`invoice_deliveries`, `invoice_activities`, five indexes; nothing existing touched). Applied to the
+local copy only; Sandbox gets it through the gate at the next republish.
+
+**Browser (MCP):** dialog lists both addresses, warns and disables Send with no link, preview
+filled; sent to two with the PDF → both rows "Not opened yet", the invoice Sent; office PDF
+correct and without Notes; Copy link toast; the office opening Bob's link counted nothing;
+signed out, Bob's page correct (lines, $400 due by date, no notes), Print/PDF opened the PDF,
+no sideways scroll at 375 px; a bad link shows "Invoice unavailable"; back as the office: Bob
+"Opened once", history readable with names, the office emailed once; **Mark Paid** → the
+customer's page "Paid in full … Thank you!", $0.00, and Ann's open then sent no notice.
+Tests: API +9 (`invoice-public.test.ts`), CRM +4 (`invoice-history.test.ts`); CRM 846/846; API
+only the 14 DATABASE_URL baseline files; both typechecks clean. Local test used a throwaway
+`zz_a3_admin` account on the disposable DB, deleted after; all ZZ rows removed.
+
+---
+
 ## Phase A2 — estimate history, opens per address, the office told — 2026-10-29
 
 **Built and browser-tested (MCP, local server); API walkthrough 19/20** (the 20th, a second

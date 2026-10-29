@@ -128,6 +128,8 @@ test("authenticated API callers use protectedFetch; only documented public/presi
   assert.match(files, /Public presigned GCS URL/);
   const publicEstimate = readFileSync(new URL("pages/PublicEstimate.tsx", root), "utf8");
   assert.match(publicEstimate, /Public estimate links intentionally work without an authenticated session/);
+  const publicInvoice = readFileSync(new URL("pages/PublicInvoice.tsx", root), "utf8");
+  assert.match(publicInvoice, /Public invoice links intentionally work without an authenticated session/);
 });
 
 test("raw-fetch audit leaves no authenticated /api bypass", () => {
@@ -144,5 +146,5 @@ test("raw-fetch audit leaves no authenticated /api bypass", () => {
     // `relative` returns the platform separator, so compare in one spelling
     // rather than asserting a POSIX path that Windows can never produce.
     .map(([file]) => file.replaceAll("\\", "/"));
-  assert.deepEqual(bypasses, ["pages/PublicEstimate.tsx"]);
+  assert.deepEqual(bypasses.sort(), ["pages/PublicEstimate.tsx", "pages/PublicInvoice.tsx"]);
 });

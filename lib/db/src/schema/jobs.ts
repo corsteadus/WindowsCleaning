@@ -18,6 +18,9 @@ export const jobsTable = pgTable("jobs", {
   scheduledStartTime: text("scheduled_start_time"),
   scheduledEndTime: text("scheduled_end_time"),
   estimatedDuration: integer("estimated_duration"),
+  // A4: the customer is given an arrival window that opens at the start time and
+  // lasts this many minutes; null means the start time is exact.
+  arrivalWindowMinutes: integer("arrival_window_minutes"),
   isRecurring: boolean("is_recurring").notNull().default(false),
   recurringFrequency: text("recurring_frequency"),
   recurringPlanId: integer("recurring_plan_id"),

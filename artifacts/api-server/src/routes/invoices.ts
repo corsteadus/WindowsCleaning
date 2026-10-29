@@ -104,7 +104,7 @@ function requireInvoicePatchCapability(req: Request, res: import("express").Resp
   requireFinancialCapability(capability)(req, res, next);
 }
 
-function createInvoiceAdapter(tx: DrizzleTX): InvoiceCreateAdapter {
+export function createInvoiceAdapter(tx: DrizzleTX): InvoiceCreateAdapter {
   return {
     acquireJobLocks: async (jobIds) => {
       if (!jobIds.length) return;

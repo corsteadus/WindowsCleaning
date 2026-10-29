@@ -168,6 +168,7 @@ export function FilesTab({ entityType, entityId, locations = [] }: FilesTabProps
 
   return (
     <div className="space-y-4" data-testid="files-tab">
+      {entityType === "customer" && <CorsteadDocuments customerId={entityId} />}
       {locations.length > 0 && (
         <label className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
           <MapPin className="h-4 w-4 text-slate-400" />
@@ -338,3 +339,39 @@ export function FilesTab({ entityType, entityId, locations = [] }: FilesTabProps
     </div>
   );
 }
+
+/**
+ * A4 (Video 7): the invoices Corstead made for this profile, filed with its
+ * documents. Each PDF is drawn when it is opened, so it always shows what is
+ * paid and owed now; nothing is copied into storage that could go stale.
+ */
+function CorsteadDocuments({ customerId }: { customerId: number }) {
+  const { data } = useQuery<Array<{ id: number; invoiceNumber: string; totalAmount: number; status: string; createdAt: string }>>({
+    queryKey: ["files-invoices", customerId],
+    queryFn: async () => {
+      const response = await protectedFetch(`${BASE}/api/invoices?customerId=${customerId}`);
+      if (!response.ok) return [];
+      const body = await response.json();
+      return Array.isArray(body) ? body : body.data ?? [];
+    },
+  });
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white" data-testid="files-invoices">
+      <p className="border-b border-slate-100 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-slate-400">Invoices</p>
+      {data.map((invoice) => (
+        <a key={invoice.id} href={`${BASE}/api/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer" data-testid="files-invoice"
+          className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 text-sm last:border-0 hover:bg-slate-50">
+          <span className="flex min-w-0 items-center gap-2">
+            <FileText className="h-4 w-4 shrink-0 text-red-500" />
+            <span className="truncate font-medium text-slate-800">Invoice-{invoice.invoiceNumber}.pdf</span>
+          </span>
+          <span className="shrink-0 text-xs text-slate-500">
+            {formatMoney(Number(invoice.totalAmount))} · {invoice.status.replace(/_/g, " ")} · {format(new Date(invoice.createdAt), "MMM d, yyyy")}
+          </span>
+        </a>
+      ))}
+    </div>
+  );
+}
+const formatMoney = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

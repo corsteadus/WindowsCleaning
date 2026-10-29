@@ -37,7 +37,7 @@ const idOf = (value: unknown) => {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 };
-function senderName(req: Request): string | null {
+export function senderName(req: Request): string | null {
   if (!req.user) return null;
   const name = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ").trim();
   return name || (req.user as { username?: string | null }).username || req.user.email || null;
@@ -51,7 +51,7 @@ const longDate = (iso: string | null | undefined) => {
 const appUrl = () => (process.env.PUBLIC_APP_URL ?? "").replace(/\/$/, "");
 
 /** The profile's own addresses, each with whose it is. */
-async function addressesOf(customerId: number) {
+export async function addressesOf(customerId: number) {
   const [customer] = await db.select().from(customersTable).where(eq(customersTable.id, customerId)).limit(1);
   if (!customer) return null;
   const channels = await db.select({ value: contactChannelsTable.value, isPrimary: contactChannelsTable.isPrimary, contactFirst: contactsTable.firstName, contactLast: contactsTable.lastName })

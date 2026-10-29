@@ -19,6 +19,8 @@ export interface ConversionScheduleRow {
   scheduledDate: string;
   scheduledStartTime: string;
   scheduledEndTime: string;
+  /** A4: the work or the arrival window would run past midnight. */
+  runsPastMidnight?: boolean;
 }
 
 export interface ConversionReadinessInput {
@@ -31,6 +33,8 @@ export interface ConversionReadinessInput {
   verbalNote: string;
   /** The server's refusal while a service is still to be quoted (Kyle, 2026-10-24). */
   unpriced?: string | null;
+  /** A4: how many services are ticked to become work (absent: not asked). */
+  servicesTicked?: number;
 }
 
 /** Matches the server's own minimum for acceptance documentation. */
@@ -48,6 +52,11 @@ export function conversionBlockers(input: ConversionReadinessInput): string[] {
   // First: no date or crew makes a $0 job from a service nobody has priced.
   if (input.unpriced) {
     blockers.push(`${input.unpriced}. Open the estimate, add the price, and finalize it again.`);
+    return blockers;
+  }
+
+  if (input.servicesTicked === 0) {
+    blockers.push("Tick at least one service to schedule.");
     return blockers;
   }
 
@@ -88,6 +97,11 @@ export function conversionBlockers(input: ConversionReadinessInput): string[] {
     blockers.push(
       `${backwards} ${plural(backwards, "location ends", "locations end")} before it starts.`,
     );
+  }
+
+  const late = input.rows.filter((row) => row.runsPastMidnight).length;
+  if (late > 0) {
+    blockers.push(`${late} ${plural(late, "location runs", "locations run")} past midnight. Start earlier or shorten it.`);
   }
 
   if (input.rows.length < input.locationCount) {

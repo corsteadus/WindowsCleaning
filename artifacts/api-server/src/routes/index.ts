@@ -40,6 +40,7 @@ import taxRatesRouter from "./tax-rates";
 import estimateEmailRouter from "./estimate-email";
 import companyProfileRouter from "./company-profile";
 import estimatesRouter from "./estimates";
+import invoicePublicRouter from "./invoice-public";
 import calendarRouter from "./calendar";
 import scheduleQueueRouter from "./schedule-queue";
 
@@ -86,6 +87,7 @@ router.use(taxRatesRouter);
 router.use(estimateEmailRouter);
 router.use(companyProfileRouter);
 router.use(estimatesRouter);
+router.use(invoicePublicRouter);
 router.use(calendarRouter);
 router.use(scheduleQueueRouter);
 
