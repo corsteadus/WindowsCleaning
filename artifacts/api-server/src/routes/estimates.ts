@@ -1,6 +1,8 @@
 import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import { acceptedSnapshotFor, EstimateAcceptanceError } from "../lib/estimate-acceptance.ts";
-import { officeAcceptedNotice, officeEmailAddress } from "../lib/estimate-accepted-notice.ts";
+import { officeAcceptedNotice, officeDeclinedNotice, officeEmailAddress, type OfficeNotice } from "../lib/estimate-accepted-notice.ts";
+import { acceptanceMessage, acceptanceValues, customerNotesOf } from "../lib/estimate-acceptance-content.ts";
+import { thankCustomerForAcceptance } from "../lib/estimate-thank-you.ts";
 import { sendEmailTo } from "../lib/email.ts";
 import { summariseEstimates } from "../lib/estimate-dashboard.ts";
 import { deriveQuoteStatuses } from "../lib/estimate-status-batch.ts";
@@ -482,6 +484,8 @@ router.get("/quotes/:id/conversion-preview", async (req, res): Promise<any> => {
     ),
     // After the estimate's discounts (phase 5), as the customer was offered it.
     offeredTotal: offeredTotalOf(offered as never),
+    // Video 7: "Please call before arriving" belongs in front of whoever schedules it.
+    customerNotes: source.acceptedLink ? source.quote.customerNotes ?? null : null,
     existingJobs: existingJobs.map(conversionJobResponse),
   });
 });
@@ -1000,6 +1004,10 @@ router.get("/dashboard/estimate-status", async (_req, res): Promise<any> => {
  * decision is committed and never awaited by the customer: their acceptance is
  * recorded whatever the mail server does.
  */
+const estimateUrlOf = (quoteId: number) => {
+  const origin = (process.env.PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  return origin ? `${origin}/quotes/${quoteId}` : null;
+};
 async function notifyOfficeOfAcceptance(input: {
   quoteId: number;
   quoteNumber: string;
@@ -1007,18 +1015,23 @@ async function notifyOfficeOfAcceptance(input: {
   acceptedTotal: number;
   accepted: Array<{ description: string; totalPrice: number }>;
   declined: Array<{ description: string; totalPrice: number }>;
+  customerNotes: string | null;
 }): Promise<void> {
-  const to = officeEmailAddress(process.env);
-  if (!to) return;                      // nowhere to send it yet; the dashboard still shows it
-  const origin = (process.env.PUBLIC_APP_URL ?? "").replace(/\/$/, "");
-  const notice = officeAcceptedNotice({
+  await notifyOffice(input.quoteId, officeAcceptedNotice({
     quoteNumber: input.quoteNumber,
     customerName: input.customerName,
     acceptedTotal: input.acceptedTotal,
     accepted: input.accepted,
     declined: input.declined,
-    estimateUrl: origin ? `${origin}/quotes/${input.quoteId}` : null,
-  });
+    customerNotes: input.customerNotes,
+    estimateUrl: estimateUrlOf(input.quoteId),
+  }));
+}
+/** Either notice — accepted, or (Video 7) declined with the reason — recorded on the estimate. */
+async function notifyOffice(quoteId: number, notice: OfficeNotice): Promise<void> {
+  const to = officeEmailAddress(process.env);
+  if (!to) return;                      // nowhere to send it yet; the dashboard still shows it
+  const input = { quoteId };
   const result = await sendEmailTo({ email: to }, notice.subject, notice.html, notice.text);
   await db.insert(estimateActivitiesTable).values({
     quoteId: input.quoteId,
@@ -1065,15 +1078,29 @@ router.get("/public/estimates/:token", async (req, res): Promise<any> => {
   await db.update(estimatePublicLinksTable).set({
     firstOpenedAt: found.link.firstOpenedAt ?? now, lastActivityAt: now,
   }).where(eq(estimatePublicLinksTable.id, found.link.id));
+  const customerName = found.customer ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ") : null;
+  const acceptedLines = found.link.decision === "accepted"
+    ? ((found.link.acceptedSnapshot as { lineItems?: Array<{ id: number; description: string }> } | null)?.lineItems ?? [])
+    : null;
+  // Videos 7 and 9: after accepting, the business's own thank-you and the recap.
+  const thankYouMessage = acceptedLines
+    ? acceptanceMessage(await readQuoteSettings(), acceptanceValues({
+        firstName: found.customer?.firstName, customerName, quoteNumber: found.quote.quoteNumber,
+        businessName: (await readCompanyProfile()).businessName, accepted: acceptedLines,
+        acceptedTotal: Number((found.link.acceptedSnapshot as { quote?: { totalAmount?: number } } | null)?.quote?.totalAmount ?? 0),
+        customerNotes: found.quote.customerNotes ?? null,
+      }))
+    : null;
   res.json({
     quoteNumber: found.quote.quoteNumber,
-    customerName: found.customer ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ") : null,
+    customerName,
     snapshot: found.offered ?? found.snapshot,
-    acceptedLineItemIds: found.link.decision === "accepted"
-      ? ((found.link.acceptedSnapshot as { lineItems?: Array<{ id: number }> } | null)?.lineItems ?? []).map((line) => line.id)
-      : null,
+    acceptedLineItemIds: acceptedLines ? acceptedLines.map((line) => line.id) : null,
     decision: found.link.decision, decisionAt: found.link.decisionAt,
     expiresAt: found.link.expiresAt,
+    customerNotes: found.link.decision === "accepted" ? found.quote.customerNotes ?? null : null,
+    declineReason: found.link.decision === "declined" ? found.link.declineReason ?? null : null,
+    thankYouMessage,
   });
 });
 
@@ -1142,6 +1169,10 @@ router.post("/public/estimates/:token/decision", async (req, res): Promise<any> 
       throw error;
     }
   }
+  // Video 7 (must-have): what the customer writes when accepting is the
+  // estimate's Customer Notes; when declining it is the reason.
+  const customerNotes = decision === "accepted" ? customerNotesOf(req.body.customerNotes) : null;
+  const declineReason = decision === "declined" ? customerNotesOf(req.body.declineReason) : null;
   const now = new Date();
   const outcome = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(${found.quote.id})`);
@@ -1157,21 +1188,24 @@ router.post("/public/estimates/:token/decision", async (req, res): Promise<any> 
     }
     await tx.update(estimatePublicLinksTable).set({
       decision, decisionAt: now, lastActivityAt: now,
-      declineReason: decision === "declined" ? String(req.body.declineReason ?? "").slice(0, 2000) || null : null,
+      declineReason,
       followUpRequested: decision === "accepted" || !!req.body.followUpRequested,
       acceptedSnapshot: acceptance ? acceptance.snapshot : null,
     }).where(eq(estimatePublicLinksTable.id, found.link.id));
-    await tx.update(quotesTable).set({ status: decision }).where(eq(quotesTable.id, found.quote.id));
+    await tx.update(quotesTable).set(decision === "accepted"
+      ? { status: decision, customerNotes, customerNotesAt: customerNotes ? now : null }
+      : { status: decision }).where(eq(quotesTable.id, found.quote.id));
     await tx.insert(estimateActivitiesTable).values({
       quoteId: found.quote.id, publicLinkId: found.link.id,
       activityType: decision === "accepted" ? "estimate_accepted" : "estimate_declined",
       actorType: "customer", detail: decision === "declined"
-        ? { declineReason: String(req.body.declineReason ?? "").slice(0, 2000) || null }
+        ? { declineReason, followUpRequested: !!req.body.followUpRequested }
         : {
             acceptedLineItemIds: acceptance!.acceptedLineItemIds,
             declinedLineItemIds: acceptance!.declinedLineItemIds,
             whole: acceptance!.whole,
             acceptedTotal: acceptance!.acceptedTotal,
+            customerNotes,
           },
     });
     if (decision === "accepted") await enqueueCommunicationEvent(tx, {
@@ -1188,22 +1222,41 @@ router.post("/public/estimates/:token/decision", async (req, res): Promise<any> 
     });
     return { idempotent: false, decisionAt: now };
   });
+  const customerName = found.customer
+    ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ")
+    : null;
   if (acceptance && !outcome.idempotent) {
     const offeredLines = ((found.offered as { lineItems?: Array<{ id: number; description: string; totalPrice: number }> } | null)?.lineItems) ?? [];
     const acceptedIds = new Set(acceptance.acceptedLineItemIds);
+    const accepted = offeredLines.filter((line) => acceptedIds.has(line.id))
+      .map((line) => ({ description: line.description, totalPrice: Number(line.totalPrice) }));
     void notifyOfficeOfAcceptance({
       quoteId: found.quote.id,
       quoteNumber: found.quote.quoteNumber,
-      customerName: found.customer
-        ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ")
-        : null,
+      customerName,
       acceptedTotal: acceptance.acceptedTotal,
-      accepted: offeredLines.filter((line) => acceptedIds.has(line.id))
-        .map((line) => ({ description: line.description, totalPrice: Number(line.totalPrice) })),
+      accepted,
       declined: offeredLines.filter((line) => !acceptedIds.has(line.id))
         .map((line) => ({ description: line.description, totalPrice: Number(line.totalPrice) })),
+      customerNotes,
     }).catch((error) => {
       console.error("office acceptance notice failed", error);
+    });
+    // Video 9: the customer's own acceptance — never an office conversion — earns a thank-you.
+    void thankCustomerForAcceptance({
+      quoteId: found.quote.id, quoteNumber: found.quote.quoteNumber, customerId: found.quote.customerId,
+      publicLinkId: found.link.id, customer: found.customer ?? null,
+      accepted, acceptedTotal: acceptance.acceptedTotal, customerNotes,
+    }).catch((error) => {
+      console.error("customer thank-you failed", error);
+    });
+  }
+  if (decision === "declined" && !outcome.idempotent) {
+    void notifyOffice(found.quote.id, officeDeclinedNotice({
+      quoteNumber: found.quote.quoteNumber, customerName, reason: declineReason,
+      followUpRequested: !!req.body.followUpRequested, estimateUrl: estimateUrlOf(found.quote.id),
+    })).catch((error) => {
+      console.error("office decline notice failed", error);
     });
   }
   res.json({

@@ -22,6 +22,9 @@ export const quotesTable = pgTable("quotes", {
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull().default("0"),
   notes: text("notes"),
   terms: text("terms"),
+  /** Video 7 (must-have): what the customer wrote when accepting online, and when. */
+  customerNotes: text("customer_notes"),
+  customerNotesAt: timestamp("customer_notes_at", { withTimezone: true }),
   validUntil: text("valid_until"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

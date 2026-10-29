@@ -6,11 +6,16 @@ import {
   normaliseValidityDays,
   type QuoteSettingsValues,
 } from "./quote-settings.js";
+import type { AcceptanceSettings } from "./estimate-acceptance-content.ts";
+
+const NO_ACCEPTANCE_SETTINGS: AcceptanceSettings = {
+  acceptanceMessage: null, acceptanceEmailEnabled: true, acceptanceEmailSubject: null, acceptanceEmailBody: null,
+};
 
 /** The one row. Single-tenant, like the communication settings beside it. */
 export const QUOTE_SETTINGS_KEY = "default";
 
-export interface StoredQuoteSettings extends QuoteSettingsValues {
+export interface StoredQuoteSettings extends QuoteSettingsValues, AcceptanceSettings {
   updatedBy: string | null;
   updatedAt: string | null;
 }
@@ -31,11 +36,15 @@ export async function readQuoteSettings(reader: Reader = db): Promise<StoredQuot
     .where(eq(quoteSettingsTable.organizationKey, QUOTE_SETTINGS_KEY))
     .limit(1);
   if (!row) {
-    return { ...DEFAULT_QUOTE_SETTINGS, updatedBy: null, updatedAt: null };
+    return { ...DEFAULT_QUOTE_SETTINGS, ...NO_ACCEPTANCE_SETTINGS, updatedBy: null, updatedAt: null };
   }
   return {
     validityDays: normaliseValidityDays(row.validityDays) ?? DEFAULT_QUOTE_SETTINGS.validityDays,
     terms: normaliseQuoteTerms(row.terms),
+    acceptanceMessage: row.acceptanceMessage ?? null,
+    acceptanceEmailEnabled: row.acceptanceEmailEnabled ?? true,
+    acceptanceEmailSubject: row.acceptanceEmailSubject ?? null,
+    acceptanceEmailBody: row.acceptanceEmailBody ?? null,
     updatedBy: row.updatedBy ?? null,
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
   };
@@ -61,6 +70,18 @@ export async function writeQuoteSettings(
         updatedBy,
         updatedAt: new Date(),
       },
+    });
+  return readQuoteSettings();
+}
+
+/** The thank-you after an online acceptance (Videos 7 and 9); the rest of the settings are untouched. */
+export async function writeAcceptanceSettings(values: AcceptanceSettings, updatedBy: string | null): Promise<StoredQuoteSettings> {
+  await db
+    .insert(quoteSettingsTable)
+    .values({ organizationKey: QUOTE_SETTINGS_KEY, ...values, updatedBy })
+    .onConflictDoUpdate({
+      target: quoteSettingsTable.organizationKey,
+      set: { ...values, updatedBy, updatedAt: new Date() },
     });
   return readQuoteSettings();
 }

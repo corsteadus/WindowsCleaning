@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileText, MapPin, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, FileText, MapPin, Printer, XCircle } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useParams } from "wouter";
 import { formatCurrency } from "@/lib/utils";
 import { DiscountRows } from "@/components/DiscountEditor";
@@ -23,6 +24,10 @@ type Estimate = {
   quoteNumber: string; customerName?: string | null; snapshot: Snapshot;
   decision?: string | null; decisionAt?: string | null; expiresAt: string;
   acceptedLineItemIds?: number[] | null;
+  /** Videos 7 and 9: what the customer wrote, and the business's own thank-you. */
+  customerNotes?: string | null;
+  declineReason?: string | null;
+  thankYouMessage?: string | null;
 };
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -31,10 +36,15 @@ export default function PublicEstimate() {
   const { token } = useParams<{ token: string }>();
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [error, setError] = useState("");
+  // A failed decision keeps the dialog, and what was typed in it, open.
+  const [decisionError, setDecisionError] = useState("");
   const [decision, setDecision] = useState<string | null>(null);
   const [accepted, setAccepted] = useState<number[] | null>(null);
   const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
   const [followUp, setFollowUp] = useState(false);
+  // Video 7: neither decision is one click — each is confirmed first.
+  const [confirming, setConfirming] = useState<"accepted" | "declined" | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Everything starts ticked, so taking the whole estimate is still one click.
   const [chosen, setChosen] = useState<Set<number>>(new Set());
@@ -45,7 +55,7 @@ export default function PublicEstimate() {
     fetch(`${BASE}/api/public/branding`).then((r) => (r.ok ? r.json() : null)).then(setBranding).catch(() => setBranding(null));
   }, []);
 
-  useEffect(() => {
+  const load = useCallback((keepChoice = false) =>
     // Public estimate links intentionally work without an authenticated session.
     fetch(`${BASE}/api/public/estimates/${encodeURIComponent(token)}`)
       .then(async (response) => {
@@ -56,10 +66,10 @@ export default function PublicEstimate() {
         setEstimate(data);
         setDecision(data.decision ?? null);
         setAccepted(data.acceptedLineItemIds ?? null);
-        setChosen(new Set((data.snapshot?.lineItems ?? []).map((line) => line.id)));
+        if (!keepChoice) setChosen(new Set((data.snapshot?.lineItems ?? []).map((line) => line.id)));
       })
-      .catch((e) => setError(e.message));
-  }, [token]);
+      .catch((e) => setError(e.message)), [token]);
+  useEffect(() => { void load(); }, [load]);
 
   const lines = estimate?.snapshot?.lineItems ?? [];
   // Phase 5: the discounts are worked out on what is chosen, by the server's
@@ -92,20 +102,24 @@ export default function PublicEstimate() {
 
   async function decide(next: "accepted" | "declined") {
     setSubmitting(true);
+    setDecisionError("");
     try {
       const response = await fetch(`${BASE}/api/public/estimates/${encodeURIComponent(token)}/decision`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          decision: next, declineReason: reason, followUpRequested: followUp,
-          ...(next === "accepted" ? { acceptedLineItemIds: [...chosen] } : {}),
-        }),
+        body: JSON.stringify(next === "accepted"
+          ? { decision: next, customerNotes: notes, acceptedLineItemIds: [...chosen] }
+          : { decision: next, declineReason: reason, followUpRequested: followUp }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Unable to record decision");
       setDecision(body.decision);
       setAccepted(body.acceptedLineItemIds ?? null);
+      setConfirming(null);
+      // The thank-you is the business's own wording, so it comes from the server.
+      await load(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to record decision");
+      setDecisionError(e instanceof Error ? e.message : "Unable to record decision");
     } finally { setSubmitting(false); }
   }
 
@@ -127,7 +141,15 @@ export default function PublicEstimate() {
               {(branding?.contactLines ?? []).map((line) => <span key={line} className="block text-xs text-slate-400">{line}</span>)}
             </span>
           </div>
-          <p className="mt-6 text-xs font-bold uppercase tracking-[.18em] text-sky-300">Window Cleaning Estimate</p>
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <p className="text-xs font-bold uppercase tracking-[.18em] text-sky-300">Window Cleaning Estimate</p>
+            {/* Video 7: the customer can print it — the same PDF the business sends. */}
+            <a href={`${BASE}/api/public/estimates/${encodeURIComponent(token)}/pdf`} target="_blank" rel="noopener" data-testid="public-print"
+              onClick={() => { void fetch(`${BASE}/api/public/estimates/${encodeURIComponent(token)}/activity`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ activityType: "printed" }) }).catch(() => {}); }}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-white/20 px-3 text-sm font-semibold text-white hover:bg-white/10">
+              <Printer className="h-4 w-4" /> Print / PDF
+            </a>
+          </div>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
             <div><h1 className="text-3xl font-bold">{estimate.customerName || "Your estimate"}</h1><p className="mt-1 text-sm text-slate-400">{estimate.quoteNumber}</p></div>
             <div className="text-right">
@@ -139,19 +161,39 @@ export default function PublicEstimate() {
       </header>
 
       <div className="mx-auto max-w-3xl px-5 py-7 space-y-5">
-        {decision && (
-          <section className={`rounded-2xl border p-5 ${decision === "accepted" ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+        {/* Videos 7 and 9: after accepting, a thank-you in the business's words and a recap. */}
+        {decision === "accepted" && (
+          <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 sm:p-6" data-testid="public-thank-you">
+            <p className="text-xs font-bold uppercase tracking-[.16em] text-emerald-700">Estimate status – Accepted</p>
+            <h2 className="mt-2 flex items-center gap-2 text-xl font-bold text-slate-900"><CheckCircle2 className="h-6 w-6 text-emerald-600" /> Thank you for confirming!</h2>
+            {estimate.thankYouMessage && <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700" data-testid="public-thank-you-message">{estimate.thankYouMessage}</p>}
+            <div className="mt-4 rounded-xl bg-white p-4">
+              <p className="text-sm font-semibold text-slate-700">Here is a recap of the service{(accepted?.length ?? 0) === 1 ? "" : "s"} to be performed:</p>
+              <ul className="mt-2 space-y-1 text-sm text-slate-800" data-testid="public-recap">
+                {lines.filter((line) => shownIds.has(line.id)).map((line) => (
+                  <li key={line.id} className="flex justify-between gap-3"><span>• {line.description}</span><span className="font-semibold">{formatCurrency(line.totalPrice)}</span></li>
+                ))}
+              </ul>
+              <p className="mt-3 flex justify-between border-t pt-2 text-sm font-bold"><span>Total</span><span>{formatCurrency(shownTotal)}</span></p>
+              {estimate.customerNotes && (
+                <div className="mt-3 border-t pt-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Your comments</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700" data-testid="public-customer-notes">{estimate.customerNotes}</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+        {decision === "declined" && (
+          <section className="rounded-2xl border border-rose-200 bg-rose-50 p-5" data-testid="public-declined">
             <div className="flex items-center gap-3">
-              {decision === "accepted" ? <CheckCircle2 className="text-emerald-600" /> : <XCircle className="text-rose-600" />}
+              <XCircle className="text-rose-600" />
               <div>
-                <h2 className="font-bold capitalize">Estimate {decision}</h2>
-                <p className="text-sm text-slate-600">
-                  {decision === "accepted" && settled && partial
-                    ? `You accepted ${accepted!.length} of ${lines.length} services, ${formatCurrency(shownTotal)} in total. Our team will follow up.`
-                    : "Your response has been recorded. Our team will follow up."}
-                </p>
+                <h2 className="font-bold">Estimate declined</h2>
+                <p className="text-sm text-slate-600">Your response has been recorded. Thank you for letting us know.</p>
               </div>
             </div>
+            {estimate.declineReason && <p className="mt-3 whitespace-pre-wrap rounded-xl bg-white p-3 text-sm text-slate-700">{estimate.declineReason}</p>}
           </section>
         )}
 
@@ -164,7 +206,8 @@ export default function PublicEstimate() {
           </div>
           <div className="divide-y">
             {lines.map((line) => {
-              const on = shownIds.has(line.id);
+              // A declined estimate took nothing, so no line may look chosen.
+              const on = decision !== "declined" && shownIds.has(line.id);
               return (
                 <label
                   key={line.id}
@@ -225,18 +268,52 @@ export default function PublicEstimate() {
         {!decision && (
           <section className="rounded-2xl border bg-white p-5">
             <h2 className="font-bold">Your decision</h2>
-            <p className="mt-1 text-sm text-slate-500">Accept the services you have ticked, or let us know why none of them is the right fit.</p>
-            <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Optional decline reason or question" className="mt-4 min-h-24 w-full rounded-xl border p-3 text-sm" />
-            <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} /> Please contact me to follow up</label>
+            <p className="mt-1 text-sm text-slate-500">Accept the services you have ticked, or let us know if none of them is the right fit.</p>
             {chosen.size === 0 && <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Tick at least one service to accept, or decline the estimate.</p>}
             <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <button disabled={submitting} onClick={() => decide("declined")} className="h-12 rounded-xl border border-rose-200 font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Decline estimate</button>
-              <button disabled={submitting || chosen.size === 0} onClick={() => decide("accepted")} className="h-12 rounded-xl bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+              <button disabled={submitting} onClick={() => setConfirming("declined")} data-testid="public-decline" className="h-12 rounded-xl border border-rose-200 font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Decline estimate</button>
+              <button disabled={submitting || chosen.size === 0} onClick={() => setConfirming("accepted")} data-testid="public-accept" className="h-12 rounded-xl bg-emerald-600 font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
                 {chosen.size === lines.length ? "Accept complete estimate" : `Accept ${chosen.size} of ${lines.length} services`}
               </button>
             </div>
           </section>
         )}
+
+        <Dialog open={confirming === "accepted"} onOpenChange={(open) => { if (!open && !submitting) setConfirming(null); }}>
+          <DialogContent className="max-w-md rounded-2xl" data-testid="accept-dialog">
+            <DialogHeader>
+              <DialogTitle>Almost done!</DialogTitle>
+              <DialogDescription>You are accepting {chosen.size === lines.length ? "the complete estimate" : `${chosen.size} of ${lines.length} services`}, {formatCurrency(shownTotal)} in total.</DialogDescription>
+            </DialogHeader>
+            <label className="block space-y-1.5">
+              <span className="text-sm text-slate-600">(Optional) Type in any information you would like to share with us and/or anything we need to know.</span>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} rows={4} aria-label="Comments for the business" data-testid="accept-notes"
+                placeholder="For example: please call before arriving; the side gate will be unlocked." className="w-full rounded-xl border p-3 text-sm" />
+            </label>
+            {decisionError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{decisionError}</p>}
+            <DialogFooter className="gap-2 sm:gap-2">
+              <button type="button" disabled={submitting} onClick={() => setConfirming(null)} className="h-11 rounded-xl border px-4 font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button type="button" disabled={submitting} onClick={() => decide("accepted")} data-testid="accept-confirm" className="h-11 rounded-xl bg-emerald-600 px-5 font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{submitting ? "Confirming…" : "Confirm"}</button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={confirming === "declined"} onOpenChange={(open) => { if (!open && !submitting) setConfirming(null); }}>
+          <DialogContent className="max-w-md rounded-2xl" data-testid="decline-dialog">
+            <DialogHeader>
+              <DialogTitle>Decline this estimate?</DialogTitle>
+              <DialogDescription>We will let the team know. You can tell us why, if you like.</DialogDescription>
+            </DialogHeader>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} rows={3} aria-label="Reason for declining" data-testid="decline-reason"
+              placeholder="(Optional) Your reason, or a question" className="w-full rounded-xl border p-3 text-sm" />
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} /> Please contact me to follow up</label>
+            {decisionError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{decisionError}</p>}
+            <DialogFooter className="gap-2 sm:gap-2">
+              <button type="button" disabled={submitting} onClick={() => setConfirming(null)} className="h-11 rounded-xl border px-4 font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button type="button" disabled={submitting} onClick={() => decide("declined")} data-testid="decline-confirm" className="h-11 rounded-xl bg-rose-600 px-5 font-bold text-white hover:bg-rose-700 disabled:opacity-50">{submitting ? "Declining…" : "Decline estimate"}</button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </main>
   );

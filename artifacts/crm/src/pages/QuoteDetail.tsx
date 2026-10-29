@@ -3,7 +3,7 @@ import { Layout } from "@/components/Layout";
 import {
   ArrowLeft, Pencil, Send, Save, Plus,
   Trash2, X, User, MapPin, FileText, Sparkles, Printer, CalendarDays,
-  Mail, MessageSquare, LockKeyhole, History, Copy, CheckCircle2,
+  Mail, MessageSquare, MessageSquareQuote, LockKeyhole, History, Copy, CheckCircle2,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -357,6 +357,9 @@ const STATUS_CFG: Record<string, { label: string; bg: string; text: string; dot:
   draft:    { label: "Draft",    bg: "bg-slate-100",  text: "text-slate-700",    dot: "bg-slate-400" },
   sent:     { label: "Sent",     bg: "bg-blue-50",    text: "text-blue-700",     dot: "bg-blue-400" },
   approved: { label: "Approved", bg: "bg-emerald-50", text: "text-emerald-700",  dot: "bg-emerald-400" },
+  // A customer's online acceptance, which until A1's browser test fell back to "Draft".
+  accepted: { label: "Accepted", bg: "bg-emerald-50", text: "text-emerald-700",  dot: "bg-emerald-400" },
+  viewed:   { label: "Viewed",   bg: "bg-sky-50",     text: "text-sky-700",      dot: "bg-sky-400" },
   rejected: { label: "Rejected", bg: "bg-red-50",     text: "text-red-600",      dot: "bg-red-400" },
   declined: { label: "Declined", bg: "bg-red-50",     text: "text-red-600",      dot: "bg-red-400" },
   expired:  { label: "Expired",  bg: "bg-amber-50",   text: "text-amber-700",    dot: "bg-amber-400" },
@@ -666,6 +669,8 @@ export default function QuoteDetail() {
   const shownTaxLabel = editing
     ? (editRate ? `${editRate}%` : null)
     : ((quote as { taxLabel?: string | null }).taxLabel ?? null);
+  // Video 7: the customer's own words on accepting (not in the generated client type).
+  const { customerNotes = null, customerNotesAt = null } = quote as { customerNotes?: string | null; customerNotesAt?: string | null };
   const totalAmount = editing ? (Math.round(editMoney.total * 100) + Math.round(editTaxAmount * 100)) / 100 : Number(quote.totalAmount ?? quote.subtotal);
 
   const isDraft    = quote.status === "draft";
@@ -811,6 +816,19 @@ export default function QuoteDetail() {
 
         {/* ─── LEFT: Line Items + Notes ──────────────── */}
         <div className="lg:col-span-2 space-y-4">
+
+          {/* Video 7 (must-have): what the customer wrote when accepting online. */}
+          {customerNotes && (
+            <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5" data-testid="customer-notes">
+              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-amber-800">
+                <MessageSquareQuote className="h-4 w-4" /> Customer Notes
+              </h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">{customerNotes}</p>
+              {customerNotesAt && (
+                <p className="mt-2 text-xs text-amber-700">Written by the customer when accepting, {format(new Date(customerNotesAt), "MMM d, yyyy 'at' h:mm a")}</p>
+              )}
+            </section>
+          )}
 
           {/* Line Items */}
           <div className="bg-white rounded-2xl border border-slate-100 p-5">

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, check, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -26,6 +26,14 @@ export const quoteSettingsTable = pgTable("quote_settings", {
   validityDays: integer("validity_days").notNull().default(30),
   /** The company's own customer-facing terms. Null until somebody writes them. */
   terms: text("terms"),
+  /**
+   * Videos 7 and 9: what the customer sees, and is emailed, after accepting
+   * online. Null means Corstead's short default wording.
+   */
+  acceptanceMessage: text("acceptance_message"),
+  acceptanceEmailEnabled: boolean("acceptance_email_enabled").notNull().default(true),
+  acceptanceEmailSubject: text("acceptance_email_subject"),
+  acceptanceEmailBody: text("acceptance_email_body"),
   updatedBy: text("updated_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

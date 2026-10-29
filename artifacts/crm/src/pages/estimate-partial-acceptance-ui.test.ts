@@ -28,7 +28,7 @@ test("#1 the chosen lines are highlighted", () => {
 
 test("#1 the choice is sent with the decision", () => {
   assert.match(publicEstimate, /acceptedLineItemIds: \[\.\.\.chosen\]/);
-  assert.match(publicEstimate, /next === "accepted" \?/,
+  assert.match(publicEstimate, /next === "accepted"\s*\?/,
     "a decline sends no selection; it declines the lot");
 });
 

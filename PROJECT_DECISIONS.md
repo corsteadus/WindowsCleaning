@@ -164,6 +164,123 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase A1 — the customer's decision, confirmed, kept and thanked — 2026-10-28
+
+**Built and browser-tested (MCP, local server, 2026-10-29); API walkthrough 20/20.** Browser:
+accept 1 of 2 with a comment → dialog, thank-you, recap, comments, survives reload; Print opens
+the PDF and logs `printed`; decline Cancel records nothing, decline with reason + "contact me"
+→ office notice; 375px no sideways scroll; Customer Notes card on the estimate and in the
+conversion dialog; Settings edit + tag button + email off → new message shown and
+`customer_thank_you_skipped` (turned_off), then restored; technician PUT → 403. **Two fixes
+from the browser run:** a declined estimate showed every service ticked and green (now none);
+the estimate header said "Draft" for an accepted estimate (`STATUS_CFG` had no `accepted` /
+`viewed`). Not changed: the header total stays the offered total after a partial accept.
+ZZ records removed from the local copy. CRM 829/829, API 965 + the 14 baseline
+`DATABASE_URL` failures, CRM build OK. **Migration `estimate-acceptance-v1`** (additive:
+`quotes.customer_notes`, `customer_notes_at`; `quote_settings.acceptance_message`,
+`acceptance_email_enabled` default true, `acceptance_email_subject`, `acceptance_email_body`),
+applied to the local copy only; runs on Sandbox through the gate at the next republish.
+
+- **Defect fixed (Video 7 must-have):** the comment typed while accepting was discarded
+  (`declineReason` was set null on accept). Now it is the estimate's **Customer Notes** —
+  on the estimate page (amber card above the lines), in the conversion dialog, in the
+  acceptance activity, and in the office's acceptance email. A replayed accept does not
+  overwrite it.
+- **Customer page:** Accept and Decline each open a confirmation ("Almost done!" with an
+  optional comment; decline with an optional reason and "contact me"); a failed decision keeps
+  the dialog and its text. After accepting: "Estimate status – Accepted", "Thank you for
+  confirming!", the business's own message, a recap of the accepted services and total, and
+  their comments. **Print / PDF** button (the public PDF; logged as `printed`).
+- **Customer thank-you email** on the customer's own acceptance only (`lib/estimate-thank-you.ts`):
+  to the addresses the estimate was sent to, else the profile's email; communication safety per
+  address; Email History (`sentBy` "Corstead (automatic)"); activities `customer_thanked` /
+  `_failed` / `_skipped`. Never on an office conversion.
+- **Office told of a decline** too, with the reason and the follow-up request.
+- **Settings → After a customer accepts** (administrators): the thank-you message, whether the
+  email is sent, its subject and body, with tag buttons; blank uses Corstead's short default
+  (shown as the placeholder). `PUT /quote-settings/acceptance`.
+- Locally `OFFICE_EMAIL_ADDRESS` is now set in `start-api.ps1` (zz.office@example.com, mock).
+
+---
+
+## Videos 7, 8 and 9 — analysed against the code, 2026-10-28
+
+Sources: three PDFs from Kyle (summary + cleaned transcript: V7 estimate package, V8 profile
+communication, V9 prospect → customer) and a Word file `FUsIRs.docx` (a long generated spec
+for V7 and V8 only; **no V9**). **The PDFs are Kyle's words and win where they differ**; the
+Word file adds detail Kyle never asked for (5 online + 5 PDF formats, slogan, decline-reason
+list, IP/device tracking, template cloning, upsell section) — treat that as optional.
+Phases 1–8 were republished 2026-10-27; all six migrations applied 11:34 UTC.
+
+**Where they differ:** auto job on acceptance — Word: a template setting; V7 PDF #13 and V9:
+reconcile with office-controlled conversion. Customer comment on accept — Word: saved with the
+proposal; PDF #07 (**must-have**): a **"Customer Notes"** field on the estimate **and** in the
+acceptance email. Only the PDF has: open-notification email to the business (**must-have**, for
+invoices too), package by link **or** attachment plus extra attachments, Print on the
+customer page, a customisable thank-you screen, residential/commercial audiences, line items
+ticked or unticked by default (to confirm), Gmail connection / bounces / CRM-upload attachments
+(V8, "scope not final"), SMS provider undecided (Kyle to ask Lute, likely Twilio).
+
+**Corstead today (code read 2026-10-28):**
+
+| Need | Today |
+|---|---|
+| Accept / Decline on the customer page | Exists, **one click, no confirm**. One textarea is labelled "decline reason"; **a comment typed while accepting is discarded** (`estimates.ts` sets `declineReason` null on accept) — defect against V7 #07 |
+| Customer ticks services (partial accept) | Exists, all ticked by default; stored as `acceptedSnapshot`, conversion honours it |
+| Thank-you / recap after accepting | A banner on the same page; not customisable |
+| Print on the customer page | Missing (public PDF endpoint exists) |
+| Open tracking | Only `firstOpenedAt` on the link; **one link shared by all recipients**, so which address opened is unknowable; staff "Copy link" opens count; **no notification**. Invoices: no public link at all |
+| Office told of a decision | Accept only (fixed-wording email); decline: nothing. **No customer thank-you email** |
+| Estimate history | Raw activity names, no actor/recipient; office vs customer acceptance stored but not shown; opens not shown |
+| Package content (intro, service pages, disclaimers, closing, W-9/licence/insurance, photos) | **Missing**: services have only a short description; no templates/sections; no company-wide uploads; no rich-text editor; `@dnd-kit` present |
+| Profile email composer | Inline dialog, **no template picker**; three separate tag engines |
+| SMS | No provider; rows logged `provider_unconfigured` |
+| Letters | Missing |
+| Communication history | Email History (open + resend) and a feed; not unified, no delete, no search; estimate sends likely appear twice |
+| Conversion | **One estimate at a time**; lines can't be unticked; declined lines not shown; exact start/end only (no window, no duration field); **no "schedule + invoice"**; same record kept (good); preview reads live quote, not the accepted snapshot |
+| Invoice PDF / auto-filed documents | Missing (browser print only) |
+
+**Proposed phases (order):**
+- **9 — the customer's decision done right:** confirm dialog; **Customer Notes** saved on the
+  estimate and in the office email; customisable thank-you recap; Print/PDF on the customer
+  page; customer thank-you email (template); office told on decline too; readable estimate
+  history (who, office vs customer, which address).
+- **10 — opens tracked and notified:** a token per recipient; each open an activity; email the
+  business on open (throttled); staff previews not counted; then invoices get a public page,
+  a PDF and the same tracking.
+- **11 — the Estimate Package** (two parts): templates (title, audience, company fields,
+  colour, accept/decline shown, expiry, thank-you text, accept email) and generic sections
+  (intro, service pages chosen by the estimate's services, disclaimers, pricing from the
+  estimate, closing, PDF documents, photos, custom), reorder, rich text (new dependency),
+  merge fields, preview, snapshot at send; chosen in the send dialog (basic vs package).
+- **12 — communication centre on the profile:** Email / Text / Letter tabs; templates with
+  Use / Edit / Delete in the profile composer; one tag engine; SMS composer ready but sending
+  waits on a provider; letter templates, multi-select print (our PDF writer); one history
+  table (type, by, related record + View), delete single/bulk with confirm and its own
+  permission, filter.
+- **13 — conversion:** several estimates at once; tick/untick lines (customer's choice
+  pre-set, declined shown); arrival window or exact time + duration; "Schedule + create
+  invoice"; preview from the accepted snapshot; invoice PDF filed into documents.
+
+**Regrouped 2026-10-28 (Toheed asked: what can start with no open question).**
+Group A, in order — A1 customer decision (Customer Notes fix, confirm, thank-you, Print,
+thank-you email, decline notice); A2 estimate history + opens per recipient + open
+notification (default: first open per address, then daily); A3 invoice customer page + PDF +
+open tracking; A4 conversion (untick lines, declined shown, snapshot preview, arrival window /
+duration, Schedule + invoice, invoice in documents); A5 profile email templates + one tag
+engine + letters; A6 one communication history with delete and filter.
+Group B (waits): the Estimate Package builder (Q1/3/6, object storage, rich-text
+dependency), auto job on accept (Q2), several estimates at once (Q4), SMS sending (provider),
+credit-card button (payment provider), Gmail / bounces / CRM-file attachments (scope not final).
+
+**To ask Kyle** (with my recommendation): name; auto job on accept (no — office converts, but
+the accepted estimate is flagged and notified); default ticked (yes); two estimates → one job
+per location (yes); open notifications (first open per address at once, then at most daily);
+one good online layout + colour first, more later; credit-card button after a payment
+provider; no customer email on office conversion. SMS provider: Lute.
+
+---
+
 ## Phase 8 — branding: the business's name, details and logo on its estimates — 2026-10-27
 
 **Built and browser-tested through the Playwright MCP against the real new server** (the local

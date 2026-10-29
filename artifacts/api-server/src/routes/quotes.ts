@@ -39,7 +39,15 @@ import {
 import { normalizeAuthorizationRole } from "../lib/role-normalization.js";
 import { persistScheduledQuoteCore } from "../lib/quote-scheduled-create.js";
 import { quoteExpiryFor, validateQuoteSettingsInput, normaliseValidityDays, normaliseQuoteTerms, QUOTE_VALIDITY_PRESETS } from "../lib/quote-settings.js";
-import { readQuoteSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
+import { readQuoteSettings, writeAcceptanceSettings, writeQuoteSettings } from "../lib/quote-settings-store.js";
+import {
+  ACCEPTANCE_TAGS, DEFAULT_ACCEPTANCE_BODY, DEFAULT_ACCEPTANCE_MESSAGE, DEFAULT_ACCEPTANCE_SUBJECT, acceptanceSettingsOf,
+} from "../lib/estimate-acceptance-content.ts";
+
+/** Corstead's own wording, shown as the placeholder until the business writes its own. */
+const ACCEPTANCE_DEFAULTS = {
+  message: DEFAULT_ACCEPTANCE_MESSAGE, subject: DEFAULT_ACCEPTANCE_SUBJECT, body: DEFAULT_ACCEPTANCE_BODY, tags: [...ACCEPTANCE_TAGS],
+};
 import { priceOf, shownPrice } from "../lib/estimate-pricing.ts";
 import { discountsOf, type DiscountInput } from "../lib/discounts.ts";
 import { copyProfileDiscountsTx, readQuoteDiscounts, replaceQuoteDiscountsTx, serializeDiscounts, serviceTaxability, taxChoiceOf, writeQuoteTotalsTx } from "../lib/quote-totals.ts";
@@ -173,7 +181,18 @@ const router: IRouter = Router();
  */
 router.get("/quote-settings", async (_req, res) => {
   const settings = await readQuoteSettings();
-  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS] });
+  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS], acceptanceDefaults: ACCEPTANCE_DEFAULTS });
+});
+
+// Videos 7 and 9: the thank-you a customer sees, and is emailed, after accepting online.
+router.put("/quote-settings/acceptance", async (req, res) => {
+  const sent = acceptanceSettingsOf((req.body ?? {}) as Record<string, unknown>);
+  if ("error" in sent) {
+    res.status(400).json({ error: sent.error });
+    return;
+  }
+  const settings = await writeAcceptanceSettings(sent.settings, getPerformedBy(req));
+  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS], acceptanceDefaults: ACCEPTANCE_DEFAULTS });
 });
 
 router.put("/quote-settings", async (req, res) => {
@@ -191,7 +210,7 @@ router.put("/quote-settings", async (req, res) => {
     },
     getPerformedBy(req),
   );
-  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS] });
+  res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS], acceptanceDefaults: ACCEPTANCE_DEFAULTS });
 });
 
 // ─── helpers ────────────────────────────────────────────────────────────────

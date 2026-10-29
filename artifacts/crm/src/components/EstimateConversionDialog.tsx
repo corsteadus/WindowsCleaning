@@ -42,6 +42,8 @@ interface Preview {
   existingJobs: Array<{ id: number; jobNumber: string }>;
   /** Why it cannot be scheduled while a service is still to be quoted, or null. */
   unpriced?: string | null;
+  /** Video 7: what the customer wrote when accepting online. */
+  customerNotes?: string | null;
 }
 interface ScheduleRow {
   propertyId: number; scheduledDate: string; scheduledStartTime: string; scheduledEndTime: string;
@@ -175,6 +177,12 @@ export function EstimateConversionDialog({ quoteId, open: openProp, onOpenChange
             <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0" />
             <div><p className="text-sm font-bold text-emerald-900">Revision {preview.data.revisionNumber} is the scheduling source</p><p className="text-xs text-emerald-700 mt-1">Services, quantities, and prices below are copied unchanged into each location job.</p></div>
           </div>
+          {preview.data.customerNotes && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm" data-testid="convert-customer-notes">
+              <p className="font-semibold text-amber-900">Customer Notes</p>
+              <p className="mt-1 whitespace-pre-wrap text-slate-800">{preview.data.customerNotes}</p>
+            </div>
+          )}
           {preview.data.snapshot.tax && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm" data-testid="convert-tax">
               <p className="font-semibold text-slate-800">Sales tax: {preview.data.snapshot.tax.label ?? `${preview.data.snapshot.tax.rate}%`}</p>

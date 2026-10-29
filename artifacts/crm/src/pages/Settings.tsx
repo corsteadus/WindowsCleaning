@@ -2,6 +2,7 @@ import { ScheduleNotificationSettings } from "@/components/ScheduleNotificationS
 import { QuoteSettingsCard } from "@/components/QuoteSettingsCard";
 import { SalesTaxCard } from "@/components/SalesTaxCard";
 import { CompanyBrandingCard } from "@/components/CompanyBrandingCard";
+import { AcceptanceSettingsCard } from "@/components/AcceptanceSettingsCard";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -212,6 +213,9 @@ export default function Settings() {
       {/* Kyle (#11, #13): quote validity and the company's own terms, decided
           once for the business instead of on every quote. */}
       <QuoteSettingsCard canManage={canManageQuoteSettings} />
+
+      {/* Videos 7 and 9: the thank-you after a customer accepts online. */}
+      <AcceptanceSettingsCard canManage={canManageQuoteSettings} />
 
       {/* Phase 8 (Kyle, Video 6): the business's identity on its estimates. */}
       <CompanyBrandingCard canManage={canManageQuoteSettings} />
