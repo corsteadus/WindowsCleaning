@@ -59,6 +59,7 @@ import {
 import { filterSelectableCrewTechnicians } from "@/lib/crew-technician-options";
 import { TimeSelect } from "@/components/TimeSelect";
 import { formatTimeOfDay } from "@/lib/time-of-day";
+import { describeEstimateActivity, openSummary } from "@/lib/estimate-history";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 async function estimateApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -287,8 +288,23 @@ function EstimateLifecyclePanel({ quote }: { quote: any }) {
       </div>
       {secureUrl && <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3"><Input readOnly aria-label="The customer's secure link" value={secureUrl} /><Button size="icon" variant="outline" aria-label="Copy secure link" onClick={() => { navigator.clipboard.writeText(secureUrl); toast({ title: "Secure link copied" }); }}><Copy className="h-4 w-4" /></Button></div>}
       {(data?.deliveries?.length > 0 || data?.activities?.length > 0) && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><Mail className="h-3.5 w-3.5" /> Delivery state</h3><div className="mt-2 space-y-2">{data.deliveries.map((item: any) => <div key={item.id} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs"><span>{item.channel.toUpperCase()} · {item.recipient}</span><strong className="capitalize">{item.status.replaceAll("_", " ")}</strong></div>)}</div></div>
-        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><History className="h-3.5 w-3.5" /> Activity</h3><div className="mt-2 space-y-2 max-h-44 overflow-auto">{data.activities.map((item: any) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs"><strong>{item.activityType.replaceAll("_", " ")}</strong><span className="ml-2 text-slate-400">{new Date(item.occurredAt).toLocaleString()}</span></div>)}</div></div>
+        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><Mail className="h-3.5 w-3.5" /> Delivery state</h3><div className="mt-2 space-y-2">
+          {/* A2, Video 7: each address on its own line, with whether and how often it opened its copy. */}
+          {data.deliveries.map((item: any) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs" data-testid="delivery-row">
+            <div className="flex justify-between gap-2"><span className="min-w-0 break-all">{item.channel.toUpperCase()} · {item.recipient}</span><strong className="shrink-0 capitalize">{item.status.replaceAll("_", " ")}</strong></div>
+            {item.channel === "email" && <p className={`mt-1 ${item.openCount ? "font-semibold text-sky-700" : "text-slate-400"}`} data-testid="delivery-opens">{openSummary(item)}</p>}
+          </div>)}
+          {Number(data.publicLink?.openCount ?? 0) > 0 && <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs" data-testid="copied-link-opens">
+            <span>Copied link</span><p className="mt-1 font-semibold text-sky-700">{openSummary({ openCount: data.publicLink.openCount })}</p>
+          </div>}
+        </div></div>
+        <div><h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-400"><History className="h-3.5 w-3.5" /> History</h3><div className="mt-2 space-y-2 max-h-80 overflow-auto" data-testid="estimate-history">{data.activities.map((item: any) => {
+          const entry = describeEstimateActivity(item, { actors: data.actors, deliveries: data.deliveries });
+          return <div key={item.id} className={`rounded-lg border-l-4 bg-slate-50 px-3 py-2 text-xs ${entry.by === "customer" ? "border-l-sky-400" : entry.by === "system" ? "border-l-slate-300" : "border-l-indigo-400"}`} data-testid="history-line">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2"><strong className="text-slate-800">{entry.title}</strong><span className="text-slate-400">{new Date(item.occurredAt).toLocaleString()}</span></div>
+            <p className="text-slate-500">{entry.who}{entry.detail ? <> · <span className="break-words">{entry.detail}</span></> : null}</p>
+          </div>;
+        })}</div></div>
       </div>}
     </section>
       <Dialog open={correcting} onOpenChange={(open) => !open && setCorrecting(false)}>

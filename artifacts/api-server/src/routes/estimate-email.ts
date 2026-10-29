@@ -17,6 +17,7 @@ import {
   type EstimateEmailValues,
 } from "../lib/estimate-email.ts";
 import { readQuoteSettings } from "../lib/quote-settings-store.ts";
+import { withOpenKey } from "../lib/estimate-opens.ts";
 import {
   claimIdempotencyKey, completeIdempotencyKey, getIdempotencyContext, markIdempotencyReplay, releaseIdempotencyKey,
 } from "../lib/idempotency.ts";
@@ -190,12 +191,12 @@ router.post("/quotes/:id/send-email", sendCommunication, async (req, res): Promi
     throw error;
   }
   const snapshot = created.revision.snapshot as EstimatePdfSnapshot;
-  const links = {
-    pdf: `${appUrl()}/api/public/estimates/${created.token}/pdf`,
-    page: `${appUrl()}/estimate/${created.token}`,
-  };
-  const values = await valuesFor(req, quote, snapshot, { customerName: found.customerName, firstName: found.customer.firstName ?? "" }, links, created.validUntil);
-  const rendered = renderEstimateEmail(subject, bodyHtml, values);
+  // A2: each address gets its own copy of the link, so an open says whose it was.
+  const renderFor = async (openKey: string | null) => renderEstimateEmail(subject, bodyHtml, await valuesFor(req, quote, snapshot,
+    { customerName: found.customerName, firstName: found.customer.firstName ?? "" }, {
+      pdf: withOpenKey(`${appUrl()}/api/public/estimates/${created.token}/pdf`, openKey),
+      page: withOpenKey(`${appUrl()}/estimate/${created.token}`, openKey),
+    }, created.validUntil));
   const attachments: EmailAttachment[] = attachPdf ? [{
     filename: estimatePdfFilename(quote.quoteNumber), contentType: "application/pdf",
     content: renderEstimatePdf({ ...snapshot, quote: { ...snapshot.quote, validUntil: created.validUntil } }, {
@@ -207,6 +208,9 @@ router.post("/quotes/:id/send-email", sendCommunication, async (req, res): Promi
   const results = [];
   for (const { email } of eligible) {
     const who = known.get(email)!;
+    // The estimate's own delivery record says how it went, as the history does.
+    const delivery = created.deliveries.find((d) => d.recipient === email);
+    const rendered = await renderFor(delivery?.openKey ?? null);
     const [log] = await db.insert(emailLogsTable).values({
       entityType: "customer", entityId: quote.customerId, recipientEmail: email, recipientName: who.name,
       subject: rendered.subject, bodyHtml: rendered.bodyHtml, status: "pending", sentBy: senderName(req),
@@ -216,8 +220,6 @@ router.post("/quotes/:id/send-email", sendCommunication, async (req, res): Promi
       status: result.success ? "sent" : "failed", provider: result.provider, providerMessageId: result.messageId ?? null,
       errorMessage: result.error ?? null, sentAt: result.success ? new Date() : null,
     }).where(eq(emailLogsTable.id, log.id));
-    // The estimate's own delivery record says how it went, as the history does.
-    const delivery = created.deliveries.find((d) => d.recipient === email);
     if (delivery) {
       await db.update(estimateDeliveryRequestsTable).set({ status: result.success ? "sent" : "failed", lastError: result.error ?? null })
         .where(eq(estimateDeliveryRequestsTable.id, delivery.id));

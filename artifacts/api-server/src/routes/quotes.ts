@@ -191,7 +191,16 @@ router.put("/quote-settings/acceptance", async (req, res) => {
     res.status(400).json({ error: sent.error });
     return;
   }
-  const settings = await writeAcceptanceSettings(sent.settings, getPerformedBy(req));
+  // A2: the open notification rides along when sent; left out, it keeps its value.
+  const openNotification = (req.body ?? {}).openNotificationEnabled;
+  if (openNotification !== undefined && typeof openNotification !== "boolean") {
+    res.status(400).json({ error: "openNotificationEnabled must be true or false" });
+    return;
+  }
+  const settings = await writeAcceptanceSettings(
+    openNotification === undefined ? sent.settings : { ...sent.settings, openNotificationEnabled: openNotification },
+    getPerformedBy(req),
+  );
   res.json({ ...settings, presets: [...QUOTE_VALIDITY_PRESETS], acceptanceDefaults: ACCEPTANCE_DEFAULTS });
 });
 

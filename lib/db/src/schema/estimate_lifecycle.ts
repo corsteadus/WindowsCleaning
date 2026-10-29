@@ -61,6 +61,9 @@ export const estimatePublicLinksTable = pgTable("estimate_public_links", {
   declineReason: text("decline_reason"),
   followUpRequested: boolean("follow_up_requested").notNull().default(false),
   acceptedSnapshot: jsonb("accepted_snapshot"),
+  // A2: opens of the link with no recipient key (a copied link), and when the office was last told.
+  openCount: integer("open_count").notNull().default(0),
+  openNotifiedAt: timestamp("open_notified_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("estimate_public_links_token_hash_idx").on(t.tokenHash),
@@ -80,6 +83,12 @@ export const estimateDeliveryRequestsTable = pgTable("estimate_delivery_requests
   requestedBy: varchar("requested_by"),
   requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+  // A2: this recipient's own key in their link, so an open says which address it was.
+  openKeyHash: text("open_key_hash"),
+  openCount: integer("open_count").notNull().default(0),
+  firstOpenedAt: timestamp("first_opened_at", { withTimezone: true }),
+  lastOpenedAt: timestamp("last_opened_at", { withTimezone: true }),
+  openNotifiedAt: timestamp("open_notified_at", { withTimezone: true }),
 }, (t) => [index("estimate_delivery_requests_quote_idx").on(t.quoteId, t.requestedAt)]);
 
 export const estimateActivitiesTable = pgTable("estimate_activities", {

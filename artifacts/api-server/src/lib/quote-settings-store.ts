@@ -16,6 +16,8 @@ const NO_ACCEPTANCE_SETTINGS: AcceptanceSettings = {
 export const QUOTE_SETTINGS_KEY = "default";
 
 export interface StoredQuoteSettings extends QuoteSettingsValues, AcceptanceSettings {
+  /** A2, Video 7: email the office when a customer opens an estimate. */
+  openNotificationEnabled: boolean;
   updatedBy: string | null;
   updatedAt: string | null;
 }
@@ -36,7 +38,7 @@ export async function readQuoteSettings(reader: Reader = db): Promise<StoredQuot
     .where(eq(quoteSettingsTable.organizationKey, QUOTE_SETTINGS_KEY))
     .limit(1);
   if (!row) {
-    return { ...DEFAULT_QUOTE_SETTINGS, ...NO_ACCEPTANCE_SETTINGS, updatedBy: null, updatedAt: null };
+    return { ...DEFAULT_QUOTE_SETTINGS, ...NO_ACCEPTANCE_SETTINGS, openNotificationEnabled: true, updatedBy: null, updatedAt: null };
   }
   return {
     validityDays: normaliseValidityDays(row.validityDays) ?? DEFAULT_QUOTE_SETTINGS.validityDays,
@@ -45,6 +47,7 @@ export async function readQuoteSettings(reader: Reader = db): Promise<StoredQuot
     acceptanceEmailEnabled: row.acceptanceEmailEnabled ?? true,
     acceptanceEmailSubject: row.acceptanceEmailSubject ?? null,
     acceptanceEmailBody: row.acceptanceEmailBody ?? null,
+    openNotificationEnabled: row.openNotificationEnabled ?? true,
     updatedBy: row.updatedBy ?? null,
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
   };
@@ -75,7 +78,9 @@ export async function writeQuoteSettings(
 }
 
 /** The thank-you after an online acceptance (Videos 7 and 9); the rest of the settings are untouched. */
-export async function writeAcceptanceSettings(values: AcceptanceSettings, updatedBy: string | null): Promise<StoredQuoteSettings> {
+export async function writeAcceptanceSettings(
+  values: AcceptanceSettings & { openNotificationEnabled?: boolean }, updatedBy: string | null,
+): Promise<StoredQuoteSettings> {
   await db
     .insert(quoteSettingsTable)
     .values({ organizationKey: QUOTE_SETTINGS_KEY, ...values, updatedBy })

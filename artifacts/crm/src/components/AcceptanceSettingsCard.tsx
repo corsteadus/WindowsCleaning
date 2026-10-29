@@ -17,9 +17,10 @@ interface Settings {
   acceptanceEmailEnabled: boolean;
   acceptanceEmailSubject: string | null;
   acceptanceEmailBody: string | null;
+  openNotificationEnabled?: boolean;
   acceptanceDefaults: { message: string; subject: string; body: string; tags: string[] };
 }
-type Draft = { message: string; enabled: boolean; subject: string; body: string };
+type Draft = { message: string; enabled: boolean; subject: string; body: string; opens: boolean };
 type Box = "message" | "subject" | "body";
 
 export function AcceptanceSettingsCard({ canManage }: { canManage: boolean }) {
@@ -35,6 +36,7 @@ export function AcceptanceSettingsCard({ canManage }: { canManage: boolean }) {
     setDraft({
       message: settings.data.acceptanceMessage ?? "", enabled: settings.data.acceptanceEmailEnabled,
       subject: settings.data.acceptanceEmailSubject ?? "", body: settings.data.acceptanceEmailBody ?? "",
+      opens: settings.data.openNotificationEnabled ?? true,
     });
   }, [settings.data]);
 
@@ -44,9 +46,10 @@ export function AcceptanceSettingsCard({ canManage }: { canManage: boolean }) {
       body: JSON.stringify({
         acceptanceMessage: draft!.message, acceptanceEmailEnabled: draft!.enabled,
         acceptanceEmailSubject: draft!.subject, acceptanceEmailBody: draft!.body,
+        openNotificationEnabled: draft!.opens,
       }),
     }),
-    onSuccess: async () => { setMessage({ kind: "ok", text: "Saved. The next customer to accept sees it." }); await queryClient.invalidateQueries({ queryKey: ["quote-settings"] }); },
+    onSuccess: async () => { setMessage({ kind: "ok", text: "Saved. It applies from the next customer." }); await queryClient.invalidateQueries({ queryKey: ["quote-settings"] }); },
     onError: (cause: Error) => setMessage({ kind: "error", text: cause.message }),
   });
 
@@ -70,12 +73,19 @@ export function AcceptanceSettingsCard({ canManage }: { canManage: boolean }) {
       <div className="px-5 py-4 border-b border-slate-100 flex items-start gap-3">
         <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><PartyPopper className="w-4 h-4" /></div>
         <div>
-          <h2 className="text-base font-bold text-slate-900">After a customer accepts</h2>
-          <p className="text-xs text-slate-500 mt-0.5">The thank-you a customer sees when they accept an estimate online, and the email they get. Not sent when the office converts an estimate itself.</p>
+          <h2 className="text-base font-bold text-slate-900">When a customer opens or accepts</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Whether the office hears when an estimate is opened; the thank-you a customer sees when they accept online, and the email they get. Not sent when the office converts an estimate itself.</p>
         </div>
       </div>
       {!draft || !defaults ? <p className="p-5 text-sm text-slate-400">Loading…</p> : (
         <div className="p-5 space-y-4">
+          {/* A2, Video 7 (must-have): the business hears when its estimate is opened. */}
+          <label className="flex items-start gap-2 border-b border-slate-100 pb-4 text-sm text-slate-700">
+            <input type="checkbox" className="mt-1" data-testid="open-notification-enabled" checked={draft.opens} onChange={(e) => set({ opens: e.target.checked })} />
+            <span>Email the office when a customer opens an estimate
+              <span className="block text-[11px] text-slate-400">The first time each address opens it, then at most once a day. Opens by your own team are not counted.</span></span>
+          </label>
+
           <div className="flex flex-wrap items-center gap-1.5" aria-label="Insert a tag">
             <span className="text-xs font-semibold text-slate-500 mr-1">Insert:</span>
             {defaults.tags.map((tag) => (

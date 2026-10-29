@@ -42,7 +42,7 @@ test("an accepted estimate's header says Accepted, not Draft", () => {
 });
 
 test("the customer can print the estimate, and the print is recorded", () => {
-  assert.match(publicPage, /\/api\/public\/estimates\/\$\{encodeURIComponent\(token\)\}\/pdf`\} target="_blank"/);
+  assert.match(publicPage, /\/api\/public\/estimates\/\$\{encodeURIComponent\(token\)\}\/pdf`\)\} target="_blank"/);
   assert.match(publicPage, /JSON\.stringify\(\{ activityType: "printed" \}\)/);
 });
 

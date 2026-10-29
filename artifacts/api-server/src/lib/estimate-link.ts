@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { isTerminalEstimateStatus } from "./estimate-lifecycle.ts";
 import { quoteExpiryFor } from "./quote-settings.ts";
+import { newOpenKey } from "./estimate-opens.ts";
 
 type DrizzleTX = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -49,12 +50,15 @@ export async function createEstimateLinkTx(tx: DrizzleTX, input: {
   const [link] = await tx.insert(estimatePublicLinksTable).values({
     quoteId: input.quoteId, revisionId: revision.id, tokenHash: estimateTokenHash(token), expiresAt: expiry.expiresAt, sendMethods: channels.join(","),
   }).returning();
-  const deliveries = input.deliveries.length
-    ? await tx.insert(estimateDeliveryRequestsTable).values(input.deliveries.map((d) => ({
+  // A2: each recipient's copy of the link carries its own key, so an open says whose it was.
+  const keys = input.deliveries.map(() => newOpenKey());
+  const inserted = input.deliveries.length
+    ? await tx.insert(estimateDeliveryRequestsTable).values(input.deliveries.map((d, i) => ({
       quoteId: input.quoteId, publicLinkId: link.id, channel: d.channel, recipient: d.recipient,
-      status: d.status, lastError: d.lastError ?? null, requestedBy: input.actorId,
+      status: d.status, lastError: d.lastError ?? null, requestedBy: input.actorId, openKeyHash: keys[i].hash,
     }))).returning()
     : [];
+  const deliveries = inserted.map(({ openKeyHash: _hash, ...d }) => ({ ...d, openKey: keys.find((k) => k.hash === _hash)!.key }));
   await tx.update(quotesTable).set({ status: "sent", validUntil: expiry.validUntil }).where(eq(quotesTable.id, input.quoteId));
   await tx.insert(estimateActivitiesTable).values({
     quoteId: input.quoteId, publicLinkId: link.id, activityType: "estimate_sent", actorId: input.actorId,

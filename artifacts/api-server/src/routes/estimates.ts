@@ -1,13 +1,16 @@
 import { hardBlockRefusal } from "../lib/calendar-blocks-store.ts";
 import { acceptedSnapshotFor, EstimateAcceptanceError } from "../lib/estimate-acceptance.ts";
-import { officeAcceptedNotice, officeDeclinedNotice, officeEmailAddress, type OfficeNotice } from "../lib/estimate-accepted-notice.ts";
+import {
+  officeAcceptedNotice, officeDeclinedNotice, officeEmailAddress, officeOpenedNotice, type OfficeNotice,
+} from "../lib/estimate-accepted-notice.ts";
+import { isNewVisit, isValidOpenKey, openKeyHash, openNoticeDue } from "../lib/estimate-opens.ts";
 import { acceptanceMessage, acceptanceValues, customerNotesOf } from "../lib/estimate-acceptance-content.ts";
 import { thankCustomerForAcceptance } from "../lib/estimate-thank-you.ts";
 import { sendEmailTo } from "../lib/email.ts";
 import { summariseEstimates } from "../lib/estimate-dashboard.ts";
 import { deriveQuoteStatuses } from "../lib/estimate-status-batch.ts";
 import { createHash, randomBytes } from "node:crypto";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   db, customersTable, propertiesTable, quotesTable, quoteLineItemsTable, jobsTable, usersTable,
@@ -205,6 +208,7 @@ export interface EstimateAppointmentRepository {
     locations: any[];
     deliveries: any[];
     activities: any[];
+    actors?: Record<string, string>;
   }>;
 }
 
@@ -335,7 +339,17 @@ const estimateAppointmentRepository: EstimateAppointmentRepository = {
       db.select().from(estimateActivitiesTable).where(eq(estimateActivitiesTable.quoteId, quoteId))
         .orderBy(desc(estimateActivitiesTable.occurredAt)).limit(100),
     ]);
-    return { ...lifecycle, locations, deliveries, activities };
+    // A2: the history names who did each step, not a user id.
+    const actorIds = [...new Set(activities.map((a) => a.actorId).filter((id): id is string => Boolean(id)))];
+    const users = actorIds.length
+      ? await db.select({ id: usersTable.id, firstName: usersTable.firstName, lastName: usersTable.lastName, username: usersTable.username })
+        .from(usersTable).where(inArray(usersTable.id, actorIds))
+      : [];
+    const actors = Object.fromEntries(users.map((u) => [u.id, [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.username || "A team member"]));
+    return {
+      ...lifecycle, locations, activities, actors,
+      deliveries: deliveries.map(({ openKeyHash: _key, ...delivery }) => delivery),
+    };
   },
 };
 
@@ -1055,6 +1069,61 @@ async function publicEstimate(token: string) {
   return { link, quote, customer, offered, snapshot: link.acceptedSnapshot ?? offered };
 }
 
+type FoundEstimate = NonNullable<Awaited<ReturnType<typeof publicEstimate>>>;
+
+/**
+ * A2, Video 7: an open of the customer's link, counted against the address whose
+ * copy it was (`?r=`) or, with no key, against the link itself. Somebody signed in
+ * to Corstead looking at the link is not the customer and counts for nothing. A
+ * reload within half an hour is the same visit. The office is emailed on an
+ * address's first open, then at most daily, and never once the estimate is decided.
+ */
+async function recordOpen(req: Request, found: FoundEstimate, via: "page" | "pdf"): Promise<void> {
+  if (req.isAuthenticated()) return;
+  const now = new Date();
+  const key = isValidOpenKey(req.query.r) ? String(req.query.r) : null;
+  const opened = await db.transaction(async (tx) => {
+    const [link] = await tx.select().from(estimatePublicLinksTable).where(eq(estimatePublicLinksTable.id, found.link.id)).for("update");
+    const [delivery] = key
+      ? await tx.select().from(estimateDeliveryRequestsTable).where(and(
+        eq(estimateDeliveryRequestsTable.publicLinkId, link.id), eq(estimateDeliveryRequestsTable.openKeyHash, openKeyHash(key)),
+      )).for("update")
+      : [];
+    const newVisit = isNewVisit(delivery ? delivery.lastOpenedAt : link.lastActivityAt, now);
+    const openCount = (delivery ? delivery.openCount : link.openCount) + (newVisit ? 1 : 0);
+    await tx.update(estimatePublicLinksTable).set({
+      firstOpenedAt: link.firstOpenedAt ?? now, lastActivityAt: now, ...(delivery ? {} : { openCount }),
+    }).where(eq(estimatePublicLinksTable.id, link.id));
+    if (delivery) {
+      await tx.update(estimateDeliveryRequestsTable).set({
+        openCount, firstOpenedAt: delivery.firstOpenedAt ?? now, lastOpenedAt: now,
+      }).where(eq(estimateDeliveryRequestsTable.id, delivery.id));
+    }
+    if (!newVisit) return null;
+    await tx.insert(estimateActivitiesTable).values({
+      quoteId: link.quoteId, publicLinkId: link.id, activityType: "opened", actorType: "customer",
+      detail: { deliveryRequestId: delivery?.id ?? null, via, openCount },
+    });
+    // Claimed in the same transaction, so two opens at once cannot both email the office.
+    const lastNotified = delivery ? delivery.openNotifiedAt : link.openNotifiedAt;
+    if (link.decision || !openNoticeDue(lastNotified, now)) return null;
+    if (delivery) {
+      await tx.update(estimateDeliveryRequestsTable).set({ openNotifiedAt: now }).where(eq(estimateDeliveryRequestsTable.id, delivery.id));
+    } else {
+      await tx.update(estimatePublicLinksTable).set({ openNotifiedAt: now }).where(eq(estimatePublicLinksTable.id, link.id));
+    }
+    return { recipient: delivery?.recipient ?? null, openCount };
+  });
+  if (!opened || !(await readQuoteSettings()).openNotificationEnabled) return;
+  const customerName = found.customer
+    ? found.customer.companyName?.trim() || [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ")
+    : null;
+  void notifyOffice(found.quote.id, officeOpenedNotice({
+    quoteNumber: found.quote.quoteNumber, customerName, recipient: opened.recipient,
+    openCount: opened.openCount, estimateUrl: estimateUrlOf(found.quote.id),
+  })).catch(() => {});
+}
+
 router.use("/public/estimates/:token", (req, res, next) => {
   const token = String(req.params.token ?? "");
   if (!isValidPublicEstimateToken(token)) {
@@ -1074,10 +1143,7 @@ router.use("/public/estimates/:token", (req, res, next) => {
 router.get("/public/estimates/:token", async (req, res): Promise<any> => {
   const found = await publicEstimate(req.params.token);
   if (!found) return res.status(404).json({ error: "This estimate link is invalid or expired" });
-  const now = new Date();
-  await db.update(estimatePublicLinksTable).set({
-    firstOpenedAt: found.link.firstOpenedAt ?? now, lastActivityAt: now,
-  }).where(eq(estimatePublicLinksTable.id, found.link.id));
+  await recordOpen(req, found, "page");
   const customerName = found.customer ? [found.customer.firstName, found.customer.lastName].filter(Boolean).join(" ") : null;
   const acceptedLines = found.link.decision === "accepted"
     ? ((found.link.acceptedSnapshot as { lineItems?: Array<{ id: number; description: string }> } | null)?.lineItems ?? [])
@@ -1110,10 +1176,7 @@ router.get("/public/estimates/:token", async (req, res): Promise<any> => {
 router.get("/public/estimates/:token/pdf", async (req, res): Promise<any> => {
   const found = await publicEstimate(req.params.token);
   if (!found || !found.offered) return res.status(404).json({ error: "This estimate link is invalid or expired" });
-  const now = new Date();
-  await db.update(estimatePublicLinksTable).set({
-    firstOpenedAt: found.link.firstOpenedAt ?? now, lastActivityAt: now,
-  }).where(eq(estimatePublicLinksTable.id, found.link.id));
+  await recordOpen(req, found, "pdf");
   const [revision] = await db.select().from(estimateRevisionsTable).where(eq(estimateRevisionsTable.id, found.link.revisionId)).limit(1);
   await sendEstimatePdf(res, found.offered as EstimatePdfSnapshot, {
     customer: found.customer ?? null, date: revision?.finalizedAt ?? found.link.createdAt, revisionNumber: revision?.revisionNumber ?? null,

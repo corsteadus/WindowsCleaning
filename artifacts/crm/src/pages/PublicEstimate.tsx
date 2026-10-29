@@ -55,9 +55,12 @@ export default function PublicEstimate() {
     fetch(`${BASE}/api/public/branding`).then((r) => (r.ok ? r.json() : null)).then(setBranding).catch(() => setBranding(null));
   }, []);
 
+  // A2: whose copy of the link this is (`?r=`), passed on so the open is counted against that address.
+  const openKey = useMemo(() => new URLSearchParams(window.location.search).get("r"), []);
+  const keyed = (path: string) => (openKey ? `${path}?r=${encodeURIComponent(openKey)}` : path);
   const load = useCallback((keepChoice = false) =>
     // Public estimate links intentionally work without an authenticated session.
-    fetch(`${BASE}/api/public/estimates/${encodeURIComponent(token)}`)
+    fetch(keyed(`${BASE}/api/public/estimates/${encodeURIComponent(token)}`))
       .then(async (response) => {
         if (!response.ok) throw new Error((await response.json()).error ?? "Estimate unavailable");
         return response.json();
@@ -144,7 +147,7 @@ export default function PublicEstimate() {
           <div className="mt-6 flex items-center justify-between gap-3">
             <p className="text-xs font-bold uppercase tracking-[.18em] text-sky-300">Window Cleaning Estimate</p>
             {/* Video 7: the customer can print it — the same PDF the business sends. */}
-            <a href={`${BASE}/api/public/estimates/${encodeURIComponent(token)}/pdf`} target="_blank" rel="noopener" data-testid="public-print"
+            <a href={keyed(`${BASE}/api/public/estimates/${encodeURIComponent(token)}/pdf`)} target="_blank" rel="noopener" data-testid="public-print"
               onClick={() => { void fetch(`${BASE}/api/public/estimates/${encodeURIComponent(token)}/activity`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ activityType: "printed" }) }).catch(() => {}); }}
               className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-white/20 px-3 text-sm font-semibold text-white hover:bg-white/10">
               <Printer className="h-4 w-4" /> Print / PDF

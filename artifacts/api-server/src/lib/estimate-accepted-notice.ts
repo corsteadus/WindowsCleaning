@@ -119,6 +119,31 @@ export function officeDeclinedNotice(input: DeclinedNoticeInput): OfficeNotice {
   return { subject: `${input.quoteNumber} declined by ${who}`, text: lines.join("\n"), html };
 }
 
+export interface OpenedNoticeInput {
+  quoteNumber: string;
+  customerName?: string | null;
+  /** The address whose link was opened; null for a link with no recipient key (copied by hand). */
+  recipient: string | null;
+  /** How many times this address (or the copied link) has opened it, this open included. */
+  openCount: number;
+  estimateUrl?: string | null;
+}
+
+/** Video 7 (must-have): the business hears when a customer opens their estimate. */
+export function officeOpenedNotice(input: OpenedNoticeInput): OfficeNotice {
+  const who = (input.customerName ?? "").trim() || "A customer";
+  const via = input.recipient ? `the link sent to ${input.recipient}` : "a copied link";
+  const times = input.openCount === 1 ? "for the first time" : `(${input.openCount} times so far)`;
+  const lines = [`${who} opened estimate ${input.quoteNumber} ${times}, through ${via}.`, "", "Nothing has been decided yet."];
+  if (input.estimateUrl) lines.push("", input.estimateUrl);
+  const html = [
+    `<p style="margin:0 0 12px"><strong>${escapeHtml(who)}</strong> opened estimate <strong>${escapeHtml(input.quoteNumber)}</strong> ${escapeHtml(times)}, through ${escapeHtml(via)}.</p>`,
+    `<p style="margin:0;color:#64748b">Nothing has been decided yet.</p>`,
+    input.estimateUrl ? `<p style="margin:14px 0 0"><a href="${escapeHtml(input.estimateUrl)}">Open the estimate</a></p>` : "",
+  ].join("");
+  return { subject: `${input.quoteNumber} opened by ${who}`, text: lines.join("\n"), html };
+}
+
 /**
  * The company's main office address. There is no company settings store yet, so
  * it is configuration; when Phase 11 builds Settings this moves there.

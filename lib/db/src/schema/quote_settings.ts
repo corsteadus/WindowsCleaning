@@ -34,6 +34,8 @@ export const quoteSettingsTable = pgTable("quote_settings", {
   acceptanceEmailEnabled: boolean("acceptance_email_enabled").notNull().default(true),
   acceptanceEmailSubject: text("acceptance_email_subject"),
   acceptanceEmailBody: text("acceptance_email_body"),
+  /** Video 7: email the office when a customer opens an estimate (first open per address, then daily). */
+  openNotificationEnabled: boolean("open_notification_enabled").notNull().default(true),
   updatedBy: text("updated_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

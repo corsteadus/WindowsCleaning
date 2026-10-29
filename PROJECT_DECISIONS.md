@@ -164,6 +164,34 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase A2 — estimate history, opens per address, the office told — 2026-10-29
+
+**Built and browser-tested (MCP, local server); API walkthrough 19/20** (the 20th, a second
+copied-link open, was refused by the public link's own rate limit after ~25 rapid calls; the
+same open run alone counts). CRM 848/848, API 998 + the 14 baseline `DATABASE_URL` files,
+both typechecks clean. **Migration `estimate-opens-v1`** (additive: `estimate_delivery_requests`
+`open_key_hash` + partial unique index, `open_count`, `first_opened_at`, `last_opened_at`,
+`open_notified_at`; `estimate_public_links.open_count`, `open_notified_at`;
+`quote_settings.open_notification_enabled` default true) — local copy only; Sandbox at the
+next republish through the gate.
+
+- **Opens per address (Video 7):** the link is one per send, so each recipient's copy carries
+  its own key (`?r=`, 16 chars; only its hash is stored; `lib/estimate-opens.ts`). The page and
+  the PDF count an open against that address; no key or an unknown key counts on the link
+  ("Copied link"). A reload / the PDF within 30 minutes is the same visit. **A signed-in team
+  member's open counts for nothing** (the old "Copy link opens count as viewed" defect).
+- **Office told on open (must-have):** "Q-… opened by …", on each address's first open, then
+  at most once a day (the recommendation put to Kyle); never once the estimate is decided;
+  claimed under a row lock so two opens cannot both send it. Settings → "When a customer opens
+  or accepts" has an on/off (default on).
+- **Readable history** (`crm/src/lib/estimate-history.ts`): every activity as a sentence with
+  who did it — the team member's name (the lifecycle now returns `actors`), "Customer", or
+  "Corstead (automatic)" — and the address (sent to, opened through). Online vs verbal
+  acceptance told apart. The Delivery section shows "Opened N times, last …" per address.
+- The A1 Print link and the page's own reload carry the key.
+
+---
+
 ## Phase A1 — the customer's decision, confirmed, kept and thanked — 2026-10-28
 
 **Built and browser-tested (MCP, local server, 2026-10-29); API walkthrough 20/20.** Browser:
