@@ -24,7 +24,8 @@ test("Resend opens the profile's own composer with the email in it, and only for
 });
 
 test("the history lives in the Email History section, and refreshes after a send", () => {
-  const section = detail.slice(detail.indexOf('id="activity" title="Email History & Activity"'));
-  assert.ok(section.indexOf("<EmailHistory") > 0 && section.indexOf("<EmailHistory") < section.indexOf("<CommunicationActivityTab"));
+  // A6: the emails are in the one communication history (texts and letters with them).
+  const section = detail.slice(detail.indexOf('id="activity" title="Communication History & Activity"'));
+  assert.ok(section.indexOf("<CommunicationHistory") > 0 && section.indexOf("<CommunicationHistory") < section.indexOf("<CommunicationActivityTab"));
   assert.match(detail, /invalidateQueries\(\{ queryKey: authScopedQueryKey\(user, \["profile-emails"\]\) \}\)/);
 });

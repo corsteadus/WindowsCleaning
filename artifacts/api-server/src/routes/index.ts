@@ -42,6 +42,7 @@ import companyProfileRouter from "./company-profile";
 import estimatesRouter from "./estimates";
 import invoicePublicRouter from "./invoice-public";
 import profileMessagesRouter from "./profile-messages";
+import communicationHistoryRouter from "./communication-history";
 import calendarRouter from "./calendar";
 import scheduleQueueRouter from "./schedule-queue";
 
@@ -90,6 +91,7 @@ router.use(companyProfileRouter);
 router.use(estimatesRouter);
 router.use(invoicePublicRouter);
 router.use(profileMessagesRouter);
+router.use(communicationHistoryRouter);
 router.use(calendarRouter);
 router.use(scheduleQueueRouter);
 

@@ -65,6 +65,8 @@ export const APP_CAPABILITIES = [
   "communication.manage",
   "communication.send",
   "communication.settings",
+  // A6: removing an entry from a profile's communication history — owner and admin only.
+  "communication.history.delete",
   "campaigns.view",
   "campaigns.manage",
   "team_users.manage",
@@ -104,6 +106,7 @@ const OFFICE_ADMIN_CAPABILITIES: readonly AppCapability[] = [
 const OWNER_CAPABILITIES: readonly AppCapability[] = [
   ...OFFICE_ADMIN_CAPABILITIES,
   "catalogs.manage", "custom_fields.manage",
+  "communication.history.delete",
   "automation.view", "automation.manage",
   "automation_events.view", "automation_events.manage",
 ];

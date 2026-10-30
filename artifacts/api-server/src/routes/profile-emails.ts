@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { customersTable, db, emailCampaignsTable, emailLogsTable } from "@workspace/db";
+import { and, desc, eq, inArray, notExists } from "drizzle-orm";
+import { communicationDeletionsTable, customersTable, db, emailCampaignsTable, emailLogsTable } from "@workspace/db";
 import { hasCapability, isAssignmentScopedOperationalRole } from "../lib/authorization.ts";
 import { emailHistory, emailHistoryEntry, type CampaignRow } from "../lib/email-history.ts";
 import { inProspectScope } from "../lib/profile-lists.ts";
@@ -42,7 +42,11 @@ async function campaignsFor(ids: number[]): Promise<CampaignRow[]> {
   }).from(emailCampaignsTable).where(inArray(emailCampaignsTable.id, ids));
 }
 
-const ofProfile = (id: number) => and(eq(emailLogsTable.entityType, "customer"), eq(emailLogsTable.entityId, id));
+// A6: an email the owner or an admin removed from the history is not shown here either.
+const ofProfile = (id: number) => and(eq(emailLogsTable.entityType, "customer"), eq(emailLogsTable.entityId, id), notExists(
+  db.select({ id: communicationDeletionsTable.id }).from(communicationDeletionsTable)
+    .where(and(eq(communicationDeletionsTable.source, "email"), eq(communicationDeletionsTable.sourceId, emailLogsTable.id))),
+));
 
 router.get(["/customers/:id/emails", "/prospects/:id/emails"], async (req, res): Promise<void> => {
   const id = idOf(req.params.id);

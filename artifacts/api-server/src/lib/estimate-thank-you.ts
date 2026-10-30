@@ -65,6 +65,7 @@ export async function thankCustomerForAcceptance(input: ThankYouInput): Promise<
     const [log] = await db.insert(emailLogsTable).values({
       entityType: "customer", entityId: input.customerId, recipientEmail: to, recipientName: customerName || null,
       subject: email.subject, bodyHtml: email.html, status: "pending", sentBy: SENDER,
+      relatedType: "quote", relatedId: input.quoteId,
     }).returning();
     const result = await sendEmail({ to: [{ email: to, name: customerName || undefined }], subject: email.subject, html: email.html, text: email.text });
     await db.update(emailLogsTable).set({

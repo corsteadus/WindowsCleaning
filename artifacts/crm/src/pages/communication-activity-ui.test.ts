@@ -16,16 +16,20 @@ test("#5 there is one tab, not two", () => {
   assert.doesNotMatch(code, /activeView === "communications"/);
 });
 
+// A6 (Kyle, Video 8): what was sent is in one communication history, once each; the
+// profile's own activity follows it, without the "email sent" lines that repeated it.
 test("#5 it holds both the messages and the profile changes", () => {
-  assert.match(source, /<CommunicationActivityTab[\s\S]{0,160}messages=\{customer\.messages\}/);
+  assert.match(source, /<CommunicationHistory\s/);
   assert.match(source, /logs=\{customer\.activityLogs \?\? \[\]\}/);
 });
 
-test("#5 the four filters Kyle named are the ones offered", () => {
-  const chips = source.slice(source.indexOf("const chips:"), source.indexOf("];", source.indexOf("const chips:")));
-  for (const label of ["All activity", "Email", "Text", "Profile changes"]) {
-    assert.ok(chips.includes(label), `${label} is missing`);
+test("#5 the filters: all, emails, texts (and since A6 letters); profile changes shown on their own", () => {
+  const history = readFileSync(fileURLToPath(new URL("../lib/communication-history.ts", import.meta.url)), "utf8");
+  const filters = history.slice(history.indexOf("export const FILTERS"), history.indexOf("];", history.indexOf("export const FILTERS")));
+  for (const label of ["All", "Emails", "Texts", "Letters"]) {
+    assert.ok(filters.includes(`label: "${label}"`), `${label} is missing`);
   }
+  assert.match(source, />Profile activity<\/p>/);
 });
 
 test("#5 an item links to the estimate, job or invoice it belongs to", () => {

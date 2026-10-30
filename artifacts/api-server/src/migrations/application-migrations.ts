@@ -22,6 +22,7 @@ import { estimateOpensV1Migration } from "./estimate-opens-v1.ts";
 import { invoicePublicV1Migration } from "./invoice-public-v1.ts";
 import { jobArrivalWindowV1Migration } from "./job-arrival-window-v1.ts";
 import { messageTemplatesV1Migration } from "./message-templates-v1.ts";
+import { communicationHistoryV1Migration } from "./communication-history-v1.ts";
 
 export type MigrationEnvironment =
   | "sandbox"
@@ -110,6 +111,7 @@ export const REQUIRED_MIGRATIONS = [
   invoicePublicV1Migration,
   jobArrivalWindowV1Migration,
   messageTemplatesV1Migration,
+  communicationHistoryV1Migration,
 ] as const;
 
 export class MigrationGateError extends Error {

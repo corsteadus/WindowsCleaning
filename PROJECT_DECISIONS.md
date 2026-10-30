@@ -164,6 +164,49 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase A6 — one communication history, with filter and delete (owner and admin only) — 2026-10-30
+
+**Built and browser-tested (MCP, visible browser, local server); API walkthrough 23/23**
+(`scratchpad/a6-walkthrough.mjs`). Source: Kyle's Video 8 (8.3: "click on a link, and a screen
+pops up that shows the actual email we sent out"). **Toheed decided 2026-10-30: only the owner and
+admins may delete history; office staff may not.**
+
+- **One list, each message once** (`CommunicationHistory.tsx`, server `lib/communication-history.ts`):
+  the profile's "Communication History & Activity" section shows every email, text and letter,
+  newest first: what, status, to whom, who sent it, the template, and the estimate or invoice it
+  was about (a link). Before, an email was written to three tables and the profile showed it in
+  two places (and an estimate send twice). Now the history takes each from the record that holds
+  it best: emails from `email_logs`; texts, and automatic emails that never went out, from
+  `message_logs` (an email that went out or failed is not taken again from its redacted line);
+  estimate deliveries from before per-recipient links (A2); letters from the new `printed_letters`.
+- **Filter and search**: All / Emails / Texts / Letters with counts, and a search over subject,
+  address, sender, template and related record; 50 shown at a time, "Show more".
+- **View**: an email as it was sent (sandboxed frame) with **Resend**; a letter with its address and
+  words as printed, and **Print again** (the same letter, its own date); a text's words where they
+  were kept.
+- **Delete, one or many, after a confirm**: tick entries (or "Select all shown"), "Delete N", or
+  Delete inside View. The confirm says it disappears for everyone and that Corstead keeps a note.
+  New capability **`communication.history.delete`**: owner, admin (and super admin) only. The
+  screen only offers it when the server says so, and the server refuses everyone else (403).
+  **Nothing that was sent is erased**: `communication_deletions` hides the entry and records what
+  it was, who removed it and when; the profile's activity gets "Removed N entries from the
+  communication history". Only this profile's own entries can be named (another profile's
+  is 404). Deleting again is harmless. The older email list hides deleted emails too.
+- **Profile activity** under the history now shows what happened to the profile (status changes,
+  notes, deletions), without the "email sent" lines that repeated the history.
+- Emails now record what they were about (`email_logs.related_type/related_id`): estimate emails,
+  the acceptance thank-you, invoice emails, and a profile email sent for an invoice. Older emails
+  show no link.
+- Letters printed from A5 are now kept in `printed_letters` (the words as printed), not as an
+  activity line.
+- The permanent profile delete (Kyle #3) removes the two new tables with the profile.
+- **Migration `communication-history-v1`** (additive): `email_logs.related_type`, `related_id`;
+  tables `printed_letters` and `communication_deletions` (both cascade with the customer), three
+  indexes. Applied on the local copy only; Sandbox gets it at republish through the gate.
+- Tests: API `communication-history.test.ts` (6); CRM `communication-history.test.ts` (4); three
+  older tests re-pointed to the one history. CRM 864/864; API only the 14 DATABASE_URL baseline
+  files fail.
+
 ## Phase A5 — writing to a profile: email, text, letter, templates, one tag engine — 2026-10-30
 
 **Built and browser-tested (MCP, visible browser, local server); API walkthrough 29/29**

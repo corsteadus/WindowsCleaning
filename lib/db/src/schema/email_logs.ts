@@ -28,6 +28,9 @@ export const emailLogsTable = pgTable("email_logs", {
   errorMessage: text("error_message"),
   // Who sent it (Kyle, Video 4); null before migrations/email-log-sender-v1.ts.
   sentBy: text("sent_by"),
+  // A6: the estimate or invoice the email was about; null for older emails (communication-history-v1).
+  relatedType: text("related_type"),
+  relatedId: integer("related_id"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   // Retry tracking
   retryCount: integer("retry_count").notNull().default(0),

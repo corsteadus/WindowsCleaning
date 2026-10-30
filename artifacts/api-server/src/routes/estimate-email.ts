@@ -214,6 +214,7 @@ router.post("/quotes/:id/send-email", sendCommunication, async (req, res): Promi
     const [log] = await db.insert(emailLogsTable).values({
       entityType: "customer", entityId: quote.customerId, recipientEmail: email, recipientName: who.name,
       subject: rendered.subject, bodyHtml: rendered.bodyHtml, status: "pending", sentBy: senderName(req),
+      relatedType: "quote", relatedId: quote.id,
     }).returning();
     const result = await sendEmail({ to: [{ email, name: who.name }], subject: rendered.subject, html: rendered.bodyHtml, attachments });
     await db.update(emailLogsTable).set({

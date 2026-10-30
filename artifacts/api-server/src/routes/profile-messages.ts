@@ -9,7 +9,7 @@
  */
 import { Router, type IRouter, type Request } from "express";
 import { and, eq } from "drizzle-orm";
-import { activityLogsTable, db, emailTemplatesTable } from "@workspace/db";
+import { db, emailTemplatesTable, printedLettersTable } from "@workspace/db";
 import { requireFinancialCapability } from "../lib/financial-permissions";
 import { fillTags, PROFILE_TAG_KEYS, textToHtml, unknownTagError } from "../lib/merge-tags.ts";
 import { channelOf, MAX_EMAIL_BODY, MAX_LETTER_BODY, MAX_SMS_BODY, MAX_SUBJECT, smsSegments, type TemplateChannel } from "../lib/message-templates.ts";
@@ -77,12 +77,12 @@ const letterOf = (profile: ProfileForMessages, draft: Draft): LetterContent => {
   return { date: profile.values.today, recipientLines: profile.mailingLines, subject: filled.subject || null, body: filled.text };
 };
 
-async function logLetters(req: Request, profiles: ProfileForMessages[], draft: Draft) {
-  if (!profiles.length) return;
-  await db.insert(activityLogsTable).values(profiles.map((profile) => ({
-    entityType: "customer", entityId: profile.id, action: "letter_printed",
-    note: draft.templateName ?? (draft.subject || "Letter"), toValue: profile.mailingLines.slice(1).join(", ") || null,
-    fromValue: senderName(req),
+/** A6: each letter as printed goes into the profile's communication history, to read or print again. */
+async function logLetters(req: Request, letters: Array<{ profile: ProfileForMessages; letter: LetterContent }>, draft: Draft) {
+  if (!letters.length) return;
+  await db.insert(printedLettersTable).values(letters.map(({ profile, letter }) => ({
+    customerId: profile.id, templateId: draft.templateId, templateName: draft.templateName,
+    subject: letter.subject, body: letter.body, recipientLines: letter.recipientLines, printedBy: senderName(req),
   })));
 }
 
@@ -118,8 +118,9 @@ router.post("/profile-messages/:customerId/letter", sendCommunication, async (re
     return;
   }
   const { businessName, branding } = await estimateBranding();
-  const pdf = renderLetterPdf([letterOf(profile, parsed.draft)], { businessName, contactLines: branding.contactLines, logo: branding.logo });
-  await logLetters(req, [profile], parsed.draft);
+  const letter = letterOf(profile, parsed.draft);
+  const pdf = renderLetterPdf([letter], { businessName, contactLines: branding.contactLines, logo: branding.logo });
+  await logLetters(req, [{ profile, letter }], parsed.draft);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="${letterPdfFilename(profile.values.customer_name, businessDateStr())}"`);
   res.setHeader("Cache-Control", "no-store");
@@ -145,8 +146,9 @@ router.post("/letters/pdf", sendCommunication, async (req, res): Promise<void> =
   }
   if (!profiles.length) { res.status(400).json({ error: "None of these profiles has a mailing address" }); return; }
   const { businessName, branding } = await estimateBranding();
-  const pdf = renderLetterPdf(profiles.map((p) => letterOf(p, parsed.draft)), { businessName, contactLines: branding.contactLines, logo: branding.logo }, "Letters");
-  await logLetters(req, profiles, parsed.draft);
+  const letters = profiles.map((profile) => ({ profile, letter: letterOf(profile, parsed.draft) }));
+  const pdf = renderLetterPdf(letters.map((l) => l.letter), { businessName, contactLines: branding.contactLines, logo: branding.logo }, "Letters");
+  await logLetters(req, letters, parsed.draft);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="Letters-${businessDateStr()}.pdf"`);
   res.setHeader("Cache-Control", "no-store");

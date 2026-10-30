@@ -593,6 +593,8 @@ router.post("/emails/send-one", sendCommunication, async (req, res): Promise<voi
       entityId:       recipient.entityId,
       templateId:     usedTemplate?.id ?? null,
       templateName:   usedTemplate?.name ?? null,
+      relatedType:    communicationRelation.relatedType === "invoice" ? "invoice" : null,
+      relatedId:      communicationRelation.relatedType === "invoice" ? communicationRelation.relatedId : null,
       batchId:        null,
       recipientEmail: recipient.email,
       recipientName:  `${recipient.firstName} ${recipient.lastName}`.trim(),

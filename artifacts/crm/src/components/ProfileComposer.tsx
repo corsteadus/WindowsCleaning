@@ -124,6 +124,8 @@ export function ProfileComposer({ open, onOpenChange, profile, channel: initialC
     requestAnimationFrame(() => { box?.focus(); box?.setSelectionRange(next.cursor, next.cursor); });
   };
 
+  // A6: what was just sent or printed shows in the profile's communication history at once.
+  const refreshHistory = () => queryClient.invalidateQueries({ predicate: (query) => query.queryKey.includes("communication-history") });
   const refreshTemplates = () => queryClient.invalidateQueries({ queryKey: ["message-templates", channel] });
   const saveTemplate = useMutation({
     mutationFn: (mode: "new" | "update") => estimateCall<MessageTemplate>(
@@ -160,7 +162,10 @@ export function ProfileComposer({ open, onOpenChange, profile, channel: initialC
           ?? (result.reasonCode ? `Not sent: this customer's email settings do not allow it (${result.reasonCode.replace(/_/g, " ")}).` : "The email could not be sent"));
       }
     },
-    onSuccess: () => onDone({ channel: "email", message: `Email sent to ${emailTo ?? profile.email}` }),
+    onSuccess: () => {
+      refreshHistory();
+      onDone({ channel: "email", message: `Email sent to ${emailTo ?? profile.email}` });
+    },
     onError: (e: Error) => setError(e.message),
   });
 
@@ -180,7 +185,7 @@ export function ProfileComposer({ open, onOpenChange, profile, channel: initialC
       const url = URL.createObjectURL(await res.blob());
       if (tab) tab.location.href = url; else window.location.assign(url);
     },
-    onSuccess: () => { setError(null); setNotice("The letter opened in a new tab — print it from there."); },
+    onSuccess: () => { refreshHistory(); setError(null); setNotice("The letter opened in a new tab — print it from there."); },
     onError: (e: Error) => setError(e.message),
   });
 

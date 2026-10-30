@@ -12,10 +12,7 @@ import { authScopedQueryKey, protectedFetch } from "@/lib/auth-scope";
 import { estimateStatusLabel, estimateStatusOf } from "@/lib/estimate-status";
 import { formatDateOnly } from "@/lib/quote-settings-form";
 import { MainProfileCard, type ProfileLink } from "@/components/MainProfileCard";
-import {
-  buildActivityFeed, countFeed, filterFeed,
-  type FeedFilter,
-} from "@/lib/activity-feed";
+import { buildActivityFeed } from "@/lib/activity-feed";
 import { getListCustomersQueryKey, getListProspectsQueryKey } from "@workspace/api-client-react";
 import {
   ArrowLeft, Phone, Mail, MapPin, MessageSquare, Printer,
@@ -33,7 +30,7 @@ import { ProfileSheet, type SheetCustomer } from "@/components/ProfileSheet";
 import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEstimates";
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
 import { ProfileSection } from "@/components/ProfileSection";
-import { EmailHistory } from "@/components/EmailHistory";
+import { CommunicationHistory } from "@/components/CommunicationHistory";
 import { ProfileComposer } from "@/components/ProfileComposer";
 import { htmlToText, type MessageChannel } from "@/lib/profile-messages";
 import { ProfileCallbacks } from "@/components/ProfileCallbacks";
@@ -807,11 +804,12 @@ export default function CustomerDetail() {
                   </ProfileSection>
                 )}
                 {visibleViews.some((view) => view.id === "activity") && (
-                  <ProfileSection id="activity" title="Email History & Activity" icon={Activity} count={getViewCount("activity", customer)}
+                  <ProfileSection id="activity" title="Communication History & Activity" icon={Activity} count={getViewCount("activity", customer)}
                     open={!!openSections.activity} onToggle={() => toggleSection("activity")}>
-                    {/* Phase 2 (Kyle, Video 4): each email openable, and resendable. */}
+                    {/* A6 (Kyle, Video 8): every email, text and letter in one history —
+                        openable, resendable, and deletable by the owner or an admin. */}
                     <div className="mb-5">
-                      <EmailHistory
+                      <CommunicationHistory
                         apiBase={apiBase}
                         customerId={customer.id}
                         onResend={canSendEmail ? (email) => setComposer({
@@ -821,7 +819,7 @@ export default function CustomerDetail() {
                       />
                     </div>
                     <CommunicationActivityTab
-                      messages={customer.messages}
+                      messages={[]}
                       logs={customer.activityLogs ?? []}
                       customerId={customer.id}
                     />
@@ -2129,16 +2127,10 @@ function CommunicationActivityTab({ messages, logs, customerId }: {
   logs: ActivityLog[];
   customerId: number;
 }) {
-  const [filter, setFilter] = useState<FeedFilter>("all");
-  const feed = buildActivityFeed(messages as never, logs as never);
-  const counts = countFeed(feed);
-  const shown = filterFeed(feed, filter);
-  const chips: Array<{ key: FeedFilter; label: string }> = [
-    { key: "all", label: "All activity" },
-    { key: "email", label: "Email" },
-    { key: "text", label: "Text" },
-    { key: "change", label: "Profile changes" },
-  ];
+  // A6: emails, texts and letters are in the communication history above, once each;
+  // this keeps what happened to the profile itself.
+  const SENT = new Set(["email_sent", "letter_printed"]);
+  const shown = buildActivityFeed(messages as never, logs.filter((log) => !SENT.has(log.action)) as never);
   const icons: Record<string, React.ComponentType<{ className?: string }>> = {
     email: Mail, text: Phone, change: Activity,
   };
@@ -2146,20 +2138,7 @@ function CommunicationActivityTab({ messages, logs, customerId }: {
   return (
     <div className="space-y-3">
       <CommunicationSafetyCard customerId={customerId} />
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Activity filters">
-        {chips.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setFilter(key)}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-              filter === key ? "bg-primary text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {label} <span className="opacity-70">{counts[key]}</span>
-          </button>
-        ))}
-      </div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Profile activity</p>
       {shown.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-slate-300">
           <Activity className="w-10 h-10 mb-3" />

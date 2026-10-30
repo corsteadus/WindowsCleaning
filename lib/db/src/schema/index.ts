@@ -63,3 +63,4 @@ export * from "./discounts.ts";
 export * from "./tax_rates.ts";
 export * from "./company_profile.ts";
 export * from "./invoice_public.ts";
+export * from "./communication_history.ts";
