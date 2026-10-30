@@ -4,6 +4,8 @@
  * The tags the office can put in the subject and message, and the message
  * Corstead starts with. Every value is HTML-escaped where it goes into the body.
  */
+import { escapeHtml, fillTags } from "./merge-tags.ts";
+
 export const ESTIMATE_EMAIL_TAGS = [
   { tag: "{{estimate_link}}", label: "Link to the estimate (PDF)" },
   { tag: "{{estimate_page_link}}", label: "Link to accept or decline online" },
@@ -39,9 +41,6 @@ export interface EstimateEmailValues {
   logoUrl?: string | null;
 }
 
-const escapeHtml = (value: string) => value
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-
 const TAG_VALUES: Record<string, Exclude<keyof EstimateEmailValues, "logoUrl">> = {
   estimate_link: "estimateLink", estimate_page_link: "estimatePageLink", first_name: "firstName",
   customer_name: "customerName", estimate_number: "estimateNumber", estimate_total: "estimateTotal",
@@ -50,11 +49,8 @@ const TAG_VALUES: Record<string, Exclude<keyof EstimateEmailValues, "logoUrl">> 
 
 /** The subject (plain text) and the message (HTML, every value escaped). Unknown tags are left as written. */
 export function renderEstimateEmail(subject: string, bodyHtml: string, values: EstimateEmailValues) {
-  const fill = (text: string, escape: boolean) => text.replace(/\{\{(\w+)\}\}/g, (whole, key: string) => {
-    const field = TAG_VALUES[key];
-    if (!field) return whole;
-    return escape ? escapeHtml(values[field]) : values[field];
-  });
+  const byTag = Object.fromEntries(Object.entries(TAG_VALUES).map(([tag, field]) => [tag, values[field]]));
+  const fill = (text: string, escape: boolean) => fillTags(text, byTag, { escape });
   // A readable font in every mail app, which otherwise falls back to Times.
   const logo = values.logoUrl
     ? `<p><img src="${escapeHtml(values.logoUrl)}" alt="${escapeHtml(values.businessName)}" style="max-height:56px;max-width:220px"></p>`

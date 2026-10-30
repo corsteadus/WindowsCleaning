@@ -27,7 +27,8 @@ test("safety card gates visibility and sends idempotent consent mutations", () =
 });
 
 test("direct sends carry idempotency and bulk sends opt into marketing classification", () => {
-  assert.match(customerDetail, /Idempotency-Key": crypto\.randomUUID\(\)/);
+  // A5: the profile's email is sent from ProfileComposer, with a key that changes with the message.
+  assert.match(fs.readFileSync(new URL("../components/ProfileComposer.tsx", import.meta.url), "utf8"), /"Idempotency-Key": sendKey\.current/);
   assert.match(leadDetail, /Idempotency-Key": crypto\.randomUUID\(\)/);
   assert.match(communications, /classification: "marketing"/);
 });

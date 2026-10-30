@@ -126,7 +126,7 @@ async function runDaysAfterLastService(rule: typeof automationRulesTable.$inferS
     const [tpl] = await db
       .select()
       .from(emailTemplatesTable)
-      .where(eq(emailTemplatesTable.id, rule.emailTemplateId))
+      .where(and(eq(emailTemplatesTable.id, rule.emailTemplateId), eq(emailTemplatesTable.channel, "email")))
       .limit(1);
     if (tpl) { subject = tpl.subject; bodyHtml = tpl.bodyHtml; }
   }
@@ -212,7 +212,7 @@ async function runInactiveCustomer(rule: typeof automationRulesTable.$inferSelec
     const [tpl] = await db
       .select()
       .from(emailTemplatesTable)
-      .where(eq(emailTemplatesTable.id, rule.emailTemplateId))
+      .where(and(eq(emailTemplatesTable.id, rule.emailTemplateId), eq(emailTemplatesTable.channel, "email")))
       .limit(1);
     if (tpl) { subject = tpl.subject; bodyHtml = tpl.bodyHtml; }
   }

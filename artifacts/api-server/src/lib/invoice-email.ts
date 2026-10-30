@@ -4,6 +4,8 @@
  * and the customer gets a link to their invoice (page or PDF) or the PDF attached.
  * Every value is HTML-escaped where it goes into the body.
  */
+import { escapeHtml, fillTags } from "./merge-tags.ts";
+
 export const INVOICE_EMAIL_TAGS = [
   { tag: "{{invoice_page_link}}", label: "Link to the invoice" },
   { tag: "{{invoice_link}}", label: "Link to the invoice (PDF)" },
@@ -33,9 +35,6 @@ export interface InvoiceEmailValues {
   logoUrl?: string | null;
 }
 
-const escapeHtml = (value: string) => value
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-
 const TAG_VALUES: Record<string, Exclude<keyof InvoiceEmailValues, "logoUrl">> = {
   invoice_link: "invoiceLink", invoice_page_link: "invoicePageLink", first_name: "firstName",
   customer_name: "customerName", invoice_number: "invoiceNumber", invoice_total: "invoiceTotal",
@@ -44,11 +43,8 @@ const TAG_VALUES: Record<string, Exclude<keyof InvoiceEmailValues, "logoUrl">> =
 
 /** The subject (plain text) and the message (HTML, every value escaped). Unknown tags are left as written. */
 export function renderInvoiceEmail(subject: string, bodyHtml: string, values: InvoiceEmailValues) {
-  const fill = (text: string, escape: boolean) => text.replace(/\{\{(\w+)\}\}/g, (whole, key: string) => {
-    const field = TAG_VALUES[key];
-    if (!field) return whole;
-    return escape ? escapeHtml(values[field]) : values[field];
-  });
+  const byTag = Object.fromEntries(Object.entries(TAG_VALUES).map(([tag, field]) => [tag, values[field]]));
+  const fill = (text: string, escape: boolean) => fillTags(text, byTag, { escape });
   const logo = values.logoUrl
     ? `<p><img src="${escapeHtml(values.logoUrl)}" alt="${escapeHtml(values.businessName)}" style="max-height:56px;max-width:220px"></p>`
     : "";

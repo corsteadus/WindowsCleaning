@@ -385,6 +385,9 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { prefix: "/emails", methods: ["GET"], capability: "communication.view" },
   { prefix: "/emails/preview", capability: "communication.view" },
   { prefix: "/emails", capability: "communication.send" },
+  // A5: the profile composers' preview and printed letters.
+  { prefix: "/profile-messages", capability: "communication.send" },
+  { prefix: "/letters", capability: "communication.send" },
   { prefix: "/campaigns", methods: ["GET"], capability: "campaigns.view" },
   { prefix: "/campaigns", capability: "campaigns.manage" },
   { prefix: "/email-templates", methods: ["GET"], capability: "communication.view" },

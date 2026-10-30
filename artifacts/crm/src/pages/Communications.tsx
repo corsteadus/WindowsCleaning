@@ -22,6 +22,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { protectedFetch } from "@/lib/auth-scope";
+import { BulkLettersTab } from "@/components/BulkLettersTab";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1108,11 +1109,12 @@ function CampaignsTab() {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-type CommTab = "templates" | "bulk" | "campaigns";
+type CommTab = "templates" | "bulk" | "letters" | "campaigns";
 
 const TAB_LABELS: Record<CommTab, string> = {
   templates: "Email Templates",
   bulk:      "Bulk Email",
+  letters:   "Letters",
   campaigns: "Campaign History",
 };
 
@@ -1130,7 +1132,7 @@ export default function Communications() {
         </div>
 
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit mb-6">
-          {(["templates", "bulk", "campaigns"] as CommTab[]).map((t) => (
+          {(["templates", "bulk", "letters", "campaigns"] as CommTab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
                 tab === t ? "bg-white shadow-sm text-slate-900" : "text-slate-600 hover:text-slate-900"
@@ -1142,6 +1144,7 @@ export default function Communications() {
 
         {tab === "templates" && <TemplatesTab />}
         {tab === "bulk"      && <BulkEmailTab />}
+        {tab === "letters"   && <BulkLettersTab />}
         {tab === "campaigns" && <CampaignsTab />}
       </div>
     </Layout>

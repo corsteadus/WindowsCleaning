@@ -9,6 +9,10 @@ export const emailTemplatesTable = pgTable("email_templates", {
   bodyHtml: text("body_html").notNull(),
   bodyText: text("body_text"),
   isDefault: boolean("is_default").notNull().default(false),
+  /** A5: email, sms (a text) or letter; migration message-templates-v1. */
+  channel: text("channel").notNull().default("email"),
+  createdBy: text("created_by"),
+  updatedBy: text("updated_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

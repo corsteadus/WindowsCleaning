@@ -9,7 +9,7 @@
  * The business writes plain text with {{tags}}; it is escaped before it becomes
  * HTML, so a customer's name or note can never become markup.
  */
-import { escapeHtml } from "./estimate-accepted-notice.ts";
+import { fillTags, textToHtml } from "./merge-tags.ts";
 
 export const MAX_CUSTOMER_NOTES = 2000;
 export const MAX_ACCEPTANCE_MESSAGE = 4000;
@@ -46,15 +46,12 @@ export interface AcceptanceSettings {
 
 /** Fills the tags; an unknown tag is left as typed, so a typo shows rather than vanishing. */
 export function fillAcceptanceTags(template: string, values: AcceptanceValues): string {
-  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (whole, tag: string) =>
-    (ACCEPTANCE_TAGS as readonly string[]).includes(tag) ? values[tag as keyof AcceptanceValues] : whole);
+  return fillTags(template, values);
 }
 
 /** Plain text to safe HTML: escaped, blank lines become paragraphs, single newlines breaks. */
 export function acceptanceTextToHtml(text: string): string {
-  return text.trim().split(/\n{2,}/)
-    .map((paragraph) => `<p style="margin:0 0 12px">${escapeHtml(paragraph).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  return textToHtml(text);
 }
 
 export function acceptanceMessage(settings: AcceptanceSettings, values: AcceptanceValues): string {

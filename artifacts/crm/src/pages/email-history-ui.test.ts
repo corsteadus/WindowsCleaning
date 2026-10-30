@@ -19,7 +19,8 @@ test("the message opens in a sandboxed frame, so no script in it can run", () =>
 });
 
 test("Resend opens the profile's own composer with the email in it, and only for people who may send", () => {
-  assert.match(detail, /onResend=\{canSendEmail \? \(email\) => \{\s*setEmailTo\(email\.to\);\s*setEmailSubject\(email\.subject\);\s*setEmailBody\(email\.bodyHtml\);\s*setEmailModal\(true\);/);
+  // A5: it opens the email / text / letter composer, the old message as text.
+  assert.match(detail, /onResend=\{canSendEmail \? \(email\) => setComposer\(\{\s*channel: "email", to: email\.to,\s*initial: \{ subject: email\.subject, body: htmlToText\(email\.bodyHtml\) \},/);
 });
 
 test("the history lives in the Email History section, and refreshes after a send", () => {

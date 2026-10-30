@@ -18,7 +18,7 @@ import {
 } from "@/lib/activity-feed";
 import { getListCustomersQueryKey, getListProspectsQueryKey } from "@workspace/api-client-react";
 import {
-  ArrowLeft, Phone, Mail, MapPin,
+  ArrowLeft, Phone, Mail, MapPin, MessageSquare, Printer,
   Briefcase, FileText, Receipt,
   PhoneCall, Home, ChevronLeft, ChevronRight, User, Calendar,
   CheckCircle2,
@@ -34,6 +34,8 @@ import { ConvertFromEstimateDialog, EstimatesView } from "@/components/ProfileEs
 import { EstimateConversionDialog } from "@/components/EstimateConversionDialog";
 import { ProfileSection } from "@/components/ProfileSection";
 import { EmailHistory } from "@/components/EmailHistory";
+import { ProfileComposer } from "@/components/ProfileComposer";
+import { htmlToText, type MessageChannel } from "@/lib/profile-messages";
 import { ProfileCallbacks } from "@/components/ProfileCallbacks";
 import { ProfileDiscounts } from "@/components/ProfileDiscounts";
 import { estimateCallLine, type ProfileEstimate } from "@/lib/profile-estimates";
@@ -379,14 +381,12 @@ export default function CustomerDetail() {
   // reason and both are logged, so they share one dialog.
   const [statusIntent, setStatusIntent] = useState<null | "inactive" | "archived">(null);
   const [deactivateReason, setDeactivateReason] = useState("");
-  const [emailModal, setEmailModal] = useState(false);
-  // Which address the one-off email goes to: any address on the profile can be
-  // clicked, not only the main one (Kyle's answer #11).
-  const [emailTo, setEmailTo] = useState<string | null>(null);
-  const openEmail = (address: string) => { setEmailTo(address); setEmailModal(true); };
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailBody, setEmailBody] = useState("");
-  const [emailSending, setEmailSending] = useState(false);
+  // A5 (Kyle, Video 8): email, text or letter from one composer. Which address
+  // the email goes to: any address on the profile can be clicked, not only the
+  // main one (Kyle's answer #11).
+  const [composer, setComposer] = useState<null | { channel: MessageChannel; to?: string | null; initial?: { subject: string; body: string } | null }>(null);
+  const openEmail = (address: string) => setComposer({ channel: "email", to: address });
+  const canManageTemplates = hasClientCapability(user, "communication.manage");
 
   // A single job or estimate, deleted from its own section (Kyle 2026-09-23 #3).
   const deleteRecord = useMutation({
@@ -616,6 +616,24 @@ export default function CustomerDetail() {
                   <Mail className="w-3.5 h-3.5" /> Send Email
                 </button>
               )}
+              {canSendEmail && (
+                <>
+                  <button
+                    data-testid="profile-send-text"
+                    onClick={() => setComposer({ channel: "sms" })}
+                    className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-blue-200 text-blue-700 bg-white text-xs font-semibold hover:bg-blue-50"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" /> Text
+                  </button>
+                  <button
+                    data-testid="profile-print-letter"
+                    onClick={() => setComposer({ channel: "letter" })}
+                    className="flex items-center gap-1.5 h-9 px-3 rounded-xl border border-blue-200 text-blue-700 bg-white text-xs font-semibold hover:bg-blue-50"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Letter
+                  </button>
+                </>
+              )}
               {canManageCustomer && (
                 <div className="relative">
                   <button
@@ -645,88 +663,26 @@ export default function CustomerDetail() {
           </div>
         </div>
 
-        {/* ── One-off email modal ─────────────────────────────────────────── */}
-        {emailModal && (
-          <Dialog open onOpenChange={() => { setEmailModal(false); setEmailSubject(""); setEmailBody(""); }}>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Send Email to {customer.firstName}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 py-2">
-                <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-sm text-slate-600">
-                  To: <span className="font-semibold text-slate-800">{emailTo ?? customer.email}</span>
-                </div>
-                <div className="space-y-1">
-                  <Label>Subject</Label>
-                  <input
-                    value={emailSubject}
-                    onChange={e => setEmailSubject(e.target.value)}
-                    placeholder="Subject line…"
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Message <span className="text-slate-400 font-normal text-xs">(plain text or HTML)</span></Label>
-                  <textarea
-                    value={emailBody}
-                    onChange={e => setEmailBody(e.target.value)}
-                    rows={7}
-                    placeholder={"Hi " + customer.firstName + ",\n\nYour message here…"}
-                    className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary resize-none font-mono"
-                  />
-                </div>
-              </div>
-              <DialogFooter className="gap-2">
-                <button
-                  onClick={() => { setEmailModal(false); setEmailSubject(""); setEmailBody(""); }}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
-                  onClick={async () => {
-                    setEmailSending(true);
-                    try {
-                      const BASE = import.meta.env.BASE_URL.replace(/\/+$/, "");
-                      const res = await protectedFetch(`${BASE}/api/emails/send-one`, {
-                        method: "POST",
-                        credentials: "include",
-                        headers: {
-                          "Content-Type": "application/json",
-                          "Idempotency-Key": crypto.randomUUID(),
-                        },
-                        body: JSON.stringify({
-                          entityType: "customer",
-                          entityId: customer.id,
-                          email: emailTo ?? customer.email,
-                          firstName: customer.firstName,
-                          lastName: customer.lastName,
-                          subject: emailSubject,
-                          bodyHtml: emailBody,
-                        }),
-                      });
-                      if (!res.ok) throw new Error("Send failed");
-                      toast({ title: "Email sent!", description: `Sent to ${emailTo ?? customer.email}` });
-                      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
-                      queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["profile-emails"]) });
-                      setEmailModal(false);
-                      setEmailSubject("");
-                      setEmailBody("");
-                    } catch {
-                      toast({ title: "Failed to send email", variant: "destructive" });
-                    } finally {
-                      setEmailSending(false);
-                    }
-                  }}
-                  className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  {emailSending ? "Sending…" : "Send Email"}
-                </button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+        {/* ── Email, text or letter (A5, Kyle Video 8) ─────────────────────── */}
+        {composer && (
+          <ProfileComposer
+            open
+            onOpenChange={(open) => { if (!open) setComposer(null); }}
+            profile={{
+              id: customer.id, firstName: customer.firstName, name: accountName, email: customer.email ?? null,
+              phone: customer.cellPhone || customer.homePhone || customer.workPhone || customer.phone || null,
+            }}
+            channel={composer.channel}
+            emailTo={composer.to ?? customer.email ?? null}
+            initial={composer.initial}
+            canManageTemplates={canManageTemplates}
+            onDone={({ message }) => {
+              toast({ title: message });
+              queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["customer", id]) });
+              queryClient.invalidateQueries({ queryKey: authScopedQueryKey(user, ["profile-emails"]) });
+              setComposer(null);
+            }}
+          />
         )}
 
         {/* ── Deactivation reason modal ───────────────────────────────────── */}
@@ -858,12 +814,10 @@ export default function CustomerDetail() {
                       <EmailHistory
                         apiBase={apiBase}
                         customerId={customer.id}
-                        onResend={canSendEmail ? (email) => {
-                          setEmailTo(email.to);
-                          setEmailSubject(email.subject);
-                          setEmailBody(email.bodyHtml);
-                          setEmailModal(true);
-                        } : undefined}
+                        onResend={canSendEmail ? (email) => setComposer({
+                          channel: "email", to: email.to,
+                          initial: { subject: email.subject, body: htmlToText(email.bodyHtml) },
+                        }) : undefined}
                       />
                     </div>
                     <CommunicationActivityTab

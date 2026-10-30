@@ -3,6 +3,7 @@ import type {
   CommunicationEventStatus,
   CommunicationEventType,
 } from "./communication-event-types.js";
+import { fillTags } from "./merge-tags.ts";
 
 export class CommunicationEventValidationError extends Error {
   readonly code: string;
@@ -91,11 +92,8 @@ export function interpolateTemplate(
   template: string,
   vars: Record<string, string | number | null | undefined>,
 ): string {
-  return template
-    .replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
-      const value = vars[key];
-      return value === undefined || value === null ? "" : String(value);
-    })
+  const values = Object.fromEntries(Object.entries(vars).map(([key, value]) => [key, value == null ? null : String(value)]));
+  return fillTags(template, values, { unknown: "blank" })
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+([.,;:!?])/g, "$1")
     .replace(/>\s+</g, (match) => (match.includes("\n") ? match : "><"));

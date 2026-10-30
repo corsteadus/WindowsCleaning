@@ -10,6 +10,7 @@
  */
 
 import nodemailer from "nodemailer";
+import { fillTags } from "./merge-tags.ts";
 
 export interface EmailRecipient {
   email: string;
@@ -50,7 +51,8 @@ export type TemplateVars = {
 };
 
 export function renderTemplate(template: string, vars: TemplateVars): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? "");
+  // The bulk sends always removed a tag they had no value for; kept so.
+  return fillTags(template, vars, { unknown: "blank" });
 }
 
 // ─── Provider: SendGrid ───────────────────────────────────────────────────────

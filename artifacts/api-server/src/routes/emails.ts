@@ -16,6 +16,9 @@ import {
 } from "../lib/idempotency";
 import { requireFinancialCapability } from "../lib/financial-permissions";
 import { businessDateStr } from "../lib/date.ts";
+import { fillTags, PROFILE_TAG_KEYS, textToHtml, unknownTagError } from "../lib/merge-tags.ts";
+import { MAX_EMAIL_BODY } from "../lib/message-templates.ts";
+import { loadProfileForMessages } from "../lib/profile-tag-values.ts";
 
 const router: IRouter = Router();
 const sendCommunication = requireFinancialCapability("communication.send");
@@ -410,7 +413,7 @@ router.post("/emails/send", sendCommunication, async (req, res): Promise<void> =
     const [tpl] = await db
       .select()
       .from(emailTemplatesTable)
-      .where(eq(emailTemplatesTable.id, parseInt(String(templateId), 10)))
+      .where(and(eq(emailTemplatesTable.id, parseInt(String(templateId), 10)), eq(emailTemplatesTable.channel, "email")))
       .limit(1);
     if (!tpl) { res.status(404).json({ error: "Template not found" }); return; }
     templateSubject    = tpl.subject;
@@ -481,16 +484,17 @@ function senderName(req: { user?: { firstName?: string | null; lastName?: string
 }
 
 router.post("/emails/send-one", sendCommunication, async (req, res): Promise<void> => {
-  const { entityType, entityId, email, firstName, lastName, subject, bodyHtml, relatedType, relatedId } = req.body;
+  const { entityType, entityId, email, subject, bodyHtml, bodyText, templateId, relatedType, relatedId } = req.body;
 
-  if (!email || !subject || !bodyHtml) {
-    res.status(400).json({ error: "email, subject, and bodyHtml are required" });
+  // A5: the profile composer sends plain text (bodyText); older callers send HTML.
+  if (!email || !subject || (!bodyHtml && !bodyText)) {
+    res.status(400).json({ error: "email, subject, and a message are required" });
     return;
   }
-
-  const vars = buildTemplateVars({ firstName: firstName ?? "", lastName: lastName ?? "" });
-  const renderedSubject  = renderTemplate(String(subject),  vars);
-  const renderedBodyHtml = renderTemplate(String(bodyHtml), vars);
+  if (typeof bodyText === "string" && bodyText.length > MAX_EMAIL_BODY) {
+    res.status(400).json({ error: `The message can be up to ${MAX_EMAIL_BODY.toLocaleString("en-US")} characters` });
+    return;
+  }
 
   let recipient: Awaited<ReturnType<typeof resolveEmailEntityRecipient>>;
   try {
@@ -505,6 +509,28 @@ router.post("/emails/send-one", sendCommunication, async (req, res): Promise<voi
     });
     return;
   }
+  // The tags are filled from the record, never from names the screen sent.
+  const profile = recipient.entityType === "customer"
+    ? await loadProfileForMessages(recipient.entityId, senderName(req))
+    : null;
+  const vars: TemplateVars = profile?.values
+    ?? buildTemplateVars({ firstName: recipient.firstName, lastName: recipient.lastName, companyName: recipient.companyName });
+  let renderedSubject: string;
+  let renderedBodyHtml: string;
+  if (typeof bodyText === "string") {
+    const tagError = unknownTagError([String(subject), bodyText], profile ? PROFILE_TAG_KEYS : Object.keys(vars));
+    if (tagError) { res.status(400).json({ error: tagError, code: "unknown_tag" }); return; }
+    renderedSubject = fillTags(String(subject), vars).replace(/[\r\n]+/g, " ").trim();
+    renderedBodyHtml = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0f172a">${textToHtml(fillTags(bodyText, vars))}</div>`;
+  } else {
+    renderedSubject = renderTemplate(String(subject), vars);
+    renderedBodyHtml = renderTemplate(String(bodyHtml), vars);
+  }
+  // Which saved template it started from, for the email history.
+  const [usedTemplate] = Number.isInteger(Number(templateId)) && Number(templateId) > 0
+    ? await db.select({ id: emailTemplatesTable.id, name: emailTemplatesTable.name }).from(emailTemplatesTable)
+      .where(and(eq(emailTemplatesTable.id, Number(templateId)), eq(emailTemplatesTable.channel, "email"))).limit(1)
+    : [];
   let communicationRelation: { relatedType: "customer" | "invoice"; relatedId: number };
   if (relatedType === "invoice") {
     const invoiceId = Number(relatedId);
@@ -565,8 +591,8 @@ router.post("/emails/send-one", sendCommunication, async (req, res): Promise<voi
     const [logRow] = await tx.insert(emailLogsTable).values({
       entityType:     recipient.entityType,
       entityId:       recipient.entityId,
-      templateId:     null,
-      templateName:   null,
+      templateId:     usedTemplate?.id ?? null,
+      templateName:   usedTemplate?.name ?? null,
       batchId:        null,
       recipientEmail: recipient.email,
       recipientName:  `${recipient.firstName} ${recipient.lastName}`.trim(),
@@ -696,7 +722,7 @@ router.post("/emails/preview", async (req, res): Promise<void> => {
     const [tpl] = await db
       .select()
       .from(emailTemplatesTable)
-      .where(eq(emailTemplatesTable.id, parseInt(String(templateId), 10)))
+      .where(and(eq(emailTemplatesTable.id, parseInt(String(templateId), 10)), eq(emailTemplatesTable.channel, "email")))
       .limit(1);
     if (!tpl) { res.status(404).json({ error: "Template not found" }); return; }
     subject  = tpl.subject;

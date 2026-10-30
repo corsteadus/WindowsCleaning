@@ -164,6 +164,56 @@ steps 05–08 will not complete.
 
 ---
 
+## Phase A5 — writing to a profile: email, text, letter, templates, one tag engine — 2026-10-30
+
+**Built and browser-tested (MCP, visible browser, local server); API walkthrough 29/29**
+(`scratchpad/a5-walkthrough.mjs`). Source: Kyle's Video 8 PDF (actions 8.1, 8.2, 8.4, 8.5).
+
+- **On the profile** (8.1): the header has **Send Email**, **Text** and **Letter**. All three open one
+  composer (`ProfileComposer.tsx`) with Email / Text / Letter tabs. On the left the office writes;
+  on the right is **exactly what this customer gets**, filled by the server from the record
+  (`POST /profile-messages/:id/preview`). An unknown tag is named in red and blocks sending; a
+  tag that is blank for this profile (no street, no phone) is listed in amber.
+- **Templates — use, save, change, delete in the composer** (8.2, 8.4, 8.5): one store for all three
+  (the existing `email_templates` table, now with a `channel`). Choosing a template fills the
+  message; "Save as new template", "Save changes to X" (only once it has changed), and "Delete
+  template" with a confirm ("for everyone?"); what was written stays on screen after a delete.
+  The server refuses a duplicate name per channel, an email template without a subject, a text over
+  1,600 characters, an unknown tag, and deleting a template an automation uses. Who saved it last
+  is kept. Without a channel the API means email, so the Communications page, the estimate send
+  dialog and the automations keep seeing only email templates.
+- **One tag engine** (`lib/merge-tags.ts`): every message with {{tags}} is filled there: the profile
+  composer, the estimate and invoice emails, the acceptance thank-you, bulk sends and the
+  automations (the last two still blank a tag they have no value for, as before). Profile tags:
+  name, last name, full name, customer/company name, greeting (Mrs. Lee), email, phone, mailing
+  address (lines), street, city/state/ZIP, service location, last service + date, the business's
+  name / phone / email / address / website, your name, today. Values are **read from the
+  database, never from what the screen sent**: `send-one` used to trust a `firstName` from the
+  browser; it no longer does.
+- **Email** (8.2): sent as plain text the server escapes and turns into paragraphs (the old dialog
+  sent typed text as HTML, so line breaks were lost). Same safety, idempotency (a new key whenever
+  the message changes) and Email History as before, plus which template it started from.
+  **Resend** opens the composer with the old email as text.
+- **Text** (8.4): composer, templates, preview and a count ("1 text · 70 characters"). **Sending
+  waits on a text provider** (Lute; likely Twilio): the Send button is off with that said, and
+  "Copy text" puts the filled message on the clipboard to send from a phone.
+- **Letter** (8.5): "Open letter to print" draws a PDF with our own PDF writer
+  (`letter-document.ts`): letterhead (logo, name, contact lines), date, the mailing address where
+  a window envelope shows it, an optional "Re:" line, the letter. A profile with no mailing
+  address is refused, with the reason. Each printed letter is logged on the profile's activity
+  (`letter_printed`). **Many at once**: Communications → **Letters** — choose a letter template,
+  find profiles (status, type, city, state), tick them, "Print N letters" → one PDF, each letter
+  on its own page (at most 200); profiles with no address are left out and named.
+- **Migration `message-templates-v1`** (additive): `email_templates.channel` (default 'email',
+  check email/sms/letter), `created_by`, `updated_by`, index (channel, name). Existing rows stay
+  email templates. Applied on the local copy only; Sandbox gets it at republish through the gate.
+- **Not in A5:** sending texts (provider); the Communications page's Email Templates tab still
+  edits email templates only (text and letter templates are made in the profile composer);
+  attaching CRM files to emails and bounce lists (V8 "scope not final"); one communication
+  history with delete and filter is **A6**.
+- Tests: API `merge-tags.test.ts` (9), CRM `profile-messages.test.ts` (7); two older CRM tests
+  re-pointed at the composer. CRM 860/860; API only the 14 DATABASE_URL baseline files fail.
+
 ## Phase A4 — conversion: choose the services, arrival window + duration, Schedule + invoice — 2026-10-29
 
 **Built and browser-tested (MCP, local server); API walkthrough 23/23** (`scratchpad/a4-walkthrough.mjs`).
